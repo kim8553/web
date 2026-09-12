@@ -1,0 +1,28 @@
+name: JIUYIN Stage37 Handoff Verify
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - 'JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00'
+      - 'JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01'
+  workflow_dispatch:
+
+jobs:
+  verify-handoff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check parts
+        run: |
+          ls -lh JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01
+      - name: Reassemble ZIP
+        run: |
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+      - name: Verify SHA256
+        run: |
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
+      - name: Verify ZIP
+        run: unzip -t JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+      - name: List handoff
+        run: unzip -l JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip | head -100

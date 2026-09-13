@@ -5,6 +5,10 @@ on:
     branches: [stage37]
     paths:
       - '.github/workflows/stage37-test-binary-supply.yml'
+      - 'tools/stage37_authority_compile_patch.py'
+      - 'tools/stage37_authority_test_patch.py'
+      - 'tools/stage37_authority_test_followup.py'
+      - 'tools/stage37_authority_runtime_patch.py'
   workflow_dispatch:
 
 permissions:
@@ -38,6 +42,7 @@ jobs:
           python3 tools/stage37_authority_compile_patch.py buildtree
           python3 tools/stage37_authority_test_patch.py buildtree
           python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
           find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
 
       - name: Restore authority-exact real dependencies

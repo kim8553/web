@@ -1,0 +1,69 @@
+name: Stage37 Current Ordinal + Reentry Diagnostic
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-current-ordinal-reentry-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reassemble exact Stage37 and LIVE-proven overlays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/rp.py' | sha256sum -c -
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/rf.py' | sha256sum -c -
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+      - name: Export exact current property/reentry sources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p diag/clientdata
+          cp buildtree/cmd/protocol-probe/main.go diag/
+          cp buildtree/cmd/protocol-probe/messages.go diag/
+          cp buildtree/cmd/protocol-probe/scene_transition.go diag/
+          cp buildtree/cmd/protocol-probe/scene_catalog_registry.go diag/
+          cp buildtree/cmd/protocol-probe/role_store.go diag/
+          cp buildtree/cmd/protocol-probe/object_property.go diag/
+          cp buildtree/cmd/protocol-probe/latest_client_player_property_ordinal_compat.go diag/
+          cp buildtree/internal/clientdata/*.go diag/clientdata/
+          grep -RniE 'sceneVisiblePropertyFields|visiblePropertyTable|ConfigID|Amount|MaxAmount|EntryScene|ClientReady|targetScene|scene transition|born03' buildtree/cmd/protocol-probe buildtree/internal/clientdata > diag/GREP.txt || true
+          sed -n '/func sceneVisiblePropertyFields/,/^}/p' buildtree/cmd/protocol-probe/main.go > diag/SCENE_VISIBLE_PROPERTY_FIELDS.txt || true
+          sed -n '/func visiblePropertyTable/,/^}/p' buildtree/cmd/protocol-probe/main.go > diag/VISIBLE_PROPERTY_TABLE.txt || true
+          sed -n '/func (r \*sceneTransitionRuntime) transition/,/^}/p' buildtree/cmd/protocol-probe/scene_transition.go > diag/SCENE_TRANSITION_FUNCTION.txt || true
+          sha256sum diag/* 2>/dev/null | sort > diag/SHA256SUMS.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-current-ordinal-reentry-diagnostic
+          retention-days: 7
+          path: diag/

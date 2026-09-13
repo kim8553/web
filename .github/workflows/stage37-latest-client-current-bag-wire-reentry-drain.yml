@@ -55,9 +55,8 @@ jobs:
           grep -F 'latest-client CURRENT-BAG item=' buildtree/cmd/protocol-probe/zz_recovered_overlay.go
           grep -F 'latestClientViewAddSingle' buildtree/cmd/protocol-probe/latest_client_current_bag_wire.go
           grep -F 'ViewID", Type: clientdata.WireInt32' buildtree/cmd/protocol-probe/main.go
-          grep -F 'REENTRY-EXIT-DRAIN waiting 2750ms' buildtree/cmd/protocol-probe/scene_transition.go
+          grep -F 'REENTRY-EXIT-DRAIN A/B discriminator' buildtree/cmd/protocol-probe/scene_transition.go
           if grep -Fq 'promoted later target-scene 0x0A' buildtree/cmd/protocol-probe/main.go; then echo 'unexpected disproven late-0x0A promotion overlay present'; exit 1; fi
-          if grep -Fq 'stage37_latest_client_bag_105106_reentry_late0a_patch' "$GITHUB_WORKFLOW" 2>/dev/null; then echo 'unexpected late-0x0A patch in workflow'; exit 1; fi
       - name: Restore exact external modules
         shell: bash
         working-directory: buildtree

@@ -59,6 +59,43 @@ jobs:
           find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
           grep -F 'latest-client scene compatibility armed location replays' buildtree/cmd/protocol-probe/scene_lifecycle.go
 
+      - name: Print player spawn and location source diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          roots = [Path('buildtree/cmd/protocol-probe'), Path('buildtree/internal')]
+          needles = [
+              'PlayerEntry',
+              'activeRole.Location',
+              'role.Location',
+              'serverLocation(',
+              'playerObjectID',
+              'born02_ERenGU',
+              '3333',
+              '4444',
+          ]
+          seen = set()
+          for root in roots:
+              for p in sorted(root.rglob('*.go')):
+                  try:
+                      lines = p.read_text(encoding='utf-8').splitlines()
+                  except Exception:
+                      continue
+                  for i, line in enumerate(lines):
+                      if any(n in line for n in needles):
+                          key = (str(p), i)
+                          if key in seen:
+                              continue
+                          seen.add(key)
+                          lo = max(0, i - 6)
+                          hi = min(len(lines), i + 7)
+                          print(f'=== {p}:{i+1} ===')
+                          for j in range(lo, hi):
+                              print(f'{j+1:5d}: {lines[j]}')
+          PY
+
       - name: Restore exact external modules
         shell: bash
         working-directory: buildtree

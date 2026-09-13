@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Stage37 latest-client scene readiness compatibility probe, revision 1.
 from pathlib import Path
 import sys
 

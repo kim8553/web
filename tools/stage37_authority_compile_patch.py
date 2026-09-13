@@ -107,3 +107,47 @@ replace_exact("cmd/protocol-probe/zz_recovered_overlay.go", "serverRecordDelRow(
 
 # 15. Current serverViewProperty DWARF is exactly 48 bytes; nest *serverViewNest is at offset 40.
 replace_exact("cmd/protocol-probe/messages.go", "\treal32 *float32\n}", "\treal32 *float32\n\tnest   *serverViewNest\n}")
+
+# 16. The generated global overlay incorrectly retained internal/entity because merge_recovered_overlay.go
+# treats every identifier spelling as an import use. Current selected overlay declarations contain no
+# package-qualified entity selector; local variables named `entity` caused the lexical collision.
+replace_exact("cmd/protocol-probe/zz_recovered_overlay.go", '\t"github.com/local/9yin-go-server/internal/entity"\n', "")
+
+# 17. Current EXE main.init attributes this initializer to neigong_effects.go:26. It joins the
+# current defaultModernShareRoot with exact PE static strings "faculty" and "wuxuebaseinfo.ini"
+# and stores the resulting string at main.modernWuxueWuxingPath (0x140903ad0).
+replace_exact(
+    "cmd/protocol-probe/neigong_effects.go",
+    '\tmodernSkillPackPath      = filepath.Join(defaultModernShareRoot, "modifypack", "skillpack.ini")\n)',
+    '\tmodernSkillPackPath      = filepath.Join(defaultModernShareRoot, "modifypack", "skillpack.ini")\n\tmodernWuxueWuxingPath    = filepath.Join(defaultModernShareRoot, "faculty", "wuxuebaseinfo.ini")\n)',
+)
+
+# 18. Current allJianghuQingGongSkillIDs DWARF returns ([]string, error), while current
+# applyFullUnlock line 781 has only local qgIDs and machine code consumes only the returned slice.
+# There is no local error variable in applyFullUnlock DWARF, so the error result is intentionally blanked.
+replace_exact("cmd/protocol-probe/zz_recovered_overlay.go", "qgIDs := allJianghuQingGongSkillIDs()", "qgIDs, _ := allJianghuQingGongSkillIDs()")
+
+# 19. Current inline main.horizontalDistanceXZ is attributed to server_all_dest.go:99-102.
+# DWARF names dx/dz at lines 100/101, and both inlined call sites execute float32
+# (a.X-b.X)^2 + (a.Z-b.Z)^2 followed by sqrtss. The generated overlay omitted the helper.
+overlay = read("cmd/protocol-probe/zz_recovered_overlay.go")
+anchor = "func headingTowards(a, b worldcore.Transform) float32 {\n\treturn float32(math.Atan2(float64(b.Z-a.Z), float64(b.X-a.X)))\n}\n"
+if overlay.count(anchor) != 1:
+    raise SystemExit("zz_recovered_overlay.go: headingTowards anchor mismatch")
+helper = anchor + "func horizontalDistanceXZ(a, b worldcore.Transform) float32 {\n\tdx := a.X - b.X\n\tdz := a.Z - b.Z\n\treturn float32(math.Sqrt(float64(dx*dx + dz*dz)))\n}\n"
+write("cmd/protocol-probe/zz_recovered_overlay.go", overlay.replace(anchor, helper, 1))
+print("patched cmd/protocol-probe/zz_recovered_overlay.go: horizontalDistanceXZ")
+
+# 20. Current EXE build metadata contains the exact Hiroko103/go-quicklz module/version,
+# and buildSnapshot608Frame (snapshot_608.go:53/58) directly CALLs quicklz.New and (*Qlz).Compress.
+# The recovered snapshot source imports this package; the generated global overlay lost that import.
+replace_exact(
+    "cmd/protocol-probe/zz_recovered_overlay.go",
+    '\t"github.com/local/9yin-go-server/internal/clientdata"\n',
+    '\t"github.com/Hiroko103/go-quicklz"\n\t"github.com/local/9yin-go-server/internal/clientdata"\n',
+)
+
+# 21. skill_combat.go has both the current worldcore alias and a generated unaliased duplicate.
+# Current recovered skill_combat declarations use worldcore.Transform/EntityID; identifiers named
+# `world` are sceneLifecycle variables, not package selectors. Remove only the generated duplicate.
+replace_exact("cmd/protocol-probe/skill_combat.go", '\t"github.com/local/9yin-go-server/internal/world"\n', "")

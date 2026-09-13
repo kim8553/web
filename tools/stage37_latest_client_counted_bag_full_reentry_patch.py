@@ -11,7 +11,7 @@
 #   the client still did not emit flow player data ready / target ClientReady.
 # - Working initial entry uses sendPlayerSpawn (AddObject + Snapshot608 +
 #   Appearance + Location/Vitals); failed re-entry used only AddObject +
-#   Location/Vitals.  Reusing the already-recovered successful spawn sequence is
+#   Location/Vitals. Reusing the already-recovered successful spawn sequence is
 #   an A/B discriminator only, not a claim that Snapshot608/Appearance are the
 #   proven root cause.
 from pathlib import Path
@@ -63,7 +63,7 @@ def main() -> int:
     text = trans.read_text(encoding="utf-8")
     text = replace_once(text,
         '''\tif err := sendPlayerAddObject(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {\n\t\treturn fmt.Errorf("write player re-entry archive: %w", err)\n\t}\n\t// Latest-client re-entry A/B: the working initial-entry chain supplies the\n\t// authoritative player location/vitals before the explicit ClientReady. The\n\t// failed target-scene chain stopped after AddObject and never produced 0x09.\n\t// Replay only already-recovered player state here, then still require the real\n\t// target ClientReady before materializing target NPCs.\n\tif err := sendPlayerLocationAndVitals(r.conn, r.player, destination.location.Position); err != nil {\n\t\treturn fmt.Errorf("write early target player location/vitals: %w", err)\n\t}\n\tclear(r.activeNPCs)\n''',
-        '''\t// 2026-09-14 LIVE reached OnEntryScene create new after the 2750ms drain but\n\t// never reached flow player data ready.  Reuse the same already-recovered\n\t// player spawn sequence that succeeds on initial entry: AddObject, Snapshot608,\n\t// Appearance, then Location/Vitals.  This is an A/B discriminator, not a claim\n\t// that any one of those post-AddObject frames is independently proven causal.\n\tif err := sendPlayerSpawn(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {\n\t\treturn fmt.Errorf("write full player re-entry spawn: %w", err)\n\t}\n\tlog.Printf("%s: latest-client REENTRY-FULL-SPAWN replayed initial-entry player spawn sequence", r.remote)\n\tclear(r.activeNPCs)\n''',
+        '''\t// 2026-09-14 LIVE reached OnEntryScene create new after the 2750ms drain but\n\t// never reached flow player data ready. Reuse the same already-recovered\n\t// player spawn sequence that succeeds on initial entry: AddObject, Snapshot608,\n\t// Appearance, then Location/Vitals. This is an A/B discriminator, not a claim\n\t// that any one of those post-AddObject frames is independently proven causal.\n\tif err := sendPlayerSpawn(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {\n\t\treturn fmt.Errorf("write full player re-entry spawn: %w", err)\n\t}\n\tclear(r.activeNPCs)\n''',
         "re-entry full player spawn")
     trans.write_text(text, encoding="utf-8")
 

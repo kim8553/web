@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/stage37-latest-client-scene-compat.yml'
       - 'tools/stage37_latest_client_scene_compat_patch.py'
+      - 'tools/stage37_latest_client_player_location_compat_patch.py'
       - 'tools/stage37_authority_compile_patch.py'
       - 'tools/stage37_authority_test_patch.py'
       - 'tools/stage37_authority_test_followup.py'
@@ -39,7 +40,7 @@ jobs:
           mkdir -p buildtree
           tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
 
-      - name: Apply exact authority reconstruction then isolated latest-client compatibility delta
+      - name: Apply exact authority reconstruction then isolated latest-client compatibility deltas
         shell: bash
         run: |
           set -euxo pipefail
@@ -56,45 +57,12 @@ jobs:
           python3 tools/stage37_authority_resource_test_final.py buildtree
           python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
           python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
           find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
           grep -F 'latest-client scene compatibility armed location replays' buildtree/cmd/protocol-probe/scene_lifecycle.go
-
-      - name: Print player spawn and location source diagnostics
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          roots = [Path('buildtree/cmd/protocol-probe'), Path('buildtree/internal')]
-          needles = [
-              'PlayerEntry',
-              'activeRole.Location',
-              'role.Location',
-              'serverLocation(',
-              'playerObjectID',
-              'born02_ERenGU',
-              '3333',
-              '4444',
-          ]
-          seen = set()
-          for root in roots:
-              for p in sorted(root.rglob('*.go')):
-                  try:
-                      lines = p.read_text(encoding='utf-8').splitlines()
-                  except Exception:
-                      continue
-                  for i, line in enumerate(lines):
-                      if any(n in line for n in needles):
-                          key = (str(p), i)
-                          if key in seen:
-                              continue
-                          seen.add(key)
-                          lo = max(0, i - 6)
-                          hi = min(len(lines), i + 7)
-                          print(f'=== {p}:{i+1} ===')
-                          for j in range(lo, hi):
-                              print(f'{j+1:5d}: {lines[j]}')
-          PY
+          grep -F 'latest-client player location compatibility replay after explicit ClientReady' buildtree/cmd/protocol-probe/main.go
+          grep -F 'latest-client player spawn diagnostic' buildtree/cmd/protocol-probe/main.go
+          grep -F 'latest-client decoded C2S position' buildtree/cmd/protocol-probe/main.go
 
       - name: Restore exact external modules
         shell: bash
@@ -126,14 +94,16 @@ jobs:
           go version -m ../stage37-latest-client-scene-compat.exe | tee ../stage37-latest-client-scene-compat.goversion.txt
           printf '%s\n' \
             'DIAGNOSTIC COMPATIBILITY BUILD - NOT EXACT AUTHORITY EXE' \
-            'Delta: immediate ServerLocation after new scene Actor2 plus replay at 250ms, 750ms, 1.5s, 3s, 5s.' \
-            'Reason: September patched client stalls before final stage_main ClientReady; historical successful LIVE traffic used this delivery sequence.' \
+            'Delta A: immediate ServerLocation after new scene Actor2 plus replay at 250ms, 750ms, 1.5s, 3s, 5s.' \
+            'Delta B: on the first explicit initial-entry ClientReady (0x09), replay the authoritative player ServerLocation (0x1F) exactly once.' \
+            'Diagnostics: log the server-side PlayerEntry position and every successfully decoded client motion position.' \
+            'Evidence boundary: the prior LIVE A/B proved Delta A is associated with crossing the loading screen; Delta B is an unproven position-timing A/B probe and must be judged only by the next LIVE test.' \
             > ../README_LATEST_CLIENT_SCENE_COMPAT.txt
 
       - name: Upload compatibility probe
         uses: actions/upload-artifact@v4
         with:
-          name: stage37-latest-client-scene-compat
+          name: stage37-latest-client-player-location-ab
           retention-days: 7
           path: |
             stage37-latest-client-scene-compat.exe

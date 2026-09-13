@@ -1,0 +1,44 @@
+name: Stage37 Born02 Resource Audit
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-born02-resource-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit-born02:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
+          unzip -q JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip -d handoff
+          mkdir -p buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+
+      - name: Audit born02 and starter-position evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== resource roots ==='
+          find buildtree -maxdepth 4 -type d \( -iname 'resources' -o -iname 'modern' -o -iname 'share' -o -iname 'creator' \) -print | head -100 || true
+          echo '=== born02-related filenames ==='
+          find buildtree -type f | grep -iE 'born02|erengu|e_ren_gu' | head -300 || true
+          echo '=== exact current server default coordinate references ==='
+          grep -RIna --binary-files=without-match -E '693[.]908|404[.]35|24[.]694|905[.]069|196[.]98|book5|born02_ERenGU' buildtree 2>/dev/null | head -800 || true
+          echo '=== scene/start/birth/spawn references mentioning born02 ==='
+          grep -RIna --binary-files=without-match -E 'born02.*(start|birth|born|spawn|entry|position|pos)|((start|birth|born|spawn|entry|position|pos).*)born02' buildtree 2>/dev/null | head -800 || true
+          echo '=== possible current-client-style coordinate maps 3333/4444 ==='
+          grep -RIna --binary-files=without-match -E '3333([.,]|$)|4444([.,]|$)|3333.*4444|4444.*3333' buildtree 2>/dev/null | head -300 || true
+          echo '=== handoff archive listing relevant to resources ==='
+          find handoff -type f -printf '%p\n' | grep -iE 'resource|born02|scene|creator|ini' | head -500 || true

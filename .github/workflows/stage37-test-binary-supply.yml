@@ -11,7 +11,7 @@ on:
       - 'tools/stage37_authority_runtime_patch.py'
       - 'tools/stage37_authority_resource_test_patch.py.gz.b64'
       - 'tools/stage37_authority_resource_test_followup.py.gz.b64'
-      - 'tools/stage37_authority_resource_test_final.py.gz.b64'
+      - 'tools/stage37_authority_resource_test_final.py'
   workflow_dispatch:
 
 permissions:
@@ -52,9 +52,8 @@ jobs:
           base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/stage37_authority_resource_test_followup.py
           echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/stage37_authority_resource_test_followup.py' | sha256sum -c -
           python3 /tmp/stage37_authority_resource_test_followup.py buildtree
-          base64 -d tools/stage37_authority_resource_test_final.py.gz.b64 | gzip -dc > /tmp/stage37_authority_resource_test_final.py
-          echo '54b17fc8ba535fc44fb30559c87cb2a4435e00c7bc4e482553f5d711ffdbb3ff  /tmp/stage37_authority_resource_test_final.py' | sha256sum -c -
-          python3 /tmp/stage37_authority_resource_test_final.py buildtree
+          echo '54b17fc8ba535fc44fb30559c87cb2a4435e00c7bc4e482553f5d711ffdbb3ff  tools/stage37_authority_resource_test_final.py' | sha256sum -c -
+          python3 tools/stage37_authority_resource_test_final.py buildtree
           find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
 
       - name: Restore authority-exact real dependencies

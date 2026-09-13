@@ -1,0 +1,64 @@
+name: Stage37 Diagnose Bag Property Contract
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-diagnose-bag-property-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble exact Stage37 and current overlays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_view_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_refresh_reentry_sync_patch.py buildtree
+          python3 tools/stage37_latest_client_current_bag_wire_reentry_drain_patch.py buildtree
+          python3 tools/stage37_latest_client_counted_bag_full_reentry_patch.py buildtree
+          python3 tools/stage37_latest_client_full_bag_add_gm_ack_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_no_synthetic_viewid_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+
+      - name: Print exact bag/property sources
+        shell: bash
+        run: |
+          set -euxo pipefail
+          echo '===== sceneVisiblePropertyFields ====='
+          awk '/func sceneVisiblePropertyFields\(/,/^}/' buildtree/cmd/protocol-probe/main.go
+          echo '===== starterBagViews ====='
+          grep -R -n -A120 -B20 'func starterBagViews' buildtree/cmd/protocol-probe || true
+          echo '===== bagItemProps ====='
+          grep -R -n -A140 -B20 'func bagItemProps' buildtree/cmd/protocol-probe || true
+          echo '===== create/view encoders ====='
+          grep -R -n -A90 -B20 'func serverCreateViewWithProperties' buildtree/cmd/protocol-probe || true
+          grep -R -n -A90 -B20 'func serverViewAdd' buildtree/cmd/protocol-probe/messages.go || true
+          echo '===== clientdata field definitions ====='
+          grep -R -n -A260 -B20 'func VisibleNPCModernV1' buildtree/internal/clientdata || true
+          grep -R -n -A260 -B20 'VisibleNPCModernV1' buildtree/internal/clientdata || true

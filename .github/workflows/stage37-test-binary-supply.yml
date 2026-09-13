@@ -13,6 +13,7 @@ on:
       - 'tools/stage37_authority_resource_test_followup.py.gz.b64'
       - 'tools/stage37_authority_resource_test_final.py'
       - 'tools/stage37_authority_yihua_exact_test_patch.py'
+      - 'tools/stage37_latest_client_scene_compat_patch.py'
   workflow_dispatch:
 
 permissions:
@@ -84,6 +85,28 @@ jobs:
           tar -czf ../stage37-patched-source-go1.26.5.tar.gz --exclude='./resources' .
           sha256sum ../stage37-patched-source-go1.26.5.tar.gz | tee ../stage37-patched-source-go1.26.5.sha256
 
+      - name: Build isolated September-client scene readiness compatibility probe
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+          grep -F 'latest-client scene compatibility armed location replays' buildtree/cmd/protocol-probe/scene_lifecycle.go
+          cd buildtree
+          go test -c -o ../stage37-latest-client-scene-compat.test ./cmd/protocol-probe
+          go vet ./...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o ../stage37-latest-client-scene-compat.exe ./cmd/protocol-probe
+          cd ..
+          sha256sum stage37-latest-client-scene-compat.exe | tee stage37-latest-client-scene-compat.sha256
+          file stage37-latest-client-scene-compat.exe | tee stage37-latest-client-scene-compat.file.txt
+          go version -m stage37-latest-client-scene-compat.exe | tee stage37-latest-client-scene-compat.goversion.txt
+          printf '%s\n' \
+            'DIAGNOSTIC COMPATIBILITY BUILD - NOT EXACT AUTHORITY EXE' \
+            'Delta: immediate ServerLocation after every newly materialized scene Actor2 plus delayed replay at 250ms, 750ms, 1.5s, 3s, and 5s.' \
+            'Authority note: exact current EXE reconcileViewportLocked does not emit this sequence. This build is an isolated A/B probe for the September patched retail client.' \
+            'Evidence: the current live failure stalls before explicit stage_main ClientReady; historical successful LIVE traffic used this location delivery sequence before final readiness.' \
+            > README_LATEST_CLIENT_SCENE_COMPAT.txt
+
       - name: Upload exact test-binary supply
         uses: actions/upload-artifact@v4
         with:
@@ -96,3 +119,8 @@ jobs:
             stage37-test-binary.goversion.txt
             stage37-patched-source-go1.26.5.tar.gz
             stage37-patched-source-go1.26.5.sha256
+            stage37-latest-client-scene-compat.exe
+            stage37-latest-client-scene-compat.sha256
+            stage37-latest-client-scene-compat.file.txt
+            stage37-latest-client-scene-compat.goversion.txt
+            README_LATEST_CLIENT_SCENE_COMPAT.txt

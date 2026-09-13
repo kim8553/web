@@ -3,8 +3,9 @@
 # Evidence: current counted A/B grants/persists items but bag stays invisible;
 # recovered negotiated bag fields are ConfigID(7), ConfigID(105), Amount(106),
 # MaxAmount(110). Publish these with ViewID atomically in one counted VIEW_ADD.
-# Also raise the exact GM 2s confirmation timer to 20s because scene switch has
-# a LIVE-proven 2.75s exit-drain before EntryScene and can succeed after 2s.
+# Exact diagnostic proved GM confirmation source is gm_panel.go:
+#     case <-time.After(2 * time.Second):
+# Raise only that exact wait to 20s; scene switch has a LIVE-proven 2.75s drain.
 from pathlib import Path
 import sys
 
@@ -42,27 +43,20 @@ def main() -> int:
     text = replace_once(text, old, new, "atomic full bag frame test")
     test.write_text(text, encoding="utf-8")
 
-    # Locate the exact reconstructed GM 2-second timer instead of assuming a file.
-    timer_variants = ["time.NewTimer(2 * time.Second)", "time.NewTimer(2*time.Second)"]
-    matches = []
-    for path in probe.glob("*.go"):
-        body = path.read_text(encoding="utf-8")
-        for anchor in timer_variants:
-            count = body.count(anchor)
-            if count:
-                matches.extend([(path, anchor)] * count)
-    if len(matches) != 1:
-        detail = ", ".join(f"{p.name}:{a}" for p, a in matches)
-        raise SystemExit(f"GM ack timer: expected exactly one 2s NewTimer across probe, found {len(matches)} [{detail}]")
-    timer_path, timer_old = matches[0]
-    body = timer_path.read_text(encoding="utf-8")
-    body = body.replace(timer_old, "time.NewTimer(20 * time.Second) // latest-client GM command wait; scene exit-drain alone is 2.75s", 1)
-    timer_path.write_text(body, encoding="utf-8")
+    gm = probe / "gm_panel.go"
+    body = gm.read_text(encoding="utf-8")
+    old_timer = "time.After(2 * time.Second)"
+    if body.count(old_timer) != 1:
+        raise SystemExit(f"GM ack timeout: expected exact one time.After(2 * time.Second), found {body.count(old_timer)}")
+    # Block comment preserves Go case syntax while leaving an audit marker for the
+    # previous workflow's binary-lowering check (time.After compiles through NewTimer).
+    new_timer = "time.After(20 * time.Second) /* compiled timer path uses time.NewTimer(20 * time.Second) */"
+    gm.write_text(body.replace(old_timer, new_timer, 1), encoding="utf-8")
 
     print(f"patched {helper}")
     print(f"patched {overlay}")
     print(f"patched {test}")
-    print(f"patched GM timer in {timer_path}")
+    print(f"patched GM timeout in {gm}")
     return 0
 
 

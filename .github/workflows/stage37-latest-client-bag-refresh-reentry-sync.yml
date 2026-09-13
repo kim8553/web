@@ -52,7 +52,8 @@ jobs:
           python3 tools/stage37_latest_client_bag_refresh_reentry_sync_patch.py buildtree
           find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
           grep -F 'BAG-REFRESH deleted live View=2' buildtree/cmd/protocol-probe/main.go
-          grep -F 'REENTRY-EARLY-PLAYER-SYNC' buildtree/cmd/protocol-probe/scene_transition.go
+          grep -F 'write early target player location/vitals' buildtree/cmd/protocol-probe/scene_transition.go
+          grep -F 'serverDeleteViewCompat' buildtree/cmd/protocol-probe/latest_client_delete_view_compat.go
           if grep -Fq 'promoted target-scene 0x0A' buildtree/cmd/protocol-probe/main.go; then echo 'unexpected failed 0x0A promotion overlay present'; exit 1; fi
       - name: Restore exact external modules
         shell: bash
@@ -77,7 +78,7 @@ jobs:
         run: |
           set -uo pipefail
           set +e
-          go test ./cmd/protocol-probe -run 'TestLatestClientGMPanelStillExposesGiveItem' -count=1 2>&1 | tee ../TARGETED_TEST.txt
+          go test ./cmd/protocol-probe -run 'TestLatestClientGMPanelStillExposesGiveItem|TestServerDeleteViewCompatVerifiedLayout' -count=1 2>&1 | tee ../TARGETED_TEST.txt
           rc=${PIPESTATUS[0]}
           set -e
           if [ "$rc" -eq 0 ]; then

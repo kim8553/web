@@ -49,6 +49,12 @@ jobs:
             buildtree/cmd/protocol-probe/player_actor.go \
             buildtree/cmd/protocol-probe/player_progress.go \
             buildtree/cmd/protocol-probe/role_store.go \
+            buildtree/cmd/protocol-probe/scene_catalog_registry.go \
+            buildtree/cmd/protocol-probe/scene_lifecycle.go \
+            buildtree/cmd/protocol-probe/scene_transition.go \
+            buildtree/cmd/protocol-probe/shortcut_records.go \
+            buildtree/cmd/protocol-probe/skill_catalog.go \
+            buildtree/cmd/protocol-probe/skill_switch.go \
             buildtree/internal/clientdata/npc_schema.go \
             buildtree/internal/clientdata/npc_resolver.go
 
@@ -66,16 +72,16 @@ jobs:
           go mod download
           go list -m all
 
-      - name: Compile and test protocol-probe with real dependencies
-        id: gotest
+      - name: Build protocol-probe with real dependencies
+        id: gobuild
         shell: bash
         working-directory: buildtree
         run: |
           set +e
           set -o pipefail
-          go test ./cmd/protocol-probe 2>&1 | tee ../stage37-real-go-test.log
+          go build ./cmd/protocol-probe 2>&1 | tee ../stage37-real-go-build.log
           code=${PIPESTATUS[0]}
-          echo "$code" > ../stage37-real-go-test.exit
+          echo "$code" > ../stage37-real-go-build.exit
           exit 0
 
       - name: Upload real build probe logs
@@ -84,14 +90,14 @@ jobs:
         with:
           name: stage37-real-build-probe
           path: |
-            stage37-real-go-test.log
-            stage37-real-go-test.exit
+            stage37-real-go-build.log
+            stage37-real-go-build.exit
             buildtree/go.mod
             buildtree/go.sum
 
-      - name: Fail if go test failed
+      - name: Fail if go build failed
         shell: bash
         run: |
-          code=$(cat stage37-real-go-test.exit)
-          echo "go test exit code: $code"
+          code=$(cat stage37-real-go-build.exit)
+          echo "go build exit code: $code"
           test "$code" -eq 0

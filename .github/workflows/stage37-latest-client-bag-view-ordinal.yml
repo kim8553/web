@@ -1,0 +1,140 @@
+name: Stage37 Latest Client Bag View Ordinal A/B
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-latest-client-bag-view-ordinal.yml'
+      - 'tools/stage37_latest_client_bag_view_ordinal_patch.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-bag-view-ordinal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
+          unzip -q JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip -d handoff
+          mkdir -p buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+
+      - name: Apply exact reconstruction and proven latest-client overlays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/resource_patch.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/resource_patch.py' | sha256sum -c -
+          python3 /tmp/resource_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/resource_followup.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/resource_followup.py' | sha256sum -c -
+          python3 /tmp/resource_followup.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_view_ordinal_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+          grep -F 'latestClientBagWireProperties' buildtree/cmd/protocol-probe/messages.go
+          grep -F 'latestClientBagWireProperties' buildtree/cmd/protocol-probe/zz_recovered_overlay.go
+
+      - name: Restore exact external modules
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          sed -i '/^replace /d' go.mod
+          rm -rf _builddeps
+          go mod edit -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download
+          go mod download github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+
+      - name: Compile tests and dependency-free checks
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          go test -c -o ../stage37-bag-view-ordinal.test ./cmd/protocol-probe
+          go test ./internal/clientdata -count=1
+
+      - name: Probe targeted runtime test boundary
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -uo pipefail
+          set +e
+          go test ./cmd/protocol-probe -run 'TestLatestClientStarterBagViewSet|TestLatestClientBagWireProperties' -count=1 2>&1 | tee ../BAG_VIEW_ORDINAL_TARGETED_TEST.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo 'TARGETED_RUNTIME_TEST=PASS' | tee ../BAG_VIEW_ORDINAL_TEST_BOUNDARY.txt
+          elif grep -Fq 'resources/modern/share/skill/skill_new.ini: no such file or directory' ../BAG_VIEW_ORDINAL_TARGETED_TEST.txt; then
+            echo 'TARGETED_RUNTIME_TEST=BLOCKED_BY_MISSING_SKILL_RESOURCE_IN_STAGE37_HANDOFF' | tee ../BAG_VIEW_ORDINAL_TEST_BOUNDARY.txt
+          else
+            echo "TARGETED_RUNTIME_TEST=FAIL rc=$rc" | tee ../BAG_VIEW_ORDINAL_TEST_BOUNDARY.txt
+            exit "$rc"
+          fi
+
+      - name: Vet reconstructed tree
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          go vet ./...
+
+      - name: Build Windows amd64 A/B EXE
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o ../stage37-live-server.exe ./cmd/protocol-probe
+          sha256sum ../stage37-live-server.exe | tee ../stage37-live-server.sha256
+          file ../stage37-live-server.exe | tee ../stage37-live-server.file.txt
+          go version -m ../stage37-live-server.exe | tee ../stage37-live-server.goversion.txt
+          printf '%s\n' \
+            'STAGE37 LATEST-CLIENT BAG VIEW ORDINAL A/B - NOT EXACT AUTHORITY EXE' \
+            '' \
+            'Preserves the LIVE-proven player property ordinal fix, scene compatibility and born02 remap.' \
+            'Starter bag CreateView drops unsupported high/global properties.' \
+            'Starter bag ViewAdd/ObjectProperty emits only negotiated ConfigID/Amount/MaxAmount slots: 7,105,106,110.' \
+            'Other view types are unchanged.' \
+            'Direct cmd/protocol-probe runtime tests may be blocked by missing skill_new.ini in the compact handoff; see BAG_VIEW_ORDINAL_TEST_BOUNDARY.txt.' \
+            '' \
+            'LIVE TEST ORDER:' \
+            '1. Login and confirm no Lua popup + movement still works.' \
+            '2. Open GM page and give one simple stackable item, recommended Game_item_hp_001 x5.' \
+            '3. Confirm whether it appears in bag.' \
+            '4. If bag item appears, buy one item from an NPC shop and confirm it appears.' \
+            '5. Collect LIVE_RESULT immediately.' \
+            > ../README_BAG_VIEW_ORDINAL_AB.txt
+
+      - name: Upload A/B build
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-latest-client-bag-view-ordinal-ab
+          retention-days: 7
+          path: |
+            stage37-live-server.exe
+            stage37-live-server.sha256
+            stage37-live-server.file.txt
+            stage37-live-server.goversion.txt
+            README_BAG_VIEW_ORDINAL_AB.txt
+            BAG_VIEW_ORDINAL_TARGETED_TEST.txt
+            BAG_VIEW_ORDINAL_TEST_BOUNDARY.txt

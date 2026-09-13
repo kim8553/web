@@ -49,6 +49,8 @@ jobs:
           cp buildtree/cmd/protocol-probe/zz_recovered_overlay.go property_sources/
           cp buildtree/spec/properties.json property_sources/
           cp buildtree/internal/protocol/generated/messages_gen.go property_sources/
+          cp buildtree/internal/clientdata/npc_schema.go property_sources/
+          cp buildtree/internal/clientdata/npc_resolver.go property_sources/
       - uses: actions/upload-artifact@v4
         with:
           name: stage37-property-sources

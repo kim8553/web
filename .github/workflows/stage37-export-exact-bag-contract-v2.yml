@@ -1,0 +1,95 @@
+name: Stage37 Export Exact Bag Contract V2
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-export-exact-bag-contract-v2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+      - name: Apply exact reconstruction and latest LIVE-proven overlays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_view_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_refresh_reentry_sync_patch.py buildtree
+          python3 tools/stage37_latest_client_current_bag_wire_reentry_drain_patch.py buildtree
+          python3 tools/stage37_latest_client_counted_bag_full_reentry_patch.py buildtree
+          python3 tools/stage37_latest_client_full_bag_add_gm_ack_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_no_synthetic_viewid_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_bag_rich_object_patch.py buildtree
+      - name: Export exact bag functions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          out=EXACT_BAG_CONTRACT_V2.txt
+          : > "$out"
+          for spec in \
+            'cmd/protocol-probe/zz_recovered_overlay.go:func bagItemProps' \
+            'cmd/protocol-probe/zz_recovered_overlay.go:func grantBagItems' \
+            'cmd/protocol-probe/main.go:func starterBagViews' \
+            'cmd/protocol-probe/messages.go:func serverCreateViewWithProperties' \
+            'cmd/protocol-probe/messages.go:func serverViewAdd' \
+            'cmd/protocol-probe/messages.go:func appendViewProperty' \
+            'cmd/protocol-probe/main.go:func sceneVisiblePropertyFields' \
+            'cmd/protocol-probe/main.go:sent property table' \
+            'cmd/protocol-probe/main.go:grantBagItems(link' \
+            'cmd/protocol-probe/gm_panel.go:time.After(20' \
+            'cmd/protocol-probe/latest_client_current_bag_wire.go:func latestClientCurrentBagFrames' \
+            'cmd/protocol-probe/latest_client_bag_view_ordinal_compat.go:func latestClientBagWireProperties'; do
+            f=${spec%%:*}; p=${spec#*:}
+            echo "===== $f :: $p =====" >> "$out"
+            python3 - "$f" "$p" <<'PY' >> "$out"
+import sys
+from pathlib import Path
+f=Path('buildtree')/sys.argv[1]
+p=sys.argv[2]
+s=f.read_text(encoding='utf-8', errors='replace')
+i=s.find(p)
+if i<0:
+    print('NOT FOUND')
+    raise SystemExit
+start=max(0, s.rfind('\n',0,i-1))
+# print a generous bounded excerpt; exact function usually ends well before this
+print(s[start:start+14000])
+PY
+          done
+          sha256sum "$out" > EXACT_BAG_CONTRACT_V2.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-exact-bag-contract-v2
+          retention-days: 7
+          path: |
+            EXACT_BAG_CONTRACT_V2.txt
+            EXACT_BAG_CONTRACT_V2.sha256

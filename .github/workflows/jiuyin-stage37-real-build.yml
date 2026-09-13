@@ -66,6 +66,7 @@ jobs:
             buildtree/cmd/protocol-probe/qinggong_records_test.go \
             buildtree/cmd/protocol-probe/role_store_test.go \
             buildtree/cmd/protocol-probe/shortcut_records_test.go \
+            buildtree/cmd/protocol-probe/skill_combat_test.go \
             buildtree/cmd/protocol-probe/skill_view_test.go \
             buildtree/internal/clientdata/npc_schema.go \
             buildtree/internal/clientdata/npc_resolver.go
@@ -87,7 +88,6 @@ jobs:
           go list -m all
 
       - name: Build protocol-probe with real dependencies
-        id: gobuild
         shell: bash
         working-directory: buildtree
         run: |
@@ -98,66 +98,152 @@ jobs:
           echo "$code" > ../stage37-real-go-build.exit
           exit 0
 
-      - name: Upload real build probe logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: stage37-real-build-probe
-          path: |
-            stage37-real-go-build.log
-            stage37-real-go-build.exit
-            buildtree/go.mod
-            buildtree/go.sum
-
-      - name: Fail if go build failed
-        shell: bash
-        run: |
-          code=$(cat stage37-real-go-build.exit)
-          echo "go build exit code: $code"
-          test "$code" -eq 0
-
-      - name: Run full Go tests
+      - name: Compile protocol-probe tests without executing init
         shell: bash
         working-directory: buildtree
         run: |
+          set +e
           set -o pipefail
-          go test ./... 2>&1 | tee ../stage37-real-go-test.log
+          go test -c -o ../stage37-protocol-probe.test ./cmd/protocol-probe 2>&1 | tee ../stage37-protocol-test-compile.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-protocol-test-compile.exit
+          exit 0
+
+      - name: Run tests that do not require current client resources
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set +e
+          set -o pipefail
+          mapfile -t pkgs < <(go list ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          go test "${pkgs[@]}" 2>&1 | tee ../stage37-nonprotocol-go-test.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-nonprotocol-go-test.exit
+          exit 0
+
+      - name: Run protocol-probe tests only with authority client resources
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set +e
+          set -o pipefail
+          authority_resource='resources/modern/share/skill/skill_new.ini'
+          if [ ! -f "$authority_resource" ]; then
+            {
+              echo "BLOCKED: authority current-client resource is absent from the verified Stage37 handoff: $authority_resource"
+              echo "No synthetic, legacy, or guessed resource was substituted."
+            } | tee ../stage37-protocol-go-test.log
+            echo 125 > ../stage37-protocol-go-test.exit
+            exit 0
+          fi
+          go test ./cmd/protocol-probe 2>&1 | tee ../stage37-protocol-go-test.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-protocol-go-test.exit
+          exit 0
 
       - name: Run go vet
         shell: bash
         working-directory: buildtree
         run: |
+          set +e
           set -o pipefail
           go vet ./... 2>&1 | tee ../stage37-real-go-vet.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-real-go-vet.exit
+          exit 0
 
-      - name: Run race tests
+      - name: Race-compile protocol-probe tests
         shell: bash
         working-directory: buildtree
         run: |
+          set +e
           set -o pipefail
-          go test -race ./... 2>&1 | tee ../stage37-real-go-race.log
+          go test -race -c -o ../stage37-protocol-probe-race.test ./cmd/protocol-probe 2>&1 | tee ../stage37-protocol-race-compile.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-protocol-race-compile.exit
+          exit 0
+
+      - name: Run race tests that do not require current client resources
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set +e
+          set -o pipefail
+          mapfile -t pkgs < <(go list ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          go test -race "${pkgs[@]}" 2>&1 | tee ../stage37-real-go-race.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-real-go-race.exit
+          exit 0
 
       - name: Build Windows amd64 target and record PE identity
         shell: bash
         working-directory: buildtree
         run: |
-          set -euxo pipefail
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o ../stage37-protocol-probe-windows-amd64.exe ./cmd/protocol-probe
-          sha256sum ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.sha256
-          file ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.file.txt
-          go version -m ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.goversion.txt
+          set +e
+          set -o pipefail
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o ../stage37-protocol-probe-windows-amd64.exe ./cmd/protocol-probe 2>&1 | tee ../stage37-windows-build.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-windows-build.exit
+          if [ "$code" -eq 0 ]; then
+            sha256sum ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.sha256
+            file ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.file.txt
+            go version -m ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.goversion.txt
+          fi
+          exit 0
 
-      - name: Upload post-build verification
+      - name: Upload Stage37 verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stage37-post-build-verification
+          name: stage37-real-build-verification
           path: |
-            stage37-real-go-test.log
+            stage37-real-go-build.log
+            stage37-real-go-build.exit
+            stage37-protocol-test-compile.log
+            stage37-protocol-test-compile.exit
+            stage37-nonprotocol-go-test.log
+            stage37-nonprotocol-go-test.exit
+            stage37-protocol-go-test.log
+            stage37-protocol-go-test.exit
             stage37-real-go-vet.log
+            stage37-real-go-vet.exit
+            stage37-protocol-race-compile.log
+            stage37-protocol-race-compile.exit
             stage37-real-go-race.log
+            stage37-real-go-race.exit
+            stage37-windows-build.log
+            stage37-windows-build.exit
             stage37-protocol-probe-windows-amd64.exe
             stage37-protocol-probe-windows-amd64.sha256
             stage37-protocol-probe-windows-amd64.file.txt
             stage37-protocol-probe-windows-amd64.goversion.txt
+            buildtree/go.mod
+            buildtree/go.sum
           if-no-files-found: warn
+
+      - name: Enforce completed verification gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          build=$(cat stage37-real-go-build.exit)
+          test_compile=$(cat stage37-protocol-test-compile.exit)
+          nonprotocol=$(cat stage37-nonprotocol-go-test.exit)
+          protocol=$(cat stage37-protocol-go-test.exit)
+          vet=$(cat stage37-real-go-vet.exit)
+          race_compile=$(cat stage37-protocol-race-compile.exit)
+          race=$(cat stage37-real-go-race.exit)
+          windows=$(cat stage37-windows-build.exit)
+          printf 'production_build=%s protocol_test_compile=%s nonprotocol_tests=%s protocol_runtime_tests=%s vet=%s protocol_race_compile=%s nonprotocol_race=%s windows_build=%s\n' \
+            "$build" "$test_compile" "$nonprotocol" "$protocol" "$vet" "$race_compile" "$race" "$windows"
+          test "$build" -eq 0
+          test "$test_compile" -eq 0
+          test "$nonprotocol" -eq 0
+          test "$vet" -eq 0
+          test "$race_compile" -eq 0
+          test "$race" -eq 0
+          test "$windows" -eq 0
+          if [ "$protocol" -eq 125 ]; then
+            echo 'BLOCKED: protocol-probe runtime tests require exact current-client resources not present in the verified handoff.'
+            exit 125
+          fi
+          test "$protocol" -eq 0

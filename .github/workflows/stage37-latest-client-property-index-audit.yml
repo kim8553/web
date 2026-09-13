@@ -1,0 +1,88 @@
+name: Stage37 Latest Client Property Index Audit
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-latest-client-property-index-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reassemble and patch Stage37
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+
+      - name: Locate property emitters and compute static max indexes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('buildtree')
+          out=[]
+          def emit(x=''): out.append(x)
+          needles=[
+            'func sendPlayerSpawn', 'func serverCreateView', 'func serverViewAdd',
+            'func serverAddObject', 'func playerProgressFields', 'func appendNPCProperty',
+            'func appendPlayer', 'func appendProperty'
+          ]
+          for p in sorted(root.rglob('*.go')):
+            t=p.read_text(encoding='utf-8')
+            lines=t.splitlines()
+            for i,line in enumerate(lines):
+              if any(n in line for n in needles):
+                emit(f'===== {p}:{i+1} =====')
+                emit('\n'.join(lines[max(0,i-8):min(len(lines),i+220)]))
+          emit('===== PROPERTY CONSTANTS / FIELDS >= 171 =====')
+          for p in sorted((root/'cmd'/'protocol-probe').glob('*.go')):
+            lines=p.read_text(encoding='utf-8').splitlines()
+            for i,line in enumerate(lines,1):
+              if re.search(r'\bprop[A-Za-z0-9_]+\b', line) or 'FieldSpec{Index:' in line:
+                emit(f'{p}:{i}:{line}')
+          emit('===== APPEND PROPERTY CALLS =====')
+          for p in sorted((root/'cmd'/'protocol-probe').glob('*.go')):
+            lines=p.read_text(encoding='utf-8').splitlines()
+            for i,line in enumerate(lines,1):
+              if re.search(r'append\w*Property|sceneObject\w*Property|serverObjectProperty', line):
+                emit(f'{p}:{i}:{line}')
+          Path('PROPERTY_INDEX_AUDIT.txt').write_text('\n'.join(out),encoding='utf-8')
+          print('\n'.join(out))
+          PY
+      - name: Upload audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-property-index-audit
+          retention-days: 7
+          path: PROPERTY_INDEX_AUDIT.txt

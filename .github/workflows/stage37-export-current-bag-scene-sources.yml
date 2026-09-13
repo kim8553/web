@@ -1,0 +1,61 @@
+name: Stage37 Export Current Bag Scene Sources
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-export-current-bag-scene-sources.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+      - name: Apply exact reconstruction and current overlays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_view_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_gm_item_reentry_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+      - name: Export relevant source
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir out
+          for f in main.go scene_transition.go scene_lifecycle.go messages.go gm_panel.go object_property.go player_actor.go zz_recovered_overlay.go; do
+            if [ -f "buildtree/cmd/protocol-probe/$f" ]; then cp "buildtree/cmd/protocol-probe/$f" "out/$f"; fi
+          done
+          grep -RIn -E 'func .*SwitchScene|serverEntryScene|serverExitScene|EntryScene|ExitScene|serverCreateView|serverViewAdd|starterBagViews|realBagProperties|gmItemInventoryView|grantGMItem|switch_scene' buildtree/cmd/protocol-probe > out/INDEX.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-current-bag-scene-sources
+          retention-days: 7
+          path: out/

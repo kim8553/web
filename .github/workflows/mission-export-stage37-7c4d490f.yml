@@ -1,0 +1,37 @@
+name: JIUYIN Stage37 Source Transport 7c4d490f
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/mission-export-stage37-7c4d490f.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reassemble and verify exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git rev-parse HEAD | tee TRANSPORT_HEAD.txt
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
+          sha256sum JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip > TRANSPORT_SHA256.txt
+
+      - name: Upload exact handoff transport
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-exact-handoff-7c4d490f
+          retention-days: 1
+          compression-level: 0
+          path: |
+            JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+            TRANSPORT_HEAD.txt
+            TRANSPORT_SHA256.txt

@@ -88,9 +88,6 @@ func latestClientBagWireProperties(properties []serverViewProperty) []serverView
 
 	result := make([]serverViewProperty, 0, 4)
 	if haveConfig {
-		// Both ConfigID ordinals are explicitly negotiated as strings.  The
-		// second slot is used by current shop/view Lua while ordinal 7 is the
-		// existing compact object identity used by Stage37.
 		result = append(result, viewString(7, configID), viewString(105, configID))
 	}
 	if haveAmount {
@@ -140,7 +137,7 @@ func TestLatestClientBagWirePropertiesUsesOnlyNegotiatedSlots(t *testing.T) {
 		}
 	}
 	for _, property := range got {
-		if property.index >= latestClientPlayerWirePropertyTableCount {
+		if int(property.index) >= latestClientPlayerWirePropertyTableCount {
 			t.Fatalf("emitted out-of-range property %d >= %d", property.index, latestClientPlayerWirePropertyTableCount)
 		}
 	}
@@ -161,7 +158,7 @@ func TestLatestClientBagWirePropertiesRecoversWeaponNestedConfigID(t *testing.T)
     messages = probe / "messages.go"
     text = messages.read_text(encoding="utf-8")
     old = '''func serverCreateViewWithProperties(spec serverViewSpec, properties []serverViewProperty) ([]byte, error) {\n\tif len(properties) > math.MaxUint16 {\n'''
-    new = '''func serverCreateViewWithProperties(spec serverViewSpec, properties []serverViewProperty) ([]byte, error) {\n\tif latestClientStarterBagView(spec.ID) {\n\t\t// Capacity is already carried in the CreateView header.  The previous\n\t\t// BaseCap properties (0x00E8/0x08A7) are outside the negotiated 228\n\t\t// property slots and are omitted in this latest-client A/B.\n\t\tproperties = nil\n\t}\n\tif len(properties) > math.MaxUint16 {\n'''
+    new = '''func serverCreateViewWithProperties(spec serverViewSpec, properties []serverViewProperty) ([]byte, error) {\n\tif latestClientStarterBagView(spec.ID) {\n\t\tproperties = nil\n\t}\n\tif len(properties) > math.MaxUint16 {\n'''
     text = replace_once(text, old, new, "bag CreateView property filter")
 
     old = '''func serverViewAdd(viewID, objectIndex uint16, properties []serverViewProperty) ([]byte, error) {\n\tif len(properties) > math.MaxUint16 {\n'''

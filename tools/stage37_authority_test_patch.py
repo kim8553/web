@@ -75,7 +75,7 @@ replace_exact(
 replace_exact(
     "cmd/protocol-probe/main_test.go",
     'oneRoleLoginSuccess(time.Date(2026, 7, 11, 12, 0, 0, 0, time.Local), "本地角色", nil)',
-    'oneRoleLoginSuccess(time.Date(2026, 7, 11, 12, 0, 0, 0, time.Local), "本地角色", nil, defaultRoleLocation().Scene)',
+    'oneRoleLoginSuccess(time.Date(2026, 7, 11, 12, 0, 0, 0, time.Local), "本地角色", nil, defaultRoleLocation(nil).Scene)',
 )
 
 # Property IDs are current uint16 wire indices. Test byte needles must encode them little-endian;

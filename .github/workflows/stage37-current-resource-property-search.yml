@@ -1,0 +1,43 @@
+name: Stage37 Current Resource Property Search
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-current-resource-property-search.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble Stage37 resource tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+      - name: Search resource/schema evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          {
+            echo '===== FILENAMES CONTAINING PROPERTY/PROP ====='
+            find buildtree -type f | grep -Ei 'property|prop(_|\.|ert)' | head -500 || true
+            echo '===== EXACT PROPERTY NAME HITS ====='
+            grep -RIn --binary-files=without-match -E 'MaxPowerValue|PowerValue|CurNeiGong|FacultyState|CurJingMai|QingGongPoint|MaxHP|CapitalType1|StaticData|ItemType' buildtree/resources buildtree/internal 2>/dev/null | head -3000 || true
+            echo '===== TABLE/SCHEMA HITS ====='
+            grep -RIn --binary-files=without-match -E 'Property.*Index|Index.*Property|property_table|PropertyList|PropertyName|WireType|MaxPowerValue' buildtree/resources buildtree/internal 2>/dev/null | head -3000 || true
+          } | tee RESOURCE_PROPERTY_SEARCH.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-current-resource-property-search
+          retention-days: 7
+          path: RESOURCE_PROPERTY_SEARCH.txt

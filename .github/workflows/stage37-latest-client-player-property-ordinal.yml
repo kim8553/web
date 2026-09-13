@@ -1,0 +1,125 @@
+name: Stage37 Latest Client Player Property Ordinal A/B
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-latest-client-player-property-ordinal.yml'
+      - 'tools/stage37_latest_client_player_property_ordinal_patch.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-player-property-ordinal:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
+          unzip -q JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip -d handoff
+          mkdir -p buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+
+      - name: Apply exact authority reconstruction and proven latest-client overlays
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/resource_patch.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/resource_patch.py' | sha256sum -c -
+          python3 /tmp/resource_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/resource_followup.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/resource_followup.py' | sha256sum -c -
+          python3 /tmp/resource_followup.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+          grep -F 'PLAYER-PROPERTY-ORDINAL birth' buildtree/cmd/protocol-probe/player_actor.go
+          grep -F 'latestClientPlayerWireProperties' buildtree/cmd/protocol-probe/object_property.go
+          grep -F 'latestClientPlayerWireProperties(p.playerBirthProperties' buildtree/cmd/protocol-probe/zz_recovered_overlay.go
+
+      - name: Restore exact external modules
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          sed -i '/^replace /d' go.mod
+          rm -rf _builddeps
+          go mod edit -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download
+          go mod download github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+
+      - name: Run property ordinal targeted regression
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          go test ./cmd/protocol-probe -run 'TestLatestClientPlayer(PropertyOrdinalMapMatchesNegotiatedTable|WirePropertiesDropsUnknownMismatchAndDeduplicates)|TestSceneObjectPropertiesNormalizesOnlyMainPlayer' -count=1
+
+      - name: Run protocol-probe regression and vet
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          go test ./cmd/protocol-probe -count=1
+          go vet ./...
+
+      - name: Build Windows amd64 A/B EXE
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o ../stage37-latest-client-player-property-ordinal.exe ./cmd/protocol-probe
+          sha256sum ../stage37-latest-client-player-property-ordinal.exe | tee ../stage37-latest-client-player-property-ordinal.sha256
+          file ../stage37-latest-client-player-property-ordinal.exe | tee ../stage37-latest-client-player-property-ordinal.file.txt
+          go version -m ../stage37-latest-client-player-property-ordinal.exe | tee ../stage37-latest-client-player-property-ordinal.goversion.txt
+          printf '%s\n' \
+            'STAGE37 LATEST-CLIENT PLAYER PROPERTY ORDINAL A/B - NOT EXACT AUTHORITY EXE' \
+            '' \
+            'Evidence-constrained change:' \
+            '- Opcode 0x09 currently negotiates 228 property entries by slice order; FieldSpec.Index is not serialized.' \
+            '- Main-player scene/snapshot properties are now mapped only by exact property-name + wire-type to that negotiated ordinal.' \
+            '- Unknown/type-mismatched player properties are omitted instead of guessed.' \
+            '- NPC encoders and all view-object property encoders are unchanged in this A/B.' \
+            '- The previously proven latest-client ServerLocation and exact legacy born02 in-memory remap overlays remain enabled.' \
+            '' \
+            'LIVE test:' \
+            '1. Replace the prior compatibility EXE with stage37-latest-client-player-property-ordinal.exe using the same server folder/config.' \
+            '2. Start server, log in once, wait for the scene to finish loading.' \
+            '3. Check whether the Lua popup / game_visual:GetPlayer not exist disappears or changes.' \
+            '4. Hold W for about 3 seconds.' \
+            '5. Collect the same LIVE_RESULT ZIP.' \
+            '' \
+            'Expected diagnostic log anchor:' \
+            'latest-client PLAYER-PROPERTY-ORDINAL birth raw=... wire=... dropped=... table=228' \
+            > ../README_PLAYER_PROPERTY_ORDINAL_AB.txt
+
+      - name: Upload A/B build
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-latest-client-player-property-ordinal-ab
+          retention-days: 7
+          path: |
+            stage37-latest-client-player-property-ordinal.exe
+            stage37-latest-client-player-property-ordinal.sha256
+            stage37-latest-client-player-property-ordinal.file.txt
+            stage37-latest-client-player-property-ordinal.goversion.txt
+            README_PLAYER_PROPERTY_ORDINAL_AB.txt

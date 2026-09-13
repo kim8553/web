@@ -1,0 +1,53 @@
+name: Stage37 Export Property Sources
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-export-property-sources.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble and patch Stage37
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+          mkdir property_sources
+          cp buildtree/cmd/protocol-probe/player_actor.go property_sources/
+          cp buildtree/cmd/protocol-probe/player_progress.go property_sources/
+          cp buildtree/cmd/protocol-probe/messages.go property_sources/
+          cp buildtree/cmd/protocol-probe/main.go property_sources/
+          cp buildtree/cmd/protocol-probe/object_property.go property_sources/
+          cp buildtree/cmd/protocol-probe/qinggong_records.go property_sources/
+          cp buildtree/cmd/protocol-probe/skill_view.go property_sources/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-property-sources
+          retention-days: 7
+          path: property_sources/

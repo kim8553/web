@@ -103,3 +103,49 @@ jobs:
           code=$(cat stage37-real-go-build.exit)
           echo "go build exit code: $code"
           test "$code" -eq 0
+
+      - name: Run full Go tests
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -o pipefail
+          go test ./... 2>&1 | tee ../stage37-real-go-test.log
+
+      - name: Run go vet
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -o pipefail
+          go vet ./... 2>&1 | tee ../stage37-real-go-vet.log
+
+      - name: Run race tests
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -o pipefail
+          go test -race ./... 2>&1 | tee ../stage37-real-go-race.log
+
+      - name: Build Windows amd64 target and record PE identity
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o ../stage37-protocol-probe-windows-amd64.exe ./cmd/protocol-probe
+          sha256sum ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.sha256
+          file ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.file.txt
+          go version -m ../stage37-protocol-probe-windows-amd64.exe | tee ../stage37-protocol-probe-windows-amd64.goversion.txt
+
+      - name: Upload post-build verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-post-build-verification
+          path: |
+            stage37-real-go-test.log
+            stage37-real-go-vet.log
+            stage37-real-go-race.log
+            stage37-protocol-probe-windows-amd64.exe
+            stage37-protocol-probe-windows-amd64.sha256
+            stage37-protocol-probe-windows-amd64.file.txt
+            stage37-protocol-probe-windows-amd64.goversion.txt
+          if-no-files-found: warn

@@ -1,0 +1,83 @@
+name: Stage37 Export Post-Overlay ViewAdd Audit
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-export-post-overlay-viewadd-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+
+      - name: Apply exact current overlay chain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/rp.py' | sha256sum -c -
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/rf.py' | sha256sum -c -
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_view_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_refresh_reentry_sync_patch.py buildtree
+          python3 tools/stage37_latest_client_current_bag_wire_reentry_drain_patch.py buildtree
+          python3 tools/stage37_latest_client_counted_bag_full_reentry_patch.py buildtree
+          python3 tools/stage37_latest_client_full_bag_add_gm_ack_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_no_synthetic_viewid_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_bag_rich_object_patch.py buildtree
+          python3 tools/stage37_builtin_ident_followup.py buildtree
+
+      - name: Produce ViewAdd audit inputs
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p export/cmd-protocol-probe
+          cp buildtree/cmd/protocol-probe/*.go export/cmd-protocol-probe/
+          grep -RIn --include='*.go' 'serverViewAdd(' buildtree/cmd/protocol-probe > export/SERVER_VIEW_ADD_CALLS.txt || true
+          grep -RIn --include='*.go' -E 'const .*uint16|prop[A-Za-z0-9_]+.*uint16|viewport[A-Za-z0-9_]+' buildtree/cmd/protocol-probe > export/VIEW_PROPERTY_CONSTANTS.txt || true
+          awk '/func grantStarterProgress :=|grantStarterProgress := func\(\)/,/^\t}/' buildtree/cmd/protocol-probe/main.go > export/STARTER_PROGRESS.txt || true
+          {
+            echo 'POST_OVERLAY_VIEWADD_AUDIT'
+            echo 'No server EXE is built by this workflow.'
+            echo 'Overlay chain includes built-in Ident follow-up.'
+            echo 'Purpose: enumerate post-overlay ViewAdd emitters and compare raw wire ordinals with negotiated table count.'
+          } > export/README.txt
+          tar -czf post-overlay-viewadd-source.tar.gz -C export .
+          sha256sum post-overlay-viewadd-source.tar.gz > post-overlay-viewadd-source.sha256
+
+      - name: Upload source audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-post-overlay-viewadd-audit
+          retention-days: 7
+          path: |
+            post-overlay-viewadd-source.tar.gz
+            post-overlay-viewadd-source.sha256

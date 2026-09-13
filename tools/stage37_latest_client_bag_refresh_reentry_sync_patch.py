@@ -4,12 +4,13 @@
 # Evidence boundary:
 # - give_item reached the server, was persisted, and a ViewAdd was emitted, but the client bag stayed empty.
 # - the current grant path re-CREATEs already-existing starter views without deleting the tool bag first.
-# - historical protocol evidence used DELETE_VIEW -> CREATE_VIEW -> authoritative replay for a live bag refresh.
+# - historical protocol evidence verified SERVER_DELETE_VIEW as 0x16 + little-endian uint16 view ID and used
+#   DELETE_VIEW -> CREATE_VIEW -> authoritative replay for a live bag refresh.
 # - latest target-scene switch sent ExitScene/EntryScene + player AddObject, then the client never emitted a
 #   target ClientReady (0x09/0x0A). Initial entry, which works, sends player location/vitals before ClientReady;
 #   latest-client NPC loading also proved an immediate ServerLocation after AddObject can be required.
 #
-# This probe is intentionally narrow:
+# This probe is intentionally narrow and is NOT exact-authority behavior:
 # 1) expose existing give_item UI;
 # 2) for a normal GM bag-item grant, delete only tool-bag View 2 immediately before the existing authoritative
 #    grantBagItems replay (the replay itself recreates View 2 with current ordinal-safe properties);
@@ -32,6 +33,19 @@ def main():
     root = Path(sys.argv[1])
     probe = root / "cmd" / "protocol-probe"
 
+    # Compatibility-only verified historical wire primitive.  The current exact
+    # reconstructed tree does not expose this helper, so keep it isolated here.
+    delete_helper = probe / "latest_client_delete_view_compat.go"
+    delete_helper.write_text(r'''package main
+
+// serverDeleteViewCompat encodes the historically verified SERVER_DELETE_VIEW
+// layout: opcode 0x16 followed by a little-endian uint16 view ID.  It is used
+// only by the latest-client live-bag refresh A/B and is not exact-authority code.
+func serverDeleteViewCompat(viewID uint16) []byte {
+    return []byte{0x16, byte(viewID), byte(viewID >> 8)}
+}
+''', encoding="utf-8")
+
     gm = probe / "gm_panel.go"
     text = gm.read_text(encoding="utf-8")
     old = '''<section><h2>碎银</h2><input id="silver" type="number" value="99999" min="0"><button onclick="silver()">设置碎银</button></section>\n<section><h2>怒气</h2>'''
@@ -45,14 +59,14 @@ def main():
     main_go = probe / "main.go"
     text = main_go.read_text(encoding="utf-8")
     old = '''\t\t\tplayer.addBagItem(bagItem)\n\t\t\tif saveErr := bagStore.Save(selectedRoleID(selected), player.bagSnapshot()); saveErr != nil {\n\t\t\t\tlog.Printf("%s: persist bag after give: %v", conn.RemoteAddr(), saveErr)\n\t\t\t}\n\t\t\tif err := grantBagItems(link, player, itemCatalog, equipCatalog, conn.RemoteAddr().String()); err != nil {\n'''
-    new = '''\t\t\tplayer.addBagItem(bagItem)\n\t\t\tif saveErr := bagStore.Save(selectedRoleID(selected), player.bagSnapshot()); saveErr != nil {\n\t\t\t\tlog.Printf("%s: persist bag after give: %v", conn.RemoteAddr(), saveErr)\n\t\t\t}\n\t\t\t// Latest-client LIVE A/B: a live View 2 already exists here.  Historical\n\t\t\t// bag lifecycle evidence refreshes a live bag with DELETE_VIEW before\n\t\t\t// CREATE_VIEW + authoritative replay.  Delete only the normal tool bag;\n\t\t\t// grantBagItems below recreates it using the current ordinal-safe encoder.\n\t\t\tif err := link.WriteFrame(serverDeleteView(2)); err != nil {\n\t\t\t\tgmSession.setAction("刷新背包失败：" + err.Error())\n\t\t\t\treturn err\n\t\t\t}\n\t\t\tlog.Printf("%s: latest-client BAG-REFRESH deleted live View=2 before authoritative replay", conn.RemoteAddr())\n\t\t\tif err := grantBagItems(link, player, itemCatalog, equipCatalog, conn.RemoteAddr().String()); err != nil {\n'''
+    new = '''\t\t\tplayer.addBagItem(bagItem)\n\t\t\tif saveErr := bagStore.Save(selectedRoleID(selected), player.bagSnapshot()); saveErr != nil {\n\t\t\t\tlog.Printf("%s: persist bag after give: %v", conn.RemoteAddr(), saveErr)\n\t\t\t}\n\t\t\t// Latest-client LIVE A/B: a live View 2 already exists here. Historical\n\t\t\t// bag lifecycle evidence refreshes a live bag with DELETE_VIEW before\n\t\t\t// CREATE_VIEW + authoritative replay. Delete only the normal tool bag;\n\t\t\t// grantBagItems below recreates it using the current ordinal-safe encoder.\n\t\t\tif err := link.WriteFrame(serverDeleteViewCompat(2)); err != nil {\n\t\t\t\tgmSession.setAction("刷新背包失败：" + err.Error())\n\t\t\t\treturn err\n\t\t\t}\n\t\t\tlog.Printf("%s: latest-client BAG-REFRESH deleted live View=2 before authoritative replay", conn.RemoteAddr())\n\t\t\tif err := grantBagItems(link, player, itemCatalog, equipCatalog, conn.RemoteAddr().String()); err != nil {\n'''
     text = replace_once(text, old, new, "normal GM item live bag refresh")
     main_go.write_text(text, encoding="utf-8")
 
     trans = probe / "scene_transition.go"
     text = trans.read_text(encoding="utf-8")
     old = '''\tif err := sendPlayerAddObject(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {\n\t\treturn fmt.Errorf("write player re-entry archive: %w", err)\n\t}\n\tclear(r.activeNPCs)\n'''
-    new = '''\tif err := sendPlayerAddObject(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {\n\t\treturn fmt.Errorf("write player re-entry archive: %w", err)\n\t}\n\t// Latest-client re-entry A/B: the working initial-entry chain supplies the\n\t// authoritative player location/vitals before the explicit ClientReady.  The\n\t// failed target-scene chain stopped after AddObject and never produced 0x09.\n\t// Replay only already-recovered player state here, then still require the real\n\t// target ClientReady before materializing target NPCs.\n\tif err := sendPlayerLocationAndVitals(r.conn, r.player, destination.location.Position); err != nil {\n\t\treturn fmt.Errorf("write early target player location/vitals: %w", err)\n\t}\n\tlog.Printf("%s: latest-client REENTRY-EARLY-PLAYER-SYNC scene=%s resource=%s x=%.3f y=%.3f z=%.3f orient=%.3f", r.conn.RemoteAddr(), destination.location.Scene.Config, destination.location.Scene.Resource, destination.location.Position.X, destination.location.Position.Y, destination.location.Position.Z, destination.location.Position.Orient)\n\tclear(r.activeNPCs)\n'''
+    new = '''\tif err := sendPlayerAddObject(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {\n\t\treturn fmt.Errorf("write player re-entry archive: %w", err)\n\t}\n\t// Latest-client re-entry A/B: the working initial-entry chain supplies the\n\t// authoritative player location/vitals before the explicit ClientReady. The\n\t// failed target-scene chain stopped after AddObject and never produced 0x09.\n\t// Replay only already-recovered player state here, then still require the real\n\t// target ClientReady before materializing target NPCs.\n\tif err := sendPlayerLocationAndVitals(r.conn, r.player, destination.location.Position); err != nil {\n\t\treturn fmt.Errorf("write early target player location/vitals: %w", err)\n\t}\n\tclear(r.activeNPCs)\n'''
     text = replace_once(text, old, new, "target re-entry early player sync")
     trans.write_text(text, encoding="utf-8")
 
@@ -60,6 +74,7 @@ def main():
     test.write_text(r'''package main
 
 import (
+    "encoding/binary"
     "strings"
     "testing"
 )
@@ -71,8 +86,16 @@ func TestLatestClientGMPanelStillExposesGiveItem(t *testing.T) {
         }
     }
 }
+
+func TestServerDeleteViewCompatVerifiedLayout(t *testing.T) {
+    frame := serverDeleteViewCompat(2)
+    if len(frame) != 3 || frame[0] != 0x16 || binary.LittleEndian.Uint16(frame[1:]) != 2 {
+        t.Fatalf("delete view frame=%x", frame)
+    }
+}
 ''', encoding="utf-8")
 
+    print(f"wrote {delete_helper}")
     print(f"patched {gm}")
     print(f"patched {main_go}")
     print(f"patched {trans}")

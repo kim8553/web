@@ -94,3 +94,16 @@ print("patched cmd/protocol-probe/skill_catalog.go: effectsHaveKind")
 # Current sceneMessageConnection method set is WriteFrame only.
 replace_exact("cmd/protocol-probe/skill_switch.go", 'return serverModernCustomIntMessage(414, []serverCustomValue{customString("reset"), customInt(1223), customInt(1)})', 'return serverModernCustomIntMessage(414, customString("reset"), customInt(1223), customInt(1))')
 replace_exact("cmd/protocol-probe/skill_switch.go", "if _, err := link.Write(frame); err != nil {", "if err := link.WriteFrame(frame); err != nil {")
+
+# 13. Current itemCatalog/equipCatalog exact first field is byID. enrichBagItem machine code
+# directly performs runtime.mapaccess2 on that map, so legacy `.items` is not current.
+replace_exact("cmd/protocol-probe/zz_recovered_overlay.go", "itemCatalog.items[item.ConfigID]", "itemCatalog.byID[item.ConfigID]")
+replace_exact("cmd/protocol-probe/zz_recovered_overlay.go", "equipCatalog.items[item.ConfigID]", "equipCatalog.byID[item.ConfigID]")
+
+# 14. Current activate/deactivate JingMai record frame builders use the fixed current player
+# object constants. playerActor has no ObjectID()/OwnerID() authored methods in current DWARF.
+replace_exact("cmd/protocol-probe/zz_recovered_overlay.go", "serverRecordAddString(player.ObjectID(), player.OwnerID(), 6, id)", "serverRecordAddString(playerObjectID, playerOwnerID, 6, id)")
+replace_exact("cmd/protocol-probe/zz_recovered_overlay.go", "serverRecordDelRow(player.ObjectID(), player.OwnerID(), 6, uint16(row))", "serverRecordDelRow(playerObjectID, playerOwnerID, 6, uint16(row))")
+
+# 15. Current serverViewProperty DWARF is exactly 48 bytes; nest *serverViewNest is at offset 40.
+replace_exact("cmd/protocol-probe/messages.go", "\treal32 *float32\n}", "\treal32 *float32\n\tnest   *serverViewNest\n}")

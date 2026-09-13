@@ -70,6 +70,8 @@ jobs:
           go env GOPROXY GOSUMDB
           cat go.mod
           go mod download
+          go mod download github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          grep -F 'github.com/Hiroko103/go-quicklz v0.0.0-20190115215310-59904abc50d0 h1:' go.sum
           go list -m all
 
       - name: Build protocol-probe with real dependencies

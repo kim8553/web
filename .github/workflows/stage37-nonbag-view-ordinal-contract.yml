@@ -1,0 +1,163 @@
+name: Stage37 Current Client Non-Bag View Ordinal Contract
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - 'tools/stage37_latest_client_nonbag_view_ordinal_patch.py'
+      - '.github/workflows/stage37-nonbag-view-ordinal-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+
+      - name: Apply exact current overlay chain plus non-bag ordinal follow-up
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/rp.py' | sha256sum -c -
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/rf.py' | sha256sum -c -
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_view_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_refresh_reentry_sync_patch.py buildtree
+          python3 tools/stage37_latest_client_current_bag_wire_reentry_drain_patch.py buildtree
+          python3 tools/stage37_latest_client_counted_bag_full_reentry_patch.py buildtree
+          python3 tools/stage37_latest_client_full_bag_add_gm_ack_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_no_synthetic_viewid_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_bag_rich_object_patch.py buildtree
+          python3 tools/stage37_builtin_ident_followup.py buildtree
+          python3 tools/stage37_latest_client_nonbag_view_ordinal_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+
+      - name: Assert exact negotiated-table and non-bag ViewAdd contract
+        shell: bash
+        run: |
+          set -euxo pipefail
+          grep -F 'latestClientPlayerWirePropertyTableCount != 229' buildtree/cmd/protocol-probe/latest_client_player_property_ordinal_compat_test.go
+          if grep -Fq 'case 229:' buildtree/cmd/protocol-probe/latest_client_current_bag_wire.go; then
+            echo 'ERROR: Ident ordinal 229 returned'
+            exit 1
+          fi
+          grep -F 'case viewportSkill, viewportNormalAttack, viewportNeiGong, 45, viewportQingGong, 47, 48:' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'case 0x05A0:' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewString(7,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewInt(205,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewInt(204,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewInt(6,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewInt(203,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewInt(176,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewInt(177,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewByte(225,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'viewFloat(212,' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'case 0x08EC, 0x08C3, 0x08ED:' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'Current table has no proven matching field; intentionally omit.' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'latestClientNonBagViewOrdinalFamily(viewID)' buildtree/cmd/protocol-probe/messages.go
+          grep -F 'normalized property ordinal' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+          grep -F 'TestLatestClientNonBagViewLegacyOrdinalsNormalizeWithinNegotiatedTable' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat_test.go
+          grep -F 'TestLatestClientNeiGongDropsOnlyUnnegotiatedLegacyMetadata' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat_test.go
+          grep -F 'TestLatestClientNonBagViewRejectsUnknownOutOfRangeProperty' buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat_test.go
+          grep -F 'time.After(20 * time.Second)' buildtree/cmd/protocol-probe/gm_panel.go
+          grep -F 'REENTRY-EXIT-DRAIN A/B discriminator' buildtree/cmd/protocol-probe/scene_transition.go
+
+      - name: Restore exact external modules
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          sed -i '/^replace /d' go.mod
+          rm -rf _builddeps
+          go mod edit -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download
+          go mod download github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+
+      - name: Compile exact reconstructed server source
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          go test -c -o ../stage37-nonbag-view-ordinal.test ./cmd/protocol-probe
+          go test ./internal/clientdata -count=1
+
+      - name: Focused non-bag ordinal tests
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -uo pipefail
+          set +e
+          go test ./cmd/protocol-probe -run 'TestLatestClientNonBagViewLegacyOrdinalsNormalizeWithinNegotiatedTable|TestLatestClientNeiGongDropsOnlyUnnegotiatedLegacyMetadata|TestLatestClientNonBagViewRejectsUnknownOutOfRangeProperty|TestLatestClientNonBagServerViewAddNormalizesBeforeEncoding' -count=1 2>&1 | tee ../TARGETED_TEST.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo 'TARGETED_RUNTIME_TEST=PASS' | tee ../TEST_BOUNDARY.txt
+          elif grep -Fq 'resources/modern/share/skill/skill_new.ini: no such file or directory' ../TARGETED_TEST.txt; then
+            echo 'TARGETED_RUNTIME_TEST=BLOCKED_BY_MISSING_SKILL_RESOURCE_IN_STAGE37_HANDOFF' | tee ../TEST_BOUNDARY.txt
+          else
+            echo "TARGETED_RUNTIME_TEST=FAIL rc=$rc" | tee ../TEST_BOUNDARY.txt
+            exit "$rc"
+          fi
+
+      - name: Vet reconstructed tree
+        shell: bash
+        working-directory: buildtree
+        run: go vet ./...
+
+      - name: Export validation evidence only
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p evidence
+          cp buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go evidence/
+          cp buildtree/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat_test.go evidence/
+          cp buildtree/cmd/protocol-probe/messages.go evidence/
+          cp TARGETED_TEST.txt TEST_BOUNDARY.txt evidence/
+          {
+            echo 'STAGE37 NON-BAG VIEW ORDINAL STATIC VALIDATION'
+            echo 'NO LIVE SERVER EXE BUILT BY THIS WORKFLOW.'
+            echo 'Negotiated property table remains 229 entries (0..228).'
+            echo 'Scope: Views 40/41/43/45/46/47/48 only.'
+            echo 'No new ordinal invented for NeiGongLevel/WuXing/BufferID.'
+            echo 'Compile/vet/static success is NOT LIVE success.'
+          } > evidence/README.txt
+          tar -czf stage37-nonbag-view-ordinal-validation.tar.gz -C evidence .
+          sha256sum stage37-nonbag-view-ordinal-validation.tar.gz > stage37-nonbag-view-ordinal-validation.sha256
+
+      - name: Upload validation evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-nonbag-view-ordinal-validation
+          retention-days: 7
+          path: |
+            stage37-nonbag-view-ordinal-validation.tar.gz
+            stage37-nonbag-view-ordinal-validation.sha256

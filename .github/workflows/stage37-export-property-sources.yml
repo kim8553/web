@@ -47,6 +47,8 @@ jobs:
           cp buildtree/cmd/protocol-probe/qinggong_records.go property_sources/
           cp buildtree/cmd/protocol-probe/skill_view.go property_sources/
           cp buildtree/cmd/protocol-probe/zz_recovered_overlay.go property_sources/
+          cp buildtree/spec/properties.json property_sources/
+          cp buildtree/internal/protocol/generated/messages_gen.go property_sources/
       - uses: actions/upload-artifact@v4
         with:
           name: stage37-property-sources

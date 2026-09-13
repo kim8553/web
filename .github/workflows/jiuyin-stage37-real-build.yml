@@ -1,0 +1,83 @@
+name: JIUYIN Stage37 Real Build Probe
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/jiuyin-stage37-real-build.yml'
+      - 'JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00'
+      - 'JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-build-probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+
+      - name: Reassemble verified Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
+          unzip -q JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip -d handoff
+
+      - name: Extract latest merged build-probe tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+          test -f buildtree/go.mod
+
+      - name: Replace local dependency stubs with authority-exact modules
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          sed -i '/^replace /d' go.mod
+          rm -rf _builddeps
+          go mod edit -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go version
+          go env GOPROXY GOSUMDB
+          cat go.mod
+          go mod download
+          go list -m all
+
+      - name: Compile and test protocol-probe with real dependencies
+        id: gotest
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set +e
+          set -o pipefail
+          go test ./cmd/protocol-probe 2>&1 | tee ../stage37-real-go-test.log
+          code=${PIPESTATUS[0]}
+          echo "$code" > ../stage37-real-go-test.exit
+          exit 0
+
+      - name: Upload real build probe logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-real-build-probe
+          path: |
+            stage37-real-go-test.log
+            stage37-real-go-test.exit
+            buildtree/go.mod
+            buildtree/go.sum
+
+      - name: Fail if go test failed
+        shell: bash
+        run: |
+          code=$(cat stage37-real-go-test.exit)
+          echo "go test exit code: $code"
+          test "$code" -eq 0

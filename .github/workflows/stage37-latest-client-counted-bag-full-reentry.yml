@@ -58,7 +58,7 @@ jobs:
 
           grep -F 'binary.LittleEndian.PutUint16(msg[5:7], 1)' buildtree/cmd/protocol-probe/latest_client_current_bag_wire.go
           grep -F 'binary.LittleEndian.PutUint16(msg[10:12], 1)' buildtree/cmd/protocol-probe/latest_client_current_bag_wire.go
-          grep -F 'latest-client REENTRY-FULL-SPAWN replayed initial-entry player spawn sequence' buildtree/cmd/protocol-probe/scene_transition.go
+          grep -F 'write full player re-entry spawn' buildtree/cmd/protocol-probe/scene_transition.go
           grep -F 'REENTRY-EXIT-DRAIN A/B discriminator' buildtree/cmd/protocol-probe/scene_transition.go
           if grep -Fq 'promoted later target-scene 0x0A' buildtree/cmd/protocol-probe/main.go; then
             echo 'unexpected disproven late-0x0A promotion overlay present'

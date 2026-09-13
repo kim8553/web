@@ -1,0 +1,106 @@
+name: Stage37 Latest Client Scene Compatibility
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-latest-client-scene-compat.yml'
+      - 'tools/stage37_latest_client_scene_compat_patch.py'
+      - 'tools/stage37_authority_compile_patch.py'
+      - 'tools/stage37_authority_test_patch.py'
+      - 'tools/stage37_authority_test_followup.py'
+      - 'tools/stage37_authority_runtime_patch.py'
+      - 'tools/stage37_authority_resource_test_patch.py.gz.b64'
+      - 'tools/stage37_authority_resource_test_followup.py.gz.b64'
+      - 'tools/stage37_authority_resource_test_final.py'
+      - 'tools/stage37_authority_yihua_exact_test_patch.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-scene-compat:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
+          unzip -q JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip -d handoff
+          mkdir -p buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+
+      - name: Apply exact authority reconstruction then isolated latest-client compatibility delta
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/resource_patch.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/resource_patch.py' | sha256sum -c -
+          python3 /tmp/resource_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/resource_followup.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/resource_followup.py' | sha256sum -c -
+          python3 /tmp/resource_followup.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+          grep -F 'latest-client scene compatibility armed location replays' buildtree/cmd/protocol-probe/scene_lifecycle.go
+
+      - name: Restore exact external modules
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          sed -i '/^replace /d' go.mod
+          rm -rf _builddeps
+          go mod edit -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download
+          go mod download github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+
+      - name: Compile and vet compatibility delta
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          go test -c -o ../stage37-latest-client-scene-compat.test ./cmd/protocol-probe
+          go vet ./...
+
+      - name: Build Windows amd64 compatibility EXE
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -euxo pipefail
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o ../stage37-latest-client-scene-compat.exe ./cmd/protocol-probe
+          sha256sum ../stage37-latest-client-scene-compat.exe | tee ../stage37-latest-client-scene-compat.sha256
+          file ../stage37-latest-client-scene-compat.exe | tee ../stage37-latest-client-scene-compat.file.txt
+          go version -m ../stage37-latest-client-scene-compat.exe | tee ../stage37-latest-client-scene-compat.goversion.txt
+          printf '%s\n' \
+            'DIAGNOSTIC COMPATIBILITY BUILD - NOT EXACT AUTHORITY EXE' \
+            'Delta: immediate ServerLocation after new scene Actor2 plus replay at 250ms, 750ms, 1.5s, 3s, 5s.' \
+            'Reason: September patched client stalls before final stage_main ClientReady; historical successful LIVE traffic used this delivery sequence.' \
+            > ../README_LATEST_CLIENT_SCENE_COMPAT.txt
+
+      - name: Upload compatibility probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-latest-client-scene-compat
+          retention-days: 7
+          path: |
+            stage37-latest-client-scene-compat.exe
+            stage37-latest-client-scene-compat.sha256
+            stage37-latest-client-scene-compat.file.txt
+            stage37-latest-client-scene-compat.goversion.txt
+            README_LATEST_CLIENT_SCENE_COMPAT.txt

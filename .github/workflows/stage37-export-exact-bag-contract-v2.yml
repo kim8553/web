@@ -49,47 +49,27 @@ jobs:
           python3 tools/stage37_latest_client_full_bag_add_gm_ack_patch.py buildtree
           python3 tools/stage37_latest_client_bag_no_synthetic_viewid_patch.py buildtree
           python3 tools/stage37_latest_client_legacy_bag_rich_object_patch.py buildtree
-      - name: Export exact bag functions
+      - name: Export exact bag sources
         shell: bash
         run: |
           set -euxo pipefail
-          out=EXACT_BAG_CONTRACT_V2.txt
-          : > "$out"
-          for spec in \
-            'cmd/protocol-probe/zz_recovered_overlay.go:func bagItemProps' \
-            'cmd/protocol-probe/zz_recovered_overlay.go:func grantBagItems' \
-            'cmd/protocol-probe/main.go:func starterBagViews' \
-            'cmd/protocol-probe/messages.go:func serverCreateViewWithProperties' \
-            'cmd/protocol-probe/messages.go:func serverViewAdd' \
-            'cmd/protocol-probe/messages.go:func appendViewProperty' \
-            'cmd/protocol-probe/main.go:func sceneVisiblePropertyFields' \
-            'cmd/protocol-probe/main.go:sent property table' \
-            'cmd/protocol-probe/main.go:grantBagItems(link' \
-            'cmd/protocol-probe/gm_panel.go:time.After(20' \
-            'cmd/protocol-probe/latest_client_current_bag_wire.go:func latestClientCurrentBagFrames' \
-            'cmd/protocol-probe/latest_client_bag_view_ordinal_compat.go:func latestClientBagWireProperties'; do
-            f=${spec%%:*}; p=${spec#*:}
-            echo "===== $f :: $p =====" >> "$out"
-            python3 - "$f" "$p" <<'PY' >> "$out"
-import sys
-from pathlib import Path
-f=Path('buildtree')/sys.argv[1]
-p=sys.argv[2]
-s=f.read_text(encoding='utf-8', errors='replace')
-i=s.find(p)
-if i<0:
-    print('NOT FOUND')
-    raise SystemExit
-start=max(0, s.rfind('\n',0,i-1))
-# print a generous bounded excerpt; exact function usually ends well before this
-print(s[start:start+14000])
-PY
-          done
-          sha256sum "$out" > EXACT_BAG_CONTRACT_V2.sha256
+          cp buildtree/cmd/protocol-probe/zz_recovered_overlay.go zz_recovered_overlay.go
+          cp buildtree/cmd/protocol-probe/main.go main.go
+          cp buildtree/cmd/protocol-probe/messages.go messages.go
+          cp buildtree/cmd/protocol-probe/latest_client_current_bag_wire.go latest_client_current_bag_wire.go
+          cp buildtree/cmd/protocol-probe/latest_client_bag_view_ordinal_compat.go latest_client_bag_view_ordinal_compat.go
+          cp buildtree/cmd/protocol-probe/gm_panel.go gm_panel.go
+          grep -nE 'func (bagItemProps|grantBagItems|starterBagViews|serverCreateViewWithProperties|serverViewAdd|appendViewProperty|sceneVisiblePropertyFields)' zz_recovered_overlay.go main.go messages.go || true
+          sha256sum zz_recovered_overlay.go main.go messages.go latest_client_current_bag_wire.go latest_client_bag_view_ordinal_compat.go gm_panel.go > EXACT_BAG_SOURCES.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: stage37-exact-bag-contract-v2
           retention-days: 7
           path: |
-            EXACT_BAG_CONTRACT_V2.txt
-            EXACT_BAG_CONTRACT_V2.sha256
+            zz_recovered_overlay.go
+            main.go
+            messages.go
+            latest_client_current_bag_wire.go
+            latest_client_bag_view_ordinal_compat.go
+            gm_panel.go
+            EXACT_BAG_SOURCES.sha256

@@ -5,6 +5,7 @@ on:
     branches: [stage37]
     paths:
       - '.github/workflows/jiuyin-stage37-real-build.yml'
+      - 'tools/stage37_authority_compile_patch.py'
       - 'JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00'
       - 'JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01'
   workflow_dispatch:
@@ -37,6 +38,19 @@ jobs:
           mkdir -p buildtree
           tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
           test -f buildtree/go.mod
+
+      - name: Apply authority-backed compile contract fixes
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          gofmt -w \
+            buildtree/cmd/protocol-probe/npc_catalog.go \
+            buildtree/cmd/protocol-probe/player_actor.go \
+            buildtree/cmd/protocol-probe/player_progress.go \
+            buildtree/cmd/protocol-probe/role_store.go \
+            buildtree/internal/clientdata/npc_schema.go \
+            buildtree/internal/clientdata/npc_resolver.go
 
       - name: Replace local dependency stubs with authority-exact modules
         shell: bash

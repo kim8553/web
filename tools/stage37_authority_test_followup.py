@@ -94,3 +94,12 @@ replace_exact(
     'func TestCreatedRoleList(t *testing.T) {\n\tmsg := oneRoleLoginSuccess(time.Date(2026, 7, 11, 12, 0, 0, 0, time.Local), "本地角色", nil, defaultRoleLocation(nil).Scene)',
     'func TestCreatedRoleList(t *testing.T) {\n\tappearance := []string{"book1", "", "", "", "", "", "", "", defaultRoleFaction}\n\tmsg := oneRoleLoginSuccess(time.Date(2026, 7, 11, 12, 0, 0, 0, time.Local), "本地角色", appearance, defaultRoleLocation(appearance).Scene)',
 )
+
+# 27. Current scheduleCurrentSkillClear carries the applied buff list so it can remove current
+# red/yellow super-armor effects when the skill ends. This test installs no skill buffs, so nil is
+# the exact current no-buff path.
+replace_exact(
+    "cmd/protocol-probe/skill_combat_test.go",
+    "scheduleCurrentSkillClear(conn, player, definition)",
+    "scheduleCurrentSkillClear(conn, player, definition, nil)",
+)

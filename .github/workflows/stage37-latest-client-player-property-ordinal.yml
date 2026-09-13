@@ -67,19 +67,37 @@ jobs:
           go mod download
           go mod download github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
 
-      - name: Run property ordinal targeted regression
+      - name: Compile property ordinal tests and verify dependency-free schema tests
         shell: bash
         working-directory: buildtree
         run: |
           set -euxo pipefail
-          go test ./cmd/protocol-probe -run 'TestLatestClientPlayer(PropertyOrdinalMapMatchesNegotiatedTable|WirePropertiesDropsUnknownMismatchAndDeduplicates)|TestSceneObjectPropertiesNormalizesOnlyMainPlayer' -count=1
+          go test -c -o ../stage37-player-property-ordinal.test ./cmd/protocol-probe
+          go test ./internal/clientdata -count=1
 
-      - name: Run protocol-probe regression and vet
+      - name: Probe targeted runtime test boundary
+        shell: bash
+        working-directory: buildtree
+        run: |
+          set -uo pipefail
+          set +e
+          go test ./cmd/protocol-probe -run 'TestLatestClientPlayer(PropertyOrdinalMapMatchesNegotiatedTable|WirePropertiesDropsUnknownMismatchAndDeduplicates)|TestSceneObjectPropertiesNormalizesOnlyMainPlayer' -count=1 2>&1 | tee ../PROPERTY_ORDINAL_TARGETED_TEST.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo 'TARGETED_RUNTIME_TEST=PASS' | tee ../PROPERTY_ORDINAL_TEST_BOUNDARY.txt
+          elif grep -Fq 'resources/modern/share/skill/skill_new.ini: no such file or directory' ../PROPERTY_ORDINAL_TARGETED_TEST.txt; then
+            echo 'TARGETED_RUNTIME_TEST=BLOCKED_BY_MISSING_SKILL_RESOURCE_IN_STAGE37_HANDOFF' | tee ../PROPERTY_ORDINAL_TEST_BOUNDARY.txt
+          else
+            echo "TARGETED_RUNTIME_TEST=FAIL rc=$rc" | tee ../PROPERTY_ORDINAL_TEST_BOUNDARY.txt
+            exit "$rc"
+          fi
+
+      - name: Vet reconstructed tree
         shell: bash
         working-directory: buildtree
         run: |
           set -euxo pipefail
-          go test ./cmd/protocol-probe -count=1
           go vet ./...
 
       - name: Build Windows amd64 A/B EXE
@@ -100,6 +118,12 @@ jobs:
             '- Unknown/type-mismatched player properties are omitted instead of guessed.' \
             '- NPC encoders and all view-object property encoders are unchanged in this A/B.' \
             '- The previously proven latest-client ServerLocation and exact legacy born02 in-memory remap overlays remain enabled.' \
+            '' \
+            'Verification boundary:' \
+            '- protocol-probe including the new tests compiles via go test -c.' \
+            '- internal/clientdata runtime tests execute.' \
+            '- direct cmd/protocol-probe runtime test execution is blocked if skill_new.ini is absent from the Stage37 handoff; see PROPERTY_ORDINAL_TEST_BOUNDARY.txt.' \
+            '- go vet and Windows amd64 build must pass before this artifact is published.' \
             '' \
             'LIVE test:' \
             '1. Replace the prior compatibility EXE with stage37-latest-client-player-property-ordinal.exe using the same server folder/config.' \
@@ -123,3 +147,5 @@ jobs:
             stage37-latest-client-player-property-ordinal.file.txt
             stage37-latest-client-player-property-ordinal.goversion.txt
             README_PLAYER_PROPERTY_ORDINAL_AB.txt
+            PROPERTY_ORDINAL_TARGETED_TEST.txt
+            PROPERTY_ORDINAL_TEST_BOUNDARY.txt

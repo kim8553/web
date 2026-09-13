@@ -1,0 +1,61 @@
+name: Stage37 Export Property Table Bag Fields
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/stage37-export-property-table-bag-fields.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+      - name: Apply exact reconstruction through player property table
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+      - name: Export bag-related property evidence
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir out
+          cp buildtree/internal/clientdata/npc_schema.go out/
+          cp buildtree/internal/clientdata/npc_resolver.go out/
+          cp buildtree/cmd/protocol-probe/main.go out/
+          cp buildtree/cmd/protocol-probe/player_progress.go out/
+          cp buildtree/cmd/protocol-probe/zz_recovered_overlay.go out/
+          grep -RniE 'ItemType|TextureType|ColorLevel|LogicPack|FuncPack|PropModifyPack|ViewID|Ident|MaxAmount|Amount|ConfigID' buildtree/cmd/protocol-probe buildtree/internal/clientdata > out/BAG_FIELD_GREP.txt || true
+          sha256sum out/* > out/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-property-table-bag-fields
+          retention-days: 7
+          path: out/

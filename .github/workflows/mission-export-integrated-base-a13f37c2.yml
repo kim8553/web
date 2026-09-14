@@ -1,0 +1,86 @@
+name: Mission Export Integrated Base a13f37c2
+
+on:
+  push:
+    branches: [stage37]
+    paths:
+      - '.github/workflows/mission-export-integrated-base-a13f37c2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify mission source ancestry
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git merge-base --is-ancestor 5bb03b7204b462097ab8afbc64409a6dec71ac51 HEAD
+          git rev-parse HEAD | tee mission-repo-head.txt
+
+      - name: Reassemble exact Stage37 handoff
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > handoff.zip
+          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  handoff.zip' | sha256sum -c -
+          unzip -q handoff.zip -d handoff
+          mkdir buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+
+      - name: Apply exact Stage37 overlay chain through non-bag ordinal patch
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/rp.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/rp.py' | sha256sum -c -
+          python3 /tmp/rp.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/rf.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/rf.py' | sha256sum -c -
+          python3 /tmp/rf.py buildtree
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          python3 tools/stage37_latest_client_scene_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_player_location_compat_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_born02_remap_patch.py buildtree
+          python3 tools/stage37_latest_client_player_property_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_view_ordinal_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_refresh_reentry_sync_patch.py buildtree
+          python3 tools/stage37_latest_client_current_bag_wire_reentry_drain_patch.py buildtree
+          python3 tools/stage37_latest_client_counted_bag_full_reentry_patch.py buildtree
+          python3 tools/stage37_latest_client_full_bag_add_gm_ack_patch.py buildtree
+          python3 tools/stage37_latest_client_bag_no_synthetic_viewid_patch.py buildtree
+          python3 tools/stage37_latest_client_legacy_bag_rich_object_patch.py buildtree
+          python3 tools/stage37_builtin_ident_followup.py buildtree
+          python3 tools/stage37_latest_client_nonbag_view_ordinal_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+
+      - name: Package exact full working tree
+        shell: bash
+        run: |
+          set -euxo pipefail
+          printf '%s\n' \
+            'MISSION=integrated-base-a13f37c2' \
+            'BASE_STAGE37=5bb03b7204b462097ab8afbc64409a6dec71ac51' \
+            'HANDOFF_SHA256=56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb' \
+            'OVERLAY_LAST=tools/stage37_latest_client_nonbag_view_ordinal_patch.py' \
+            'PURPOSE=exact transport back to sandbox after disposable workspace reset' > MISSION_PROVENANCE.txt
+          tar -czf stage37-integrated-base-a13f37c2.tar.gz buildtree MISSION_PROVENANCE.txt mission-repo-head.txt
+          sha256sum stage37-integrated-base-a13f37c2.tar.gz > stage37-integrated-base-a13f37c2.sha256
+
+      - name: Upload exact source transport artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-integrated-base-a13f37c2
+          retention-days: 3
+          path: |
+            stage37-integrated-base-a13f37c2.tar.gz
+            stage37-integrated-base-a13f37c2.sha256

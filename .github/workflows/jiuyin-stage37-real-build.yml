@@ -5,6 +5,7 @@ on:
     branches: [stage37-current-recovery-20260916]
     paths:
       - '.github/workflows/jiuyin-stage37-real-build.yml'
+      - 'tools/stage37_current_recovery_build.sh'
   workflow_dispatch:
 
 permissions:
@@ -21,103 +22,9 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct verified current source
+      - name: Reconstruct, verify, test and build current source
         shell: bash
-        run: |
-          set -euxo pipefail
-          cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
-          echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
-          unzip -q JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip -d handoff
-          rm -rf buildtree && mkdir buildtree
-          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
-          test -f buildtree/go.mod
-
-          python3 tools/stage37_authority_compile_patch.py buildtree
-          python3 tools/stage37_authority_test_patch.py buildtree
-          python3 tools/stage37_authority_test_followup.py buildtree
-          python3 tools/stage37_authority_runtime_patch.py buildtree
-          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/stage37_authority_resource_test_patch.py
-          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/stage37_authority_resource_test_patch.py' | sha256sum -c -
-          python3 /tmp/stage37_authority_resource_test_patch.py buildtree
-          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/stage37_authority_resource_test_followup.py
-          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/stage37_authority_resource_test_followup.py' | sha256sum -c -
-          python3 /tmp/stage37_authority_resource_test_followup.py buildtree
-          python3 -m py_compile tools/stage37_authority_resource_test_final.py
-          python3 tools/stage37_authority_resource_test_final.py buildtree
-          python3 -m py_compile tools/stage37_authority_yihua_exact_test_patch.py
-          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
-          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
-
-          cat recovery/current_delta.patch.part* > current_delta.patch
-          test "$(sha256sum current_delta.patch | awk '{print $1}')" = '50c20c9abaa91fb42cc885b3a8e81a5c8acee2a5bb09d80f53a1420772989c25'
-          (cd buildtree && patch --batch --forward -p1 < ../current_delta.patch)
-          test "$(find buildtree -type f | wc -l | tr -d ' ')" = '192'
-          (cd buildtree && find . -type f -printf '%P\0' | sort -z | xargs -0 sha256sum > ../generated-manifest.txt)
-          test "$(sha256sum generated-manifest.txt | awk '{print $1}')" = '43522bed8e5ff9cd1712bab8ed85d03f9ee483ace199b0c458c439234c70ec31'
-          test -f buildtree/migrations/0012_persist_runtime_bind_status.sql
-          test -f buildtree/internal/exchangeplan/plan.go
-          test -f buildtree/cmd/protocol-probe/latest_client_shop_exchange_preflight.go
-          test -f buildtree/cmd/protocol-probe/latest_client_equip_view_ordinal_compat_test.go
-
-      - name: Use real Go dependencies
-        shell: bash
-        working-directory: buildtree
-        run: |
-          set -euxo pipefail
-          cp go.mod ci.real.mod
-          cp go.sum ci.real.sum
-          go mod edit -modfile=ci.real.mod -dropreplace=github.com/go-sql-driver/mysql
-          go mod edit -modfile=ci.real.mod -dropreplace=golang.org/x/text
-          go mod edit -modfile=ci.real.mod -dropreplace=filippo.io/edwards25519
-          go mod edit -modfile=ci.real.mod -dropreplace=github.com/DATA-DOG/go-sqlmock
-          go mod edit -modfile=ci.real.mod -dropreplace=github.com/Hiroko103/go-quicklz
-          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
-          go mod download -modfile=ci.real.mod
-          go list -modfile=ci.real.mod -m all > ../modules.txt
-
-      - name: Verification gates
-        shell: bash
-        working-directory: buildtree
-        run: |
-          set +e
-          run_gate() {
-            name="$1"
-            shift
-            "$@" >"../${name}.log" 2>&1
-            code=$?
-            echo "$code" >"../${name}.exit"
-          }
-
-          run_gate planner go test -modfile=ci.real.mod ./internal/exchangeplan -count=1
-          run_gate migrations go test -modfile=ci.real.mod ./migrations -count=1
-          run_gate build go build -modfile=ci.real.mod ./cmd/protocol-probe
-          run_gate protocol_compile go test -modfile=ci.real.mod -c -o ../protocol-probe.test ./cmd/protocol-probe
-          run_gate protocol_race_compile go test -modfile=ci.real.mod -race -c -o ../protocol-probe-race.test ./cmd/protocol-probe
-
-          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
-          go test -modfile=ci.real.mod "${pkgs[@]}" -count=1 > ../nonprotocol.log 2>&1
-          echo $? > ../nonprotocol.exit
-          go test -modfile=ci.real.mod -race "${pkgs[@]}" -count=1 > ../race.log 2>&1
-          echo $? > ../race.exit
-          go vet -modfile=ci.real.mod ./... > ../vet.log 2>&1
-          echo $? > ../vet.exit
-
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o ../stage37-current-windows-amd64.exe ./cmd/protocol-probe > ../windows.log 2>&1
-          echo $? > ../windows.exit
-          if [ -f ../stage37-current-windows-amd64.exe ]; then
-            sha256sum ../stage37-current-windows-amd64.exe > ../stage37-current-windows-amd64.sha256
-            file ../stage37-current-windows-amd64.exe > ../stage37-current-windows-amd64.file.txt
-            go version -m ../stage37-current-windows-amd64.exe > ../stage37-current-windows-amd64.goversion.txt
-          fi
-
-          if [ -f resources/modern/share/skill/skill_new.ini ]; then
-            go test -modfile=ci.real.mod ./cmd/protocol-probe -count=1 > ../protocol_runtime.log 2>&1
-            echo $? > ../protocol_runtime.exit
-          else
-            echo 'NOT RUN: exact-current resource corpus absent; no legacy substitution.' > ../protocol_runtime.log
-            echo 125 > ../protocol_runtime.exit
-          fi
-          exit 0
+        run: bash tools/stage37_current_recovery_build.sh
 
       - name: Upload verification evidence
         if: always()
@@ -138,19 +45,3 @@ jobs:
             buildtree/ci.real.mod
             buildtree/ci.real.sum
           if-no-files-found: warn
-
-      - name: Enforce verification gates
-        shell: bash
-        run: |
-          set -euo pipefail
-          for x in planner migrations build protocol_compile protocol_race_compile nonprotocol race vet windows; do
-            code=$(cat "$x.exit")
-            echo "$x=$code"
-            test "$code" -eq 0
-          done
-          protocol=$(cat protocol_runtime.exit)
-          echo "protocol_runtime=$protocol"
-          if [ "$protocol" -ne 0 ] && [ "$protocol" -ne 125 ]; then
-            exit 1
-          fi
-          echo "BUILD GATES PASS; protocol_runtime=$protocol (125 means exact-current resource boundary, NOT LIVE/E2E)."

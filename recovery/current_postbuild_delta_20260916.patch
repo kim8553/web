@@ -1,0 +1,462 @@
+--- a/cmd/protocol-probe/latest_client_bag_bind_arrange_test.go
++++ b/cmd/protocol-probe/latest_client_bag_bind_arrange_test.go
+@@ -0,0 +1,39 @@
++package main
++
++import "testing"
++
++func TestArrangeBagViewNeverMergesBoundAndUnboundStacks(t *testing.T) {
++	player := &playerActor{bagItems: []bagItem{
++		{ConfigID: "mat_a", ViewID: 1, Slot: 2, Amount: 2, MaxAmount: 10, BindStatus: 0},
++		{ConfigID: "mat_a", ViewID: 1, Slot: 4, Amount: 3, MaxAmount: 10, BindStatus: 1},
++	}}
++	if _, changed := player.arrangeBagView(2); !changed {
++		t.Fatal("arrange should compact sparse slots")
++	}
++	got := player.bagSnapshot()
++	if len(got) != 2 {
++		t.Fatalf("bound/unbound stacks merged: len=%d items=%+v", len(got), got)
++	}
++	if got[0].ConfigID != "mat_a" || got[0].Amount != 2 || got[0].BindStatus != 0 || got[0].Slot != 1 {
++		t.Fatalf("unbound stack=%+v", got[0])
++	}
++	if got[1].ConfigID != "mat_a" || got[1].Amount != 3 || got[1].BindStatus != 1 || got[1].Slot != 2 {
++		t.Fatalf("bound stack=%+v", got[1])
++	}
++}
++
++func TestArrangeBagViewStillMergesSameBindStatusStacks(t *testing.T) {
++	player := &playerActor{bagItems: []bagItem{
++		{ConfigID: "mat_a", ViewID: 1, Slot: 2, Amount: 2, MaxAmount: 10, BindStatus: 1},
++		{ConfigID: "mat_a", ViewID: 1, Slot: 4, Amount: 3, MaxAmount: 10, BindStatus: 1},
++	}}
++	if _, changed := player.arrangeBagView(2); !changed {
++		t.Fatal("arrange should merge compatible stacks")
++	}
++	got := player.bagSnapshot()
++	if len(got) != 1 {
++		t.Fatalf("same-bind stacks not merged: len=%d items=%+v", len(got), got)
++	}
++	if got[0].ConfigID != "mat_a" || got[0].Amount != 5 || got[0].BindStatus != 1 || got[0].Slot != 1 {
++		t.Fatalf("merged stack=%+v", got[0])
++	}
++}
+--- a/cmd/protocol-probe/latest_client_shop_exchange_contract.go
++++ b/cmd/protocol-probe/latest_client_shop_exchange_contract.go
+@@ -96,7 +96,7 @@
+ // material-derived bind preview (1=bound, 0=unbound). The form response remains
+ // blocked because the independent ShowBind server rule is not yet proven.
+-func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, custom clientCustomMessage, remote string) (bool, error) {
++func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, itemCatalog *itemCatalog, custom clientCustomMessage, remote string) (bool, error) {
+ 	if request, matched, err := parseShopExchangeFormRequest(custom); matched {
+ 		if err != nil {
+ 			return true, err
+@@ -159,15 +159,15 @@
+ 				remote, request.ShopID, request.Page, request.Position, request.Count, loadErr)
+ 			return true, nil
+ 		}
+-		preflight, preflightErr := runShopExchangeReadOnlyPreflight(defaultShopINIPath, defaultExchangeItemINIPath, authority, player, request)
++		preflight, preflightErr := runShopExchangeReadOnlyPreflight(defaultShopINIPath, defaultExchangeItemINIPath, authority, player, itemCatalog, request)
+ 		if preflightErr != nil {
+ 			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: preflight error: %v",
+ 				remote, request.ShopID, request.Page, request.Position, request.Count, preflightErr)
+ 			return true, nil
+ 		}
+-		log.Printf("%s: current shop exchange buy preflight shop=%s page=%d pos=%d count=%d exchange_data=%d output=%s x%d conditions_supported=%t conditions_satisfied=%t properties_supported=%t properties_satisfied=%t materials_satisfied=%t exchange_bind_preview=%d blocked: final persisted BindStatus/atomic mutation unresolved",
++		log.Printf("%s: current shop exchange buy preflight shop=%s page=%d pos=%d count=%d exchange_data=%d output=%s x%d conditions_supported=%t conditions_satisfied=%t properties_supported=%t properties_satisfied=%t materials_satisfied=%t capacity_supported=%t capacity_satisfied=%t exchange_bind_preview=%d blocked: final persisted BindStatus/atomic mutation unresolved",
+ 			remote, request.ShopID, request.Page, request.Position, request.Count, preflight.Listing.exchangeData, preflight.Listing.configID, preflight.OutputAmount,
+-			preflight.ConditionSupported, preflight.ConditionSatisfied, preflight.PropertySupported, preflight.PropertySatisfied, preflight.MaterialPlan.Satisfied, preflight.ExchangeBindPreview)
++			preflight.ConditionSupported, preflight.ConditionSatisfied, preflight.PropertySupported, preflight.PropertySatisfied, preflight.MaterialPlan.Satisfied, preflight.CapacitySupported, preflight.CapacitySatisfied, preflight.ExchangeBindPreview)
+ 		return true, nil
+ 	}
+ 	return false, nil
+--- a/cmd/protocol-probe/latest_client_shop_exchange_preflight.go
++++ b/cmd/protocol-probe/latest_client_shop_exchange_preflight.go
+@@ -23,6 +23,9 @@
+ 	PropertySupported  bool
+ 	PropertySatisfied  bool
+ 	MaterialPlan       exchangeplan.BatchPlan
++	CapacitySupported  bool
++	CapacitySatisfied  bool
++	CapacityPlan       exchangeplan.CapacityPlan
+ 	// ExchangeBindPreview is the exact-current UI value for the first result:
+ 	// 1 when bound-first material consumption makes that first result bound,
+ 	// otherwise 0. It is not the final persisted BindStatus because separately
+@@ -108,11 +111,7 @@
+ 	return 0
+ }
+ 
+-func currentShopExchangeInventoryStacks(player *playerActor) []exchangeplan.Stack {
+-	if player == nil {
+-		return nil
+-	}
+-	items := player.bagSnapshot()
++func currentShopExchangeInventoryStacksFromSnapshot(items []bagItem) []exchangeplan.Stack {
+ 	result := make([]exchangeplan.Stack, 0, len(items))
+ 	for index, item := range items {
+ 		if _, ok := latestClientCurrentBagContainer(item.ViewID); !ok {
+@@ -127,6 +126,66 @@
+ 	return result
+ }
+ 
++func currentShopExchangeInventoryStacks(player *playerActor) []exchangeplan.Stack {
++	if player == nil {
++		return nil
++	}
++	return currentShopExchangeInventoryStacksFromSnapshot(player.bagSnapshot())
++}
++
++func currentShopExchangeInventorySlotsFromSnapshot(items []bagItem) []exchangeplan.InventorySlot {
++	result := make([]exchangeplan.InventorySlot, 0, len(items))
++	for index, item := range items {
++		container, ok := latestClientCurrentBagContainer(item.ViewID)
++		if !ok {
++			continue
++		}
++		result = append(result, exchangeplan.InventorySlot{Index: index, Container: container, Slot: item.Slot, Amount: item.Amount})
++	}
++	return result
++}
++
++func currentShopExchangeContainerCapacity(container uint16) (int32, bool) {
++	for _, spec := range starterBagViews() {
++		if spec.ID != container {
++			continue
++		}
++		switch container {
++		case 2, 121, 123, 125:
++			return int32(spec.Capacity), true
++		default:
++			return 0, false
++		}
++	}
++	return 0, false
++}
++
++func evaluateShopExchangeCapacityPreview(itemCatalog *itemCatalog, bagSnapshot []bagItem, listing shopCatalogItem, materialPlan exchangeplan.BatchPlan, outputAmount int64) (supported, satisfied bool, plan exchangeplan.CapacityPlan, err error) {
++	if itemCatalog == nil {
++		return false, false, plan, nil
++	}
++	staticItem, ok := itemCatalog.Lookup(listing.configID)
++	if !ok {
++		return false, false, plan, nil
++	}
++	container, ok := latestClientCurrentBagContainer(staticItem.ViewID)
++	if !ok {
++		return false, false, plan, nil
++	}
++	capacity, ok := currentShopExchangeContainerCapacity(container)
++	if !ok {
++		return false, false, plan, nil
++	}
++	plan, err = exchangeplan.PlanConservativeCapacity(currentShopExchangeInventorySlotsFromSnapshot(bagSnapshot), materialPlan, container, capacity, outputAmount, staticItem.MaxAmount)
++	if err != nil {
++		return false, false, plan, err
++	}
++	return true, plan.Fits, plan, nil
++}
++
+ // evaluateShopExchangeConditionPreview follows the exact current form UI's
+ // ConditionType composition: zero selects the AND description; any non-zero
+ // value selects the OR description. This is a read-only preview/capability
+@@ -218,7 +277,7 @@
+ 	return true, true, nil
+ }
+ 
+-func runShopExchangeReadOnlyPreflight(shopPath, exchangePath string, authority *currentShopConditionAuthority, player *playerActor, request shopExchangeBuyRequest) (shopExchangeReadOnlyPreflight, error) {
++func runShopExchangeReadOnlyPreflight(shopPath, exchangePath string, authority *currentShopConditionAuthority, player *playerActor, itemCatalog *itemCatalog, request shopExchangeBuyRequest) (shopExchangeReadOnlyPreflight, error) {
+ 	var result shopExchangeReadOnlyPreflight
+ 	if request.Count < 1 || request.Count > 99 {
+ 		return result, fmt.Errorf("exchange count %d outside current client range 1..99", request.Count)
+@@ -258,7 +317,8 @@
+ 	if err != nil {
+ 		return result, err
+ 	}
+-	result.MaterialPlan, err = exchangeplan.PlanBatch(currentShopExchangeInventoryStacks(player), requirements, request.Count)
++	bagSnapshot := player.bagSnapshot()
++	result.MaterialPlan, err = exchangeplan.PlanBatch(currentShopExchangeInventoryStacksFromSnapshot(bagSnapshot), requirements, request.Count)
+ 	if err != nil {
+ 		return result, err
+ 	}
+@@ -268,5 +328,9 @@
+ 		return result, fmt.Errorf("invalid exchange output amount=%d count=%d", listing.amount, request.Count)
+ 	}
+ 	result.OutputAmount = int64(listing.amount) * int64(request.Count)
++	result.CapacitySupported, result.CapacitySatisfied, result.CapacityPlan, err = evaluateShopExchangeCapacityPreview(itemCatalog, bagSnapshot, *listing, result.MaterialPlan, result.OutputAmount)
++	if err != nil {
++		return result, err
++	}
+ 	return result, nil
+ }
+--- a/cmd/protocol-probe/latest_client_shop_exchange_preflight_test.go
++++ b/cmd/protocol-probe/latest_client_shop_exchange_preflight_test.go
+@@ -26,11 +26,14 @@
+ 	player := &playerActor{
+ 		silver: 100,
+ 		bagItems: []bagItem{
+-			{ConfigID: "mat_a", ViewID: 1, Amount: 1, BindStatus: 0},
+-			{ConfigID: "mat_a", ViewID: 1, Amount: 1, BindStatus: 1},
+-			{ConfigID: "mat_a", ViewID: 1, Amount: 2, BindStatus: 0},
++			{ConfigID: "mat_a", ViewID: 1, Slot: 1, Amount: 1, BindStatus: 0},
++			{ConfigID: "mat_a", ViewID: 1, Slot: 2, Amount: 1, BindStatus: 1},
++			{ConfigID: "mat_a", ViewID: 1, Slot: 3, Amount: 2, BindStatus: 0},
+ 		},
+ 	}
++	itemCatalog := &itemCatalog{byID: map[string]depotItem{
++		"result_item": {ConfigID: "result_item", ViewID: 1, MaxAmount: 10},
++	}}
+ 	before := player.bagSnapshot()
+-	got, err := runShopExchangeReadOnlyPreflight(shopPath, exchangePath, nil, player, shopExchangeBuyRequest{ShopID: "Shop_test", Page: 0, Position: 1, Count: 2})
++	got, err := runShopExchangeReadOnlyPreflight(shopPath, exchangePath, nil, player, itemCatalog, shopExchangeBuyRequest{ShopID: "Shop_test", Page: 0, Position: 1, Count: 2})
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+@@ -51,6 +54,12 @@
+ 	if got.OutputAmount != 4 {
+ 		t.Fatalf("output amount=%d want=4", got.OutputAmount)
+ 	}
++	if !got.CapacitySupported || !got.CapacitySatisfied {
++		t.Fatalf("current output capacity preview=%+v", got.CapacityPlan)
++	}
++	if got.CapacityPlan.Container != 2 || got.CapacityPlan.Capacity != 132 || got.CapacityPlan.RequiredOutputStacks != 1 {
++		t.Fatalf("capacity plan=%+v", got.CapacityPlan)
++	}
+ 	after := player.bagSnapshot()
+ 	if len(before) != len(after) {
+ 		t.Fatalf("read-only preflight mutated bag length before=%d after=%d", len(before), len(after))
+@@ -137,3 +146,33 @@
+ 		t.Fatalf("first-result bound preview=%d, want 1", got)
+ 	}
+ }
++
++func TestCurrentShopExchangeCapacityPreviewFailsClosedWithoutStaticOutput(t *testing.T) {
++	player := &playerActor{bagItems: []bagItem{{ConfigID: "mat", ViewID: 1, Slot: 1, Amount: 1, MaxAmount: 1}}}
++	snapshot := player.bagSnapshot()
++	supported, satisfied, plan, err := evaluateShopExchangeCapacityPreview(&itemCatalog{byID: map[string]depotItem{}}, snapshot, shopCatalogItem{configID: "missing"}, exchangeplan.BatchPlan{Satisfied: true}, 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if supported || satisfied || plan.Fits {
++		t.Fatalf("unknown output static data must fail closed: supported=%t satisfied=%t plan=%+v", supported, satisfied, plan)
++	}
++}
++
++func TestCurrentShopExchangeCapacityPreviewUsesMaterialFreedSlot(t *testing.T) {
++	snapshot := make([]bagItem, 132)
++	for i := range snapshot {
++		snapshot[i] = bagItem{ConfigID: "filler", ViewID: 1, Slot: int32(i + 1), Amount: 1, MaxAmount: 1}
++	}
++	snapshot[0].ConfigID = "mat"
++	material := exchangeplan.BatchPlan{Satisfied: true, Results: []exchangeplan.ResultPlan{{Deductions: []exchangeplan.Deduction{{StackIndex: 0, ConfigID: "mat", Amount: 1, BindStatus: 0}}}}}
++	catalog := &itemCatalog{byID: map[string]depotItem{"result": {ConfigID: "result", ViewID: 1, MaxAmount: 1}}}
++	supported, satisfied, plan, err := evaluateShopExchangeCapacityPreview(catalog, snapshot, shopCatalogItem{configID: "result"}, material, 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !supported || !satisfied || !plan.Fits || plan.FreedByMaterials != 1 || plan.RequiredOutputStacks != 1 {
++		t.Fatalf("capacity preview=%+v supported=%t satisfied=%t", plan, supported, satisfied)
++	}
++}
+--- a/cmd/protocol-probe/main.go
++++ b/cmd/protocol-probe/main.go
+@@ -1824,7 +1824,7 @@
+ 					log.Printf("%s: custom message parse warning: %v", conn.RemoteAddr(), err)
+ 				}
+ 				link := sceneMessageConnection{conn: conn, source: source}
+-				if _, handleErr := handleShopExchangeContract(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
++				if _, handleErr := handleShopExchangeContract(link, player, itemCatalog, custom, conn.RemoteAddr().String()); handleErr != nil {
+ 					log.Printf("%s: current shop exchange handler: %v", conn.RemoteAddr(), handleErr)
+ 				}
+ 				if matched, handleErr := handleJingMaiCustom(link, player, jingmaiStore, selected.ID, custom, conn.RemoteAddr().String()); matched {
+--- a/cmd/protocol-probe/zz_recovered_overlay.go
++++ b/cmd/protocol-probe/zz_recovered_overlay.go
+@@ -4704,7 +4704,12 @@
+ 			if rest <= 0 {
+ 				break
+ 			}
+-			if merged[i].ConfigID != item.ConfigID || merged[i].Amount >= cap {
++			// Runtime BindStatus is item-instance state and must survive any
++			// container merge. Bound and unbound instances of the same ConfigID
++			// are distinct stacks; merging them would silently discard binding
++			// semantics and contradict bind-status-aware material consumption.
++			if merged[i].ConfigID != item.ConfigID || merged[i].BindStatus != item.BindStatus || merged[i].Amount >= cap {
+ 				continue
+ 			}
+ 			room := cap - merged[i].Amount
+--- a/internal/exchangeplan/capacity.go
++++ b/internal/exchangeplan/capacity.go
+@@ -0,0 +1,116 @@
++package exchangeplan
++
++import "fmt"
++
++// InventorySlot is one concrete occupied inventory slot. Index must use the
++// same stable stack identity as Stack.Index in the material plan.
++type InventorySlot struct {
++	Index     int
++	Container uint16
++	Slot      int32
++	Amount    int32
++}
++
++// CapacityPlan is a conservative replacement-capacity check. It accounts for
++// slots freed by the already-proven material plan but deliberately assumes the
++// result cannot merge into any existing stack. That can reject an exchange
++// that the native server might fit via merging, but it cannot authorize an
++// exchange merely by guessing merge semantics.
++type CapacityPlan struct {
++	Container            uint16
++	Capacity             int32
++	OccupiedBefore       int32
++	OccupiedAfterRemoval int32
++	FreedByMaterials     int32
++	RequiredOutputStacks int32
++	Fits                 bool
++}
++
++// PlanConservativeCapacity checks whether the full batch can fit after all
++// planned material deductions. outputMaxAmount <= 0 is treated as one item per
++// stack, matching Stage37's existing fail-safe stack behavior.
++func PlanConservativeCapacity(inventory []InventorySlot, materialPlan BatchPlan, outputContainer uint16, capacity int32, outputAmount int64, outputMaxAmount int32) (CapacityPlan, error) {
++	result := CapacityPlan{Container: outputContainer, Capacity: capacity}
++	if outputContainer == 0 {
++		return result, fmt.Errorf("exchangeplan: output container is zero")
++	}
++	if capacity <= 0 {
++		return result, fmt.Errorf("exchangeplan: invalid container capacity %d", capacity)
++	}
++	if outputAmount <= 0 {
++		return result, fmt.Errorf("exchangeplan: invalid output amount %d", outputAmount)
++	}
++	if outputMaxAmount <= 0 {
++		outputMaxAmount = 1
++	}
++	maxAmount := int64(outputMaxAmount)
++	required := (outputAmount + maxAmount - 1) / maxAmount
++	if required > int64(^uint32(0)>>1) {
++		return result, fmt.Errorf("exchangeplan: output stack count overflows int32: %d", required)
++	}
++	result.RequiredOutputStacks = int32(required)
++
++	deducted := make(map[int]int64)
++	if materialPlan.Satisfied {
++		for _, perResult := range materialPlan.Results {
++			for _, deduction := range perResult.Deductions {
++				if deduction.Amount <= 0 {
++					return result, fmt.Errorf("exchangeplan: stack %d has non-positive deduction %d", deduction.StackIndex, deduction.Amount)
++				}
++				deducted[deduction.StackIndex] += int64(deduction.Amount)
++			}
++		}
++	}
++
++	seenSlots := make(map[int32]int)
++	seenIndexes := make(map[int]struct{}, len(inventory))
++	for _, stack := range inventory {
++		if _, duplicate := seenIndexes[stack.Index]; duplicate {
++			return result, fmt.Errorf("exchangeplan: duplicate inventory stack index %d", stack.Index)
++		}
++		seenIndexes[stack.Index] = struct{}{}
++		if stack.Amount <= 0 {
++			return result, fmt.Errorf("exchangeplan: stack %d has non-positive amount %d", stack.Index, stack.Amount)
++		}
++		if stack.Container != outputContainer {
++			continue
++		}
++		if stack.Slot <= 0 || stack.Slot > capacity {
++			return result, fmt.Errorf("exchangeplan: stack %d has slot %d outside container %d capacity %d", stack.Index, stack.Slot, outputContainer, capacity)
++		}
++		if prior, duplicate := seenSlots[stack.Slot]; duplicate {
++			return result, fmt.Errorf("exchangeplan: container %d duplicate slot %d at stacks %d and %d", outputContainer, stack.Slot, prior, stack.Index)
++		}
++		seenSlots[stack.Slot] = stack.Index
++		result.OccupiedBefore++
++		remaining := int64(stack.Amount) - deducted[stack.Index]
++		if remaining < 0 {
++			return result, fmt.Errorf("exchangeplan: deductions exceed stack %d amount: have=%d deduct=%d", stack.Index, stack.Amount, deducted[stack.Index])
++		}
++		if remaining == 0 {
++			result.FreedByMaterials++
++			continue
++		}
++		result.OccupiedAfterRemoval++
++	}
++
++	for index, amount := range deducted {
++		if _, ok := seenIndexes[index]; !ok {
++			return result, fmt.Errorf("exchangeplan: deduction references missing inventory stack %d", index)
++		}
++		if amount <= 0 {
++			return result, fmt.Errorf("exchangeplan: invalid aggregated deduction %d for stack %d", amount, index)
++		}
++	}
++
++	result.Fits = int64(result.OccupiedAfterRemoval)+int64(result.RequiredOutputStacks) <= int64(capacity)
++	return result, nil
++}
+--- a/internal/exchangeplan/capacity_test.go
++++ b/internal/exchangeplan/capacity_test.go
+@@ -0,0 +1,60 @@
++package exchangeplan
++
++import "testing"
++
++func TestPlanConservativeCapacityCountsFreedMaterialSlots(t *testing.T) {
++	inventory := []InventorySlot{
++		{Index: 10, Container: 2, Slot: 1, Amount: 2},
++		{Index: 11, Container: 2, Slot: 2, Amount: 5},
++		{Index: 12, Container: 121, Slot: 1, Amount: 1},
++	}
++	material := BatchPlan{Satisfied: true, Results: []ResultPlan{{Deductions: []Deduction{{StackIndex: 10, Amount: 2}}}}}
++	got, err := PlanConservativeCapacity(inventory, material, 2, 3, 11, 10)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.OccupiedBefore != 2 || got.OccupiedAfterRemoval != 1 || got.FreedByMaterials != 1 || got.RequiredOutputStacks != 2 || !got.Fits {
++		t.Fatalf("plan=%+v", got)
++	}
++}
++
++func TestPlanConservativeCapacityFailsWhenWholeBatchCannotFit(t *testing.T) {
++	inventory := []InventorySlot{
++		{Index: 1, Container: 2, Slot: 1, Amount: 1},
++		{Index: 2, Container: 2, Slot: 2, Amount: 1},
++		{Index: 3, Container: 2, Slot: 3, Amount: 1},
++	}
++	got, err := PlanConservativeCapacity(inventory, BatchPlan{Satisfied: true}, 2, 3, 2, 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.Fits || got.RequiredOutputStacks != 2 || got.OccupiedAfterRemoval != 3 {
++		t.Fatalf("plan=%+v", got)
++	}
++}
++
++func TestPlanConservativeCapacityDoesNotAssumeResultMerge(t *testing.T) {
++	inventory := []InventorySlot{{Index: 1, Container: 2, Slot: 1, Amount: 5}}
++	got, err := PlanConservativeCapacity(inventory, BatchPlan{Satisfied: true}, 2, 1, 1, 10)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.Fits {
++		t.Fatalf("existing partial stack must not be assumed merge-compatible: %+v", got)
++	}
++}
++
++func TestPlanConservativeCapacityRejectsDuplicateSlots(t *testing.T) {
++	inventory := []InventorySlot{
++		{Index: 1, Container: 2, Slot: 1, Amount: 1},
++		{Index: 2, Container: 2, Slot: 1, Amount: 1},
++	}
++	if _, err := PlanConservativeCapacity(inventory, BatchPlan{Satisfied: true}, 2, 10, 1, 1); err == nil {
++		t.Fatal("duplicate current-container slots must fail closed")
++	}
++}
++
++func TestPlanConservativeCapacityRequiresStableDeductionIndex(t *testing.T) {
++	inventory := []InventorySlot{{Index: 42, Container: 2, Slot: 1, Amount: 1}}
++	material := BatchPlan{Satisfied: true, Results: []ResultPlan{{Deductions: []Deduction{{StackIndex: 7, Amount: 1}}}}}
++	if _, err := PlanConservativeCapacity(inventory, material, 2, 10, 1, 1); err == nil {
++		t.Fatal("missing stable stack identity must fail closed")
++	}
++}

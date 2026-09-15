@@ -1,4 +1,4 @@
-name: JIUYIN Stage37 Recovery Source Export
+name: JIUYIN Stage37 Recovery Patched Source Export
 
 on:
   push:
@@ -11,10 +11,14 @@ permissions:
   contents: read
 
 jobs:
-  export-source:
+  export-patched-source:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
 
       - name: Reassemble verified Stage37 handoff
         shell: bash
@@ -23,14 +27,37 @@ jobs:
           cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip
           echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
           unzip -q JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip -d handoff
-          test -f handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz
-          sha256sum handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz | tee buildprobe_global_merged4.sha256
+          mkdir -p buildtree
+          tar -xzf handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz -C buildtree
+          test -f buildtree/go.mod
 
-      - name: Upload recovered Stage37 source base
+      - name: Apply existing Stage37 authority patch chain
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 tools/stage37_authority_compile_patch.py buildtree
+          python3 tools/stage37_authority_test_patch.py buildtree
+          python3 tools/stage37_authority_test_followup.py buildtree
+          python3 tools/stage37_authority_runtime_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_patch.py.gz.b64 | gzip -dc > /tmp/stage37_authority_resource_test_patch.py
+          echo '2a6cbcf3e7c7b6087f0eecc24b09375abcd3559614bbafca12806a8c147aeeb8  /tmp/stage37_authority_resource_test_patch.py' | sha256sum -c -
+          python3 /tmp/stage37_authority_resource_test_patch.py buildtree
+          base64 -d tools/stage37_authority_resource_test_followup.py.gz.b64 | gzip -dc > /tmp/stage37_authority_resource_test_followup.py
+          echo '826fe3feefbadffb3b6c8f75a1d5f74a19c956d38b2294c1ba98996c96fcfec7  /tmp/stage37_authority_resource_test_followup.py' | sha256sum -c -
+          python3 /tmp/stage37_authority_resource_test_followup.py buildtree
+          python3 -m py_compile tools/stage37_authority_resource_test_final.py
+          python3 tools/stage37_authority_resource_test_final.py buildtree
+          python3 -m py_compile tools/stage37_authority_yihua_exact_test_patch.py
+          python3 tools/stage37_authority_yihua_exact_test_patch.py buildtree
+          find buildtree/cmd buildtree/internal -name '*.go' -print0 | xargs -0 gofmt -w
+          tar -czf stage37-patched-source.tar.gz -C buildtree .
+          sha256sum stage37-patched-source.tar.gz | tee stage37-patched-source.sha256
+
+      - name: Upload patched Stage37 source
         uses: actions/upload-artifact@v4
         with:
-          name: stage37-buildprobe-global-merged4-source
+          name: stage37-patched-source-export
           path: |
-            handoff/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913/buildprobe_global_merged4.tar.gz
-            buildprobe_global_merged4.sha256
+            stage37-patched-source.tar.gz
+            stage37-patched-source.sha256
           if-no-files-found: error

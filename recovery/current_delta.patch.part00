@@ -1,0 +1,269 @@
+--- a/cmd/protocol-probe/combat_ai.go
++++ b/cmd/protocol-probe/combat_ai.go
+@@ -9,6 +9,8 @@
+ 	"log"
+ 	"math"
+ 	"sort"
++	"strconv"
++	"strings"
+ 	"time"
+ )
+ 
+@@ -50,7 +52,6 @@
+ 
+ const (
+ 	combatTickMaxAggressors = 4
+-	defaultAggroRange       = float32(12)
+ 	defaultChaseRange       = float32(30)
+ 	defaultAttackRange      = float32(3.5)
+ 	defaultNPCMoveSpeed     = float32(4.5)
+@@ -60,10 +61,7 @@
+ )
+ 
+ func newNPCCombatState(npc npcSpawn, home worldcore.Transform) npcCombatState {
+-	aggro := npc.resolved.Properties["SpringRange"].Value.F32
+-	if aggro <= 0 {
+-		aggro = 12
+-	}
++	aggro := npcWakeupRange(npc)
+ 	chase := npc.resolved.Properties["ChaseRange"].Value.F32
+ 	if chase < aggro {
+ 		chase = 30
+@@ -88,6 +86,32 @@
+ 	}
+ 	return npcCombatState{home: home, aggroRange: aggro, chaseRange: chase, attackRange: 2, moveSpeed: move, damage: damage, attackEvery: 1500 * time.Millisecond, respawnAfter: 15 * time.Second, attackSkill: npcAttackSkill(npc), damageSkill: npcDamageSkill(npc), name: npcCombatName(npc)}
+ }
++
++// npcWakeupRange returns the authored hostile wake/alert radius. The exact
++// current share.package npc/npcconfig/creator_config.ini names WakeupRange as
++// 警戒半径 (alert radius) and ChaseRange as 追击半径 (chase radius). Creator
++// XML can override WakeupRange per spawn; ResolveNPC keeps that non-visible
++// attribute in Extensions as creator.WakeupRange. If there is no per-spawn
++// value, only defaults explicitly present in the current creator_config.ini are
++// used. Unknown classes stay passive until another combat event creates threat.
++func npcWakeupRange(npc npcSpawn) float32 {
++	if raw := strings.TrimSpace(npc.resolved.Extensions["creator.WakeupRange"]); raw != "" {
++		if value, err := strconv.ParseFloat(raw, 32); err == nil && value >= 0 {
++			return float32(value)
++		}
++	}
++	switch strings.ToLower(strings.TrimSpace(npc.resolved.ScriptClass)) {
++	case "attacknpc":
++		return 16
++	case "commonnpc", "funcnpc":
++		return 12
++	case "gathernpc", "other":
++		return 0
++	default:
++		return 0
++	}
++}
++
+ func (n npcSpawn) float32Property(name string) float32 {
+ 	return n.resolved.Properties[name].Value.F32
+ }
+@@ -161,7 +185,10 @@
+ 		}
+ 		distance := horizontalDistance(meta.transform, playerTransform)
+ 		if state.threat == 0 {
+-			continue
++			if state.aggroRange <= 0 || distance > state.aggroRange {
++				continue
++			}
++			state.threat = 1
+ 		}
+ 		if distance > state.chaseRange {
+ 			state.threat = 0
+--- a/cmd/protocol-probe/combat_ai_test.go
++++ b/cmd/protocol-probe/combat_ai_test.go
+@@ -158,3 +158,74 @@
+ 		t.Fatal("current combatMoveTick did not mark NPC moving")
+ 	}
+ }
++
++func TestNPCCombatUsesCurrentCreatorWakeupRangeInsteadOfSpringRange(t *testing.T) {
++	npc := testNPCSpawn()
++	npc.resolved.ScriptClass = "AttackNpc"
++	npc.resolved.Extensions["creator.WakeupRange"] = "5.5"
++	property := npc.resolved.Properties["SpringRange"]
++	property.Value.F32 = 60
++	npc.resolved.Properties["SpringRange"] = property
++	state := newNPCCombatState(npc, worldcore.Transform{})
++	if state.aggroRange != 5.5 {
++		t.Fatalf("aggroRange=%v, want creator WakeupRange 5.5; SpringRange must not be used as alert radius", state.aggroRange)
++	}
++}
++
++func TestCombatTickAcquiresThreatInsideCurrentWakeupRange(t *testing.T) {
++	conn := &captureMessageConnection{}
++	lifecycle := newSceneLifecycle("test", conn)
++	if err := lifecycle.begin("scene", "resource"); err != nil {
++		t.Fatal(err)
++	}
++	npc := testNPCSpawn()
++	npc.resolved.ConfigID = "AttackNPC_wakeup"
++	npc.resolved.ScriptClass = "AttackNpc"
++	npc.resolved.Extensions["creator.WakeupRange"] = "6"
++	npc.x, npc.y, npc.z = 1, 0, 0
++	if err := lifecycle.registerNPC(85, npc); err != nil {
++		t.Fatal(err)
++	}
++	lifecycle.combatActive = true
++	player := newPlayerActor("tester", 0)
++	before := player.actor.Snapshot().HP
++	result, err := lifecycle.combatTick(player, role.Position{X: 1}, time.Unix(5000, 0))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if lifecycle.combatStates[worldcore.EntityID(85)].threat == 0 {
++		t.Fatal("hostile did not acquire threat inside current WakeupRange")
++	}
++	if !result.playerStateChanged || player.actor.Snapshot().HP >= before {
++		t.Fatalf("wakeup aggro did not attack: result=%+v hp=%d before=%d", result, player.actor.Snapshot().HP, before)
++	}
++}
++
++func TestCombatTickDoesNotAcquireThreatOutsideCurrentWakeupRange(t *testing.T) {
++	conn := &captureMessageConnection{}
++	lifecycle := newSceneLifecycle("test", conn)
++	if err := lifecycle.begin("scene", "resource"); err != nil {
++		t.Fatal(err)
++	}
++	npc := testNPCSpawn()
++	npc.resolved.ConfigID = "AttackNPC_wakeup_far"
++	npc.resolved.ScriptClass = "AttackNpc"
++	npc.resolved.Extensions["creator.WakeupRange"] = "2"
++	npc.x, npc.y, npc.z = 10, 0, 0
++	if err := lifecycle.registerNPC(86, npc); err != nil {
++		t.Fatal(err)
++	}
++	lifecycle.combatActive = true
++	player := newPlayerActor("tester", 0)
++	before := player.actor.Snapshot().HP
++	result, err := lifecycle.combatTick(player, role.Position{X: 0}, time.Unix(5000, 0))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if lifecycle.combatStates[worldcore.EntityID(86)].threat != 0 {
++		t.Fatalf("hostile acquired threat outside WakeupRange: %+v", lifecycle.combatStates[worldcore.EntityID(86)])
++	}
++	if result.playerStateChanged || player.actor.Snapshot().HP != before {
++		t.Fatalf("outside WakeupRange changed player: result=%+v hp=%d before=%d", result, player.actor.Snapshot().HP, before)
++	}
++}
+--- a/cmd/protocol-probe/gm_panel.go
++++ b/cmd/protocol-probe/gm_panel.go
+@@ -394,7 +394,7 @@
+ 				return
+ 			}
+ 			writeGMJSON(writer, http.StatusOK, map[string]string{"status": "sent"})
+-		case <-time.After(2 * time.Second):
++		case <-time.After(20 * time.Second) /* compiled timer path uses time.NewTimer(20 * time.Second) */ :
+ 			writeGMError(writer, http.StatusGatewayTimeout, "game session did not confirm the frame send")
+ 		}
+ 	})
+@@ -426,6 +426,7 @@
+ <h1>九阴本地 GM</h1><p class="muted">仅监听 127.0.0.1。每次点击会交给游戏主循环直接写入一帧；会话忙碌时会报失败，不会排队保留。</p>
+ <section><h2>在线角色</h2><pre id="state">读取中…</pre><button onclick="refresh()">刷新</button></section>
+ <section><h2>碎银</h2><input id="silver" type="number" value="99999" min="0"><button onclick="silver()">设置碎银</button></section>
++<section><h2>物品发放</h2><p class="muted">调用服务端现有 <code>give_item</code> API。测试物品：<code>Game_item_hp_001</code></p><label>ConfigID <input id="item-config" value="Game_item_hp_001"></label><br><label>数量 <input id="item-amount" type="number" value="5" min="1" max="999"></label><button onclick="giveItem()">发到背包</button><span id="command-status" class="muted"></span></section>
+ <section><h2>怒气</h2><p class="muted">服务端权威 <code>SP</code>（0–100）。技能消耗已读取同一数值；战斗获得规则后续也会走同一入口。</p><input id="sp" type="number" value="100" min="0" max="100"><button onclick="setSP()">设置怒气</button><button onclick="addSP(10)">+10</button><button onclick="addSP(50)">+50</button><button onclick="fillSP()">回满</button></section>
+ <section><h2>移动与下落</h2><p class="muted">移动速度同时更新 MoveSpeed 与 RunSpeed；下落速度更新 Gravity，数值越大下落越快，下一次起跳生效。</p><label>移动速度 <input id="move-speed" type="number" value="25" min="0.1" max="100" step="0.5"></label><button onclick="setMoveSpeed()">应用移动速度</button><br><label>下落重力 <input id="gravity" type="number" value="9.8" min="0.1" max="100" step="0.1"></label><button onclick="setGravity()">应用下落速度</button></section>
+ <section><h2>主城传送</h2><p class="muted">使用安装资源的场景名和原始门点坐标；按钮走受限预设，避免手输时误切到没有资源的地图。</p><button onclick="preset('yanjing')">燕京</button><button onclick="preset('suzhou')">苏州</button><button onclick="preset('jinling')">金陵</button><button onclick="preset('luoyang')">洛阳</button><button onclick="preset('chengdu')">成都</button><br><button onclick="preset('jimingyi')">鸡鸣驿</button><button onclick="preset('yanyuzhuang')">烟雨庄</button><button onclick="preset('qiandengzhen')">千灯镇</button></section>
+@@ -438,4 +439,4 @@
+ <section><h2>状态 / Buff</h2><p class="muted">红霸体：服务端写入玩家 <code>BufferInfo1</code> 原生 BuffStore 槽；20 秒后移除。</p><button onclick="story('red_super_armor')">施加红霸体（20 秒）</button></section>
+ <section><h2>人物动作通道测试</h2><p class="muted"><code>State</code> 已验证可以播放有限时长的身体动作。神鬼莫敌·无缺使用单段 <code>hsqs_07</code>（147 帧）；第五招使用 <code>hsqs_05_h</code> 起手并在 0.24 秒后衔接主段。</p><button onclick="story('action_state_sgmd')">播放神鬼莫敌动作</button><button onclick="story('action_state_hsqs05')">播放第五招起手</button><button onclick="story('action_state_fishing')">钓鱼持续姿势对照</button><button onclick="story('action_native_fishing')">字符串 action 对照</button><button onclick="story('action_state_stop')">恢复待机</button></section>
+ <section><h2>剧情通道验证</h2><p class="muted">仅验证现代客户端原生显示链：气泡对白会显示在当前场景首个 NPC 头顶；章节提示卡使用已安装的 ui_shop 文本 ID，不会写入任务进度。</p><button onclick="story('npc_bubble')">测试 NPC 气泡</button><button onclick="story('drama_prompt')">测试章节提示卡</button></section>
+-<script>let sessions=[];async function refresh(){sessions=await (await fetch('/api/sessions')).json();document.querySelector('#state').textContent=JSON.stringify(sessions,null,2)}async function command(payload){await refresh();if(!sessions.length)return alert('没有在线角色');let status=document.querySelector('#command-status');if(status)status.textContent='发送中…';let r=await fetch('/api/sessions/'+sessions[0].sessionId+'/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let j=await r.json();if(!r.ok){if(status)status.textContent='失败：'+(j.error||'命令失败');return alert(j.error||'命令失败')}await refresh();if(status)status.textContent=sessions[0]&&sessions[0].lastAction||'已发送'}function silver(){command({action:'set_silver',silver:+document.querySelector('#silver').value})}function setSP(){command({action:'set_sp',sp:+document.querySelector('#sp').value})}function addSP(sp){command({action:'add_sp',sp})}function fillSP(){command({action:'fill_sp'})}function setMoveSpeed(){command({action:'set_move_speed',value:+document.querySelector('#move-speed').value})}function setGravity(){command({action:'set_gravity',value:+document.querySelector('#gravity').value})}function scene(destination){command({action:'switch_scene',destination})}function preset(key){command({action:'switch_scene_preset',preset:key})}function setFaction(){command({action:'set_faction',faction:document.querySelector('#faction').value})}function useCurrentPosition(){if(!sessions.length)return alert('没有在线角色');let p=sessions[0].position;document.querySelector('#teleport').value=[p.x,p.y,p.z,p.orient].join(',')}function teleportPlayer(){command({action:'teleport',position:document.querySelector('#teleport').value})}function story(action){command({action})}refresh();setInterval(refresh,2500)</script>`
++<script>let sessions=[];async function refresh(){sessions=await (await fetch('/api/sessions')).json();document.querySelector('#state').textContent=JSON.stringify(sessions,null,2)}async function command(payload){await refresh();if(!sessions.length)return alert('没有在线角色');let status=document.querySelector('#command-status');if(status)status.textContent='发送中…';let r=await fetch('/api/sessions/'+sessions[0].sessionId+'/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});let j=await r.json();if(!r.ok){if(status)status.textContent='失败：'+(j.error||'命令失败');return alert(j.error||'命令失败')}await refresh();if(status)status.textContent=sessions[0]&&sessions[0].lastAction||'已发送'}function silver(){command({action:'set_silver',silver:+document.querySelector('#silver').value})}function giveItem(){let config=(document.querySelector('#item-config').value||'').trim();let amount=+document.querySelector('#item-amount').value;if(!config)return alert('ConfigID 不能为空');command({action:'give_item',config_id:config,amount:amount,container:'bag'})}function setSP(){command({action:'set_sp',sp:+document.querySelector('#sp').value})}function addSP(sp){command({action:'add_sp',sp})}function fillSP(){command({action:'fill_sp'})}function setMoveSpeed(){command({action:'set_move_speed',value:+document.querySelector('#move-speed').value})}function setGravity(){command({action:'set_gravity',value:+document.querySelector('#gravity').value})}function scene(destination){command({action:'switch_scene',destination})}function preset(key){command({action:'switch_scene_preset',preset:key})}function setFaction(){command({action:'set_faction',faction:document.querySelector('#faction').value})}function useCurrentPosition(){if(!sessions.length)return alert('没有在线角色');let p=sessions[0].position;document.querySelector('#teleport').value=[p.x,p.y,p.z,p.orient].join(',')}function teleportPlayer(){command({action:'teleport',position:document.querySelector('#teleport').value})}function story(action){command({action})}refresh();setInterval(refresh,2500)</script>`
+--- a/cmd/protocol-probe/main.go
++++ b/cmd/protocol-probe/main.go
+@@ -592,6 +592,17 @@
+ 			if saveErr := bagStore.Save(selectedRoleID(selected), player.bagSnapshot()); saveErr != nil {
+ 				log.Printf("%s: persist bag after give: %v", conn.RemoteAddr(), saveErr)
+ 			}
++			// Latest-client LIVE A/B: a live View 2 already exists here. Historical
++			// bag lifecycle evidence refreshes a live bag with DELETE_VIEW before
++			// CREATE_VIEW + authoritative replay. Delete only the normal tool bag;
++			// grantBagItems below recreates it using the current ordinal-safe encoder.
++			for _, bagView := range []uint16{2, 121, 123, 125} {
++				if err := link.WriteFrame(serverDeleteViewCompat(bagView)); err != nil {
++					gmSession.setAction("刷新背包失败：" + err.Error())
++					return err
++				}
++			}
++			log.Printf("%s: latest-client LEGACY-BAG refresh deleted canonical main Views=2,121,123,125 before authoritative replay", conn.RemoteAddr())
+ 			if err := grantBagItems(link, player, itemCatalog, equipCatalog, conn.RemoteAddr().String()); err != nil {
+ 				gmSession.setAction("发背包物品失败：" + err.Error())
+ 				return err
+@@ -1153,6 +1164,19 @@
+ 				return
+ 			}
+ 			log.Printf("%s: sent PlayerEntry opcode=0x0B object=%#x scene=%s resource=%s", conn.RemoteAddr(), playerObjectID, activeRole.Location.Scene.Config, activeRole.Location.Scene.Resource)
++			legacyBorn02 := activeRole.Location.Scene.Resource == "born02" &&
++				activeRole.Location.Position.X > 693.907 && activeRole.Location.Position.X < 693.909 &&
++				activeRole.Location.Position.Y > 24.693 && activeRole.Location.Position.Y < 24.695 &&
++				activeRole.Location.Position.Z > 404.349 && activeRole.Location.Position.Z < 404.351
++			if legacyBorn02 {
++				old := activeRole.Location.Position
++				activeRole.Location.Position.X = 905.069
++				activeRole.Location.Position.Y = 10.810
++				activeRole.Location.Position.Z = 196.980
++				activeRole.Location.Position.Orient = 1.610
++				log.Printf("%s: latest-client LEGACY-BORN02-REMAP initial spawn old=(%.3f,%.3f,%.3f,%.3f) new=(%.3f,%.3f,%.3f,%.3f) persistence=unchanged", conn.RemoteAddr(), old.X, old.Y, old.Z, old.Orient, activeRole.Location.Position.X, activeRole.Location.Position.Y, activeRole.Location.Position.Z, activeRole.Location.Position.Orient)
++			}
++			log.Printf("%s: latest-client player spawn diagnostic scene=%s resource=%s x=%.3f y=%.3f z=%.3f orient=%.3f", conn.RemoteAddr(), activeRole.Location.Scene.Config, activeRole.Location.Scene.Resource, activeRole.Location.Position.X, activeRole.Location.Position.Y, activeRole.Location.Position.Z, activeRole.Location.Position.Orient)
+ 			if err := sendPlayerSpawn(link, player, activeRole.Location.Position, visual); err != nil {
+ 				log.Printf("%s: write player spawn chain: %v", conn.RemoteAddr(), err)
+ 				return
+@@ -1257,6 +1281,32 @@
+ 			log.Printf("%s: registered %d nearby NPC objects from catalog=%d; waiting for ClientReady", conn.RemoteAddr(), nearbyCount, len(sceneNPCs))
+ 		} else if plain[0] == 0x09 {
+ 			log.Printf("%s: C2S 0x09 len=%d hex=% X", conn.RemoteAddr(), len(plain), plain)
++			// LATEST-CLIENT COMPATIBILITY A/B ONLY. The exact-current-EXE initial
++			// entry already sent player 0x1F as part of sendPlayerSpawn. The exact
++			// stable re-entry path, however, sends player 0x1F again when the target
++			// explicit ClientReady arrives. The September client now reaches this
++			// boundary after Actor2/NPC location replay but renders the player at an
++			// invalid terrain position. Replay only the authoritative player 0x1F
++			// once on the first explicit initial-entry 0x09 so LIVE A/B can decide
++			// whether initial player-location delivery has the same timing contract.
++			if runtime != nil && !runtime.awaitingStableReentryReady && !explicitSceneReady {
++				position := runtime.activeRole.Location.Position
++				if runtime.activeRole.Location.Scene.Resource == "born02" &&
++					position.X > 693.907 && position.X < 693.909 &&
++					position.Y > 24.693 && position.Y < 24.695 &&
++					position.Z > 404.349 && position.Z < 404.351 {
++					position.X = 905.069
++					position.Y = 10.810
++					position.Z = 196.980
++					position.Orient = 1.610
++					log.Printf("%s: latest-client LEGACY-BORN02-REMAP ClientReady replay new=(%.3f,%.3f,%.3f,%.3f) runtime-persistence=unchanged", conn.RemoteAddr(), position.X, position.Y, position.Z, position.Orient)
++				}
++				if err := link.WriteFrame(serverLocation(playerObjectID, playerOwnerID, worldTransform(position))); err != nil {
++					log.Printf("%s: write latest-client initial player location replay: %v", conn.RemoteAddr(), err)
++					return
++				}
++				log.Printf("%s: latest-client player location compatibility replay after explicit ClientReady x=%.3f y=%.3f z=%.3f orient=%.3f", conn.RemoteAddr(), position.X, position.Y, position.Z, position.Orient)
++			}
+ 			if runtime != nil && runtime.awaitingStableReentryReady {
+ 				if err := world.clientReady(); err != nil {
+ 					log.Printf("%s: arm stable re-entry barrier: %v", conn.RemoteAddr(), err)
+@@ -1474,6 +1524,7 @@
+ 				log.Printf("%s: sent live 0x0C re-entry to scene=%s resource=%s; waiting for ClientReady", conn.RemoteAddr(), runtime.activeRole.Location.Scene.Config, runtime.activeRole.Location.Scene.Resource)
+ 			}
+ 			if x, y, z, orient, ok := parseMotionPosition(plain); ok {
++				log.Printf("%s: latest-client decoded C2S position x=%.3f y=%.3f z=%.3f orient=%.3f opcode=0x%02X len=%d", conn.RemoteAddr(), x, y, z, orient, plain[0], len(plain))
+ 				if selected == nil {
+ 					log.Printf("%s: position update without selected role", conn.RemoteAddr())
+ 					return
+@@ -1772,6 +1823,10 @@
+ 				if _, handleErr := handleBlockStateCustom(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
+ 					log.Printf("%s: handle block state: %v", conn.RemoteAddr(), handleErr)
+ 				}
++			case 64, 69, 79:
++				if _, handleErr := handleShopExchangeContract(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
++					log.Printf("%s: handle current shop exchange contract: %v", conn.RemoteAddr(), handleErr)
++				}
+ 			case 70:
+ 				if _, handleErr := handleShopBuyCustom(link, player, itemCatalog, bagStore, currencyStore, selectedRoleID(selected), custom, conn.RemoteAddr().String()); handleErr != nil {

@@ -7,7 +7,6 @@ HANDOFF_ZIP="$ROOT/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip"
 QUICKLZ='github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0'
 PATCH_SHA='50c20c9abaa91fb42cc885b3a8e81a5c8acee2a5bb09d80f53a1420772989c25'
 MANIFEST_SHA='43522bed8e5ff9cd1712bab8ed85d03f9ee483ace199b0c458c439234c70ec31'
-POST_PATCH_SHA='fc1d63f3b56a742638b5a7271a918ba1e0ab47c7adc67055ac46f9737d36faa6'
 POST_MANIFEST_SHA='7632477cdc006efe7c95bbbdee58fd7ec8d79d9df26bdbf594b0a2e32f88c749'
 
 cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > "$HANDOFF_ZIP"
@@ -45,8 +44,28 @@ test -f "$BUILD/internal/exchangeplan/plan.go"
 test -f "$BUILD/cmd/protocol-probe/latest_client_shop_exchange_preflight.go"
 test -f "$BUILD/cmd/protocol-probe/latest_client_equip_view_ordinal_compat_test.go"
 
-test "$(sha256sum recovery/current_postbuild_delta_20260916.patch | awk '{print $1}')" = "$POST_PATCH_SHA"
-(cd "$BUILD" && patch --batch --forward -p1 < "$ROOT/recovery/current_postbuild_delta_20260916.patch")
+# Apply the post-build current changes only from individually verified small files.
+echo 'fec8dfd13c50269ed567abddc96111e29b60e126a83bf7d1cf47e60ae54b2cb2  recovery/postbuild_patches/latest_client_shop_exchange_contract.patch' | sha256sum -c -
+echo '17783a557fb394ae7ba05375310d89b2d48eb1eb665f5a315f1e318d36829bdb  recovery/postbuild_patches/latest_client_shop_exchange_preflight.patch' | sha256sum -c -
+echo 'caff9f44addaf30e2f267fc6795eb91d5d69cf77d58a59b3cdd7208326e37fcf  recovery/postbuild_patches/latest_client_shop_exchange_preflight_test.patch' | sha256sum -c -
+echo 'f3d9fda229ea672554a717ab13f974decef6882b131f87e28cf8fc7fc75a2d5a  recovery/postbuild_patches/main.patch' | sha256sum -c -
+echo '0afc54e0db16b6e57453e4ac378846ee44ed031634a77304b2b99f97ddc04d6e  recovery/postbuild_patches/zz_recovered_overlay.patch' | sha256sum -c -
+echo '9e13e76e914007916b853e0f1dcc9a8da668edded1556677d82e26c1c723eaa7  recovery/postbuild_files/cmd__protocol-probe__latest_client_bag_bind_arrange_test.go' | sha256sum -c -
+echo '712de6d1477b8750f6f4f1942d814a9c4afbd8cf367d5748b1097e9b59b20757  recovery/postbuild_files/internal__exchangeplan__capacity.go' | sha256sum -c -
+echo '51d73aa02af50182a23f0d0c6ea271c49d1c12a148bd4050322e36ac60bab0b1  recovery/postbuild_files/internal__exchangeplan__capacity_test.go' | sha256sum -c -
+for p in \
+  recovery/postbuild_patches/latest_client_shop_exchange_contract.patch \
+  recovery/postbuild_patches/latest_client_shop_exchange_preflight.patch \
+  recovery/postbuild_patches/latest_client_shop_exchange_preflight_test.patch \
+  recovery/postbuild_patches/main.patch \
+  recovery/postbuild_patches/zz_recovered_overlay.patch; do
+  (cd "$BUILD" && patch --batch --forward -p1 < "$ROOT/$p")
+done
+cp recovery/postbuild_files/cmd__protocol-probe__latest_client_bag_bind_arrange_test.go "$BUILD/cmd/protocol-probe/latest_client_bag_bind_arrange_test.go"
+cp recovery/postbuild_files/internal__exchangeplan__capacity.go "$BUILD/internal/exchangeplan/capacity.go"
+cp recovery/postbuild_files/internal__exchangeplan__capacity_test.go "$BUILD/internal/exchangeplan/capacity_test.go"
+find "$BUILD/cmd" "$BUILD/internal" -name '*.go' -print0 | xargs -0 gofmt -w
+
 test "$(find "$BUILD" -type f | wc -l | tr -d ' ')" = '195'
 (cd "$BUILD" && find . -type f -printf '%P\0' | sort -z | xargs -0 sha256sum > "$ROOT/generated-manifest.txt")
 test "$(sha256sum generated-manifest.txt | awk '{print $1}')" = "$POST_MANIFEST_SHA"

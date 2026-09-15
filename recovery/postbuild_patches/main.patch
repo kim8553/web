@@ -1,0 +1,11 @@
+--- a/cmd/protocol-probe/main.go
++++ b/cmd/protocol-probe/main.go
+@@ -1824,7 +1824,7 @@
+ 					log.Printf("%s: handle block state: %v", conn.RemoteAddr(), handleErr)
+ 				}
+ 			case 64, 69, 79:
+-				if _, handleErr := handleShopExchangeContract(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
++				if _, handleErr := handleShopExchangeContract(link, player, itemCatalog, custom, conn.RemoteAddr().String()); handleErr != nil {
+ 					log.Printf("%s: handle current shop exchange contract: %v", conn.RemoteAddr(), handleErr)
+ 				}
+ 			case 70:

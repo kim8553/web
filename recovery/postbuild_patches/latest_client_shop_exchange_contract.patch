@@ -1,0 +1,30 @@
+--- a/cmd/protocol-probe/latest_client_shop_exchange_contract.go
++++ b/cmd/protocol-probe/latest_client_shop_exchange_contract.go
+@@ -96,7 +96,7 @@
+ // ExchangeItem.ini. Exact-current Lua+text prove ExchangeBind is the first-result
+ // material-derived bind preview (1=bound, 0=unbound). The form response remains
+ // blocked because the independent ShowBind server rule is not yet proven.
+-func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, custom clientCustomMessage, remote string) (bool, error) {
++func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, itemCatalog *itemCatalog, custom clientCustomMessage, remote string) (bool, error) {
+ 	if request, matched, err := parseShopExchangeFormRequest(custom); matched {
+ 		if err != nil {
+ 			return true, err
+@@ -159,15 +159,15 @@
+ 				remote, request.ShopID, request.Page, request.Position, request.Count, loadErr)
+ 			return true, nil
+ 		}
+-		preflight, preflightErr := runShopExchangeReadOnlyPreflight(defaultShopINIPath, defaultExchangeItemINIPath, authority, player, request)
++		preflight, preflightErr := runShopExchangeReadOnlyPreflight(defaultShopINIPath, defaultExchangeItemINIPath, authority, player, itemCatalog, request)
+ 		if preflightErr != nil {
+ 			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: preflight error: %v",
+ 				remote, request.ShopID, request.Page, request.Position, request.Count, preflightErr)
+ 			return true, nil
+ 		}
+-		log.Printf("%s: current shop exchange buy preflight shop=%s page=%d pos=%d count=%d exchange_data=%d output=%s x%d conditions_supported=%t conditions_satisfied=%t properties_supported=%t properties_satisfied=%t materials_satisfied=%t exchange_bind_preview=%d blocked: final persisted BindStatus/atomic mutation unresolved",
++		log.Printf("%s: current shop exchange buy preflight shop=%s page=%d pos=%d count=%d exchange_data=%d output=%s x%d conditions_supported=%t conditions_satisfied=%t properties_supported=%t properties_satisfied=%t materials_satisfied=%t capacity_supported=%t capacity_satisfied=%t exchange_bind_preview=%d blocked: final persisted BindStatus/atomic mutation unresolved",
+ 			remote, request.ShopID, request.Page, request.Position, request.Count, preflight.Listing.exchangeData, preflight.Listing.configID, preflight.OutputAmount,
+-			preflight.ConditionSupported, preflight.ConditionSatisfied, preflight.PropertySupported, preflight.PropertySatisfied, preflight.MaterialPlan.Satisfied, preflight.ExchangeBindPreview)
++			preflight.ConditionSupported, preflight.ConditionSatisfied, preflight.PropertySupported, preflight.PropertySatisfied, preflight.MaterialPlan.Satisfied, preflight.CapacitySupported, preflight.CapacitySatisfied, preflight.ExchangeBindPreview)
+ 		return true, nil
+ 	}
+ 	return false, nil

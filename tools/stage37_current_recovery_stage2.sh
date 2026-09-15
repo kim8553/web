@@ -19,12 +19,15 @@ cp recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_exchange_sta
 cp recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_exchange_stage_test.go "$BUILD/cmd/protocol-probe/latest_client_shop_exchange_stage_test.go"
 find "$BUILD/cmd" "$BUILD/internal" -name '*.go' -print0 | xargs -0 gofmt -w
 
-# ci.real.mod/sum are CI-only files created by the 195-file verifier. Exclude them
-# from source-integrity accounting, then restore them for the final gate run.
+# The 195-file verifier leaves CI-only modfiles and the Linux go-build output in
+# buildtree. Exclude all three from source-integrity accounting. The modfiles are
+# restored for the final 199-file gate run; the binary is rebuilt by the build gate.
 test -f "$BUILD/ci.real.mod"
 test -f "$BUILD/ci.real.sum"
+test -f "$BUILD/protocol-probe"
 mv "$BUILD/ci.real.mod" "$ROOT/ci.real.mod.stage2"
 mv "$BUILD/ci.real.sum" "$ROOT/ci.real.sum.stage2"
+rm "$BUILD/protocol-probe"
 test "$(find "$BUILD" -type f | wc -l | tr -d ' ')" = '199'
 (cd "$BUILD" && find . -type f -printf '%P\0' | sort -z | xargs -0 sha256sum > "$ROOT/generated-manifest.txt")
 test "$(sha256sum generated-manifest.txt | awk '{print $1}')" = "$FINAL_MANIFEST_SHA"

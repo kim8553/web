@@ -1,0 +1,25 @@
+name: Export Stage37 Post Delta
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - '.github/workflows/export-stage37-postdelta.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hash post delta
+        run: sha256sum recovery/current_postbuild_delta_20260916.patch | tee postdelta.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-postdelta-exact-repo-copy
+          path: |
+            recovery/current_postbuild_delta_20260916.patch
+            postdelta.sha256
+          if-no-files-found: error

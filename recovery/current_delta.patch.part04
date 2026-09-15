@@ -1,0 +1,602 @@
++func latestClientItemObjectView(viewID uint16) bool {
++	return viewID == 1 || latestClientStarterBagView(viewID)
++}
++
++func latestClientStarterBagView(viewID uint16) bool {
++	switch viewID {
++	case 121, 2, 123, 125, 122, 3, 124, 126, 176, 174, 178, 180, 177, 175, 179, 181:
++		return true
++	default:
++		return false
++	}
++}
++
++// latestClientBagWireProperties publishes only identities/counts that are
++// explicitly present in the exact current negotiated table Stage37 negotiates:
++//
++//	ordinal 7   ConfigID string
++//	ordinal 105 ConfigID string (shop/view binding)
++//	ordinal 106 Amount int32
++//	ordinal 110 MaxAmount int32
++//	ordinal 234 BindStatus int32
++//
++// High/global IDs are used only as semantic sources and are never emitted.
++func latestClientBagWireProperties(properties []serverViewProperty) []serverViewProperty {
++	var configID string
++	var haveConfig bool
++	var amount int32
++	var haveAmount bool
++	var maxAmount int32
++	var haveMaxAmount bool
++	var itemType int32
++	var haveItemType bool
++	var itemViewID int32
++	var haveViewID bool
++	var bindStatus int32
++	var haveBindStatus bool
++
++	for _, property := range properties {
++		switch property.index {
++		case 7, 105, 0x05A0:
++			if property.text != nil {
++				configID = *property.text
++				haveConfig = true
++			}
++		case 106, 0x0766:
++			if property.int32 != nil {
++				amount = *property.int32
++				haveAmount = true
++			}
++		case 110, 0x0767:
++			if property.int32 != nil {
++				maxAmount = *property.int32
++				haveMaxAmount = true
++			}
++		case 205, 0x0761:
++			if property.int32 != nil {
++				itemType = *property.int32
++				haveItemType = true
++			}
++		case 228, 0x0763:
++			if property.int32 != nil {
++				itemViewID = *property.int32
++				haveViewID = true
++			}
++		case 234, 0x076A:
++			if property.int32 != nil {
++				bindStatus = *property.int32
++				haveBindStatus = true
++			}
++		}
++		if property.nest != nil && property.nest.subIndex == 0x05A0 && property.nest.text != nil {
++			configID = *property.nest.text
++			haveConfig = true
++		}
++	}
++
++	// Emit in ascending negotiated ordinal order. Existing 0..227 positions are
++	// unchanged; ViewID and runtime BindStatus are append-only fields. Ident is built-in and
++	// derived by FxNet2 from VIEW_ADD.objectIndex.
++	result := make([]serverViewProperty, 0, 7)
++	if haveConfig {
++		result = append(result, viewString(7, configID), viewString(105, configID))
++	}
++	if haveAmount {
++		result = append(result, viewInt(106, amount))
++	}
++	if haveMaxAmount {
++		result = append(result, viewInt(110, maxAmount))
++	}
++	if haveItemType {
++		result = append(result, viewInt(205, itemType))
++	}
++	if haveViewID {
++		result = append(result, viewInt(228, itemViewID))
++	}
++	if haveBindStatus {
++		result = append(result, viewInt(234, bindStatus))
++	}
++	return result
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_bag_view_ordinal_compat_test.go
+@@ -0,0 +1,58 @@
++package main
++
++import "testing"
++
++func TestLatestClientStarterBagViewSet(t *testing.T) {
++	for _, id := range []uint16{121, 2, 123, 125, 122, 3, 124, 126, 176, 174, 178, 180, 177, 175, 179, 181} {
++		if !latestClientStarterBagView(id) {
++			t.Fatalf("bag view %d not recognized", id)
++		}
++	}
++	for _, id := range []uint16{40, 41, 43, 45, 46, 47, 48, 61} {
++		if latestClientStarterBagView(id) {
++			t.Fatalf("non-bag view %d must stay untouched", id)
++		}
++	}
++}
++
++func TestLatestClientBagWirePropertiesUsesRichCurrentObjectContract(t *testing.T) {
++	props := []serverViewProperty{
++		viewString(7, "Game_item_hp_001"),
++		viewInt(0x0761, 1),
++		viewInt(0x0763, 1),
++		viewString(0x0765, "7100568-001-0000000001-0001"),
++		viewInt(0x0766, 5),
++		viewInt(0x0767, 30),
++		viewInt(0x076A, 1), // semantic source only; must normalize to current ordinal 234
++		viewInt(0x0779, 6), // unsupported historical field must stay off wire
++	}
++	got := latestClientBagWireProperties(props)
++	if len(got) != 7 {
++		t.Fatalf("bag wire property count=%d, want 7", len(got))
++	}
++	want := []uint16{7, 105, 106, 110, 205, 228, 234}
++	for i, index := range want {
++		if got[i].index != index {
++			t.Fatalf("property[%d].index=%d, want %d", i, got[i].index, index)
++		}
++	}
++	for _, property := range got {
++		if property.index == 0x076A {
++			t.Fatal("historical raw BindStatus property 0x076A must never be emitted on current wire")
++		}
++		if int(property.index) >= latestClientPlayerWirePropertyTableCount {
++			t.Fatalf("emitted out-of-range property %d >= %d", property.index, latestClientPlayerWirePropertyTableCount)
++		}
++	}
++}
++
++func TestLatestClientBagWirePropertiesRecoversWeaponNestedConfigID(t *testing.T) {
++	got := latestClientBagWireProperties([]serverViewProperty{
++		viewNest(0x05A0, "weapon_test"),
++		viewInt(0x0766, 1),
++		viewInt(0x0767, 1),
++	})
++	if len(got) != 4 || got[0].text == nil || *got[0].text != "weapon_test" || got[1].text == nil || *got[1].text != "weapon_test" {
++		t.Fatalf("nested ConfigID normalization failed: %#v", got)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_currency_contract_test.go
+@@ -0,0 +1,69 @@
++package main
++
++import (
++	"encoding/binary"
++	"testing"
++
++	"github.com/local/9yin-go-server/internal/clientdata"
++)
++
++func TestLatestClientCurrencyPropertiesUseCurrentInt64Contract(t *testing.T) {
++	cases := []struct {
++		name string
++		want uint16
++	}{
++		{"CapitalType1", 111},
++		{"CapitalType2", 229},
++		{"CapitalType4", 230},
++		{"CapitalType0", 231},
++		{"CapitalType3", 232},
++	}
++	for _, tc := range cases {
++		got, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: tc.name, typ: clientdata.WireInt64}]
++		if !ok || got != tc.want {
++			t.Fatalf("%s/int64 ordinal=(%d,%v), want (%d,true)", tc.name, got, ok, tc.want)
++		}
++	}
++	if _, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "CapitalType1", typ: clientdata.WireInt32}]; ok {
++		t.Fatal("CapitalType1/int32 must not remain in the current negotiated table")
++	}
++}
++
++func TestCurrencyUpdatePublishesCurrentResourceProvenInt64Properties(t *testing.T) {
++	p := &playerActor{silver: 101, gold: 202, silverCard: 303, silverTicket: 404}
++	frame, err := p.currenciesUpdate()
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) < 12 || frame[0] != 0x10 || frame[1] != 0 {
++		t.Fatalf("unexpected ServerObjectProperty header: %x", frame)
++	}
++	if got := binary.LittleEndian.Uint16(frame[10:12]); got != 4 {
++		t.Fatalf("currency property count=%d, want 4 wallet properties", got)
++	}
++	off := 12
++	want := []struct {
++		ordinal uint16
++		value   int64
++	}{
++		{111, 101},
++		{231, 202},
++		{229, 303},
++		{230, 404},
++	}
++	for i, tc := range want {
++		if off+10 > len(frame) {
++			t.Fatalf("currency[%d] truncated at %d/%d", i, off, len(frame))
++		}
++		if got := binary.LittleEndian.Uint16(frame[off : off+2]); got != tc.ordinal {
++			t.Fatalf("currency[%d] ordinal=%d, want %d", i, got, tc.ordinal)
++		}
++		if got := int64(binary.LittleEndian.Uint64(frame[off+2 : off+10])); got != tc.value {
++			t.Fatalf("currency[%d] value=%d, want %d", i, got, tc.value)
++		}
++		off += 10
++	}
++	if off != len(frame) {
++		t.Fatalf("currency frame has %d trailing bytes", len(frame)-off)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_current_bag_wire.go
+@@ -0,0 +1,104 @@
++package main
++
++import (
++	"encoding/binary"
++	"fmt"
++
++	"github.com/local/9yin-go-server/internal/clientdata"
++)
++
++func latestClientCurrentBagContainer(category int32) (uint16, bool) {
++	switch category {
++	case 1:
++		return 2, true
++	case 2:
++		return 121, true
++	case 3:
++		return 123, true
++	case 4:
++		return 125, true
++	default:
++		return 0, false
++	}
++}
++
++func latestClientCurrentBagOrdinal(name string, typ clientdata.WireType) (uint16, error) {
++	ordinal, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: name, typ: typ}]
++	if !ok {
++		return 0, fmt.Errorf("latest-client bag property %s/%s is not negotiated", name, typ)
++	}
++	return ordinal, nil
++}
++
++func latestClientViewAddSingle(viewID, objectIndex uint16, property serverViewProperty) ([]byte, error) {
++	msg := make([]byte, 7)
++	msg[0] = 0x18
++	binary.LittleEndian.PutUint16(msg[1:3], viewID)
++	binary.LittleEndian.PutUint16(msg[3:5], objectIndex)
++	binary.LittleEndian.PutUint16(msg[5:7], 1)
++	if err := appendViewProperty(&msg, property); err != nil {
++		return nil, err
++	}
++	return msg, nil
++}
++
++func latestClientViewObjectPropertySingle(viewID, objectIndex uint16, property serverViewProperty) ([]byte, error) {
++	msg := make([]byte, 12)
++	msg[0] = 0x10
++	msg[1] = 0x01
++	binary.LittleEndian.PutUint32(msg[2:6], uint32(viewID))
++	binary.LittleEndian.PutUint32(msg[6:10], uint32(objectIndex))
++	binary.LittleEndian.PutUint16(msg[10:12], 1)
++	if err := appendViewProperty(&msg, property); err != nil {
++		return nil, err
++	}
++	return msg, nil
++}
++
++func latestClientViewAddCounted(viewID, objectIndex uint16, properties []serverViewProperty) ([]byte, error) {
++	if len(properties) > 0xffff {
++		return nil, fmt.Errorf("latest-client VIEW_ADD property count=%d", len(properties))
++	}
++	msg := make([]byte, 7)
++	msg[0] = 0x18
++	binary.LittleEndian.PutUint16(msg[1:3], viewID)
++	binary.LittleEndian.PutUint16(msg[3:5], objectIndex)
++	binary.LittleEndian.PutUint16(msg[5:7], uint16(len(properties)))
++	for _, property := range properties {
++		if err := appendViewProperty(&msg, property); err != nil {
++			return nil, err
++		}
++	}
++	return msg, nil
++}
++
++func latestClientCurrentBagFrames(viewID, objectIndex uint16, category int32, properties []serverViewProperty) ([][]byte, error) {
++	wireProperties := latestClientBagWireProperties(properties)
++	if len(wireProperties) == 0 {
++		return nil, fmt.Errorf("latest-client bag object has no negotiated properties")
++	}
++
++	var haveItemType, haveViewID bool
++	for _, property := range wireProperties {
++		switch property.index {
++		case 205: // ItemType/int32 in the original negotiated table
++			haveItemType = property.int32 != nil
++		case 228: // append-only ViewID/int32
++			if property.int32 != nil {
++				haveViewID = true
++				if *property.int32 != category {
++					return nil, fmt.Errorf("latest-client bag ViewID=%d does not match category=%d", *property.int32, category)
++				}
++			}
++		}
++	}
++	if !haveItemType || !haveViewID {
++		return nil, fmt.Errorf("latest-client bag object missing required fields ItemType=%v ViewID=%v", haveItemType, haveViewID)
++	}
++
++	add, err := latestClientViewAddCounted(viewID, objectIndex, wireProperties)
++	if err != nil {
++		return nil, err
++	}
++	return [][]byte{add}, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_current_bag_wire_test.go
+@@ -0,0 +1,117 @@
++package main
++
++import (
++	"encoding/binary"
++	"github.com/local/9yin-go-server/internal/clientdata"
++	"testing"
++)
++
++func TestLatestClientCurrentBagContainers(t *testing.T) {
++	cases := map[int32]uint16{1: 2, 2: 121, 3: 123, 4: 125}
++	for category, want := range cases {
++		got, ok := latestClientCurrentBagContainer(category)
++		if !ok || got != want {
++			t.Fatalf("category %d -> (%d,%v), want (%d,true)", category, got, ok, want)
++		}
++	}
++	if _, ok := latestClientCurrentBagContainer(0); ok {
++		t.Fatal("unknown bag category must not be guessed")
++	}
++}
++
++func TestLatestClientCurrentBagRichObjectOrdinalsAreAppendOnly(t *testing.T) {
++	if latestClientPlayerWirePropertyTableCount != 235 {
++		t.Fatalf("property table=%d, want 235", latestClientPlayerWirePropertyTableCount)
++	}
++	if got := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "ItemType", typ: clientdata.WireInt32}]; got != 205 {
++		t.Fatalf("ItemType/int32 ordinal=%d, want 205", got)
++	}
++	if got := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "ViewID", typ: clientdata.WireInt32}]; got != 228 {
++		t.Fatalf("ViewID/int32 ordinal=%d, want 228", got)
++	}
++	if _, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "Ident", typ: clientdata.WireString}]; ok {
++		t.Fatal("Ident must be built-in/read-only and not negotiated")
++	}
++	if got := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "MaxHP", typ: clientdata.WireInt32}]; got != 30 {
++		t.Fatalf("MaxHP ordinal moved to %d", got)
++	}
++	if got := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "Force", typ: clientdata.WireString}]; got != 226 {
++		t.Fatalf("Force ordinal moved to %d", got)
++	}
++}
++
++func TestLatestClientViewAddSingleExactLayout(t *testing.T) {
++	frame, err := latestClientViewAddSingle(2, 1, viewInt(228, 1))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) != 13 || frame[0] != 0x18 || binary.LittleEndian.Uint16(frame[1:3]) != 2 || binary.LittleEndian.Uint16(frame[3:5]) != 1 || binary.LittleEndian.Uint16(frame[5:7]) != 1 || binary.LittleEndian.Uint16(frame[7:9]) != 228 || binary.LittleEndian.Uint32(frame[9:13]) != 1 {
++		t.Fatalf("VIEW_ADD counted single frame=%x", frame)
++	}
++}
++
++func TestLatestClientViewObjectPropertySingleExactLayout(t *testing.T) {
++	frame, err := latestClientViewObjectPropertySingle(2, 1, viewInt(106, 5))
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) != 18 || frame[0] != 0x10 || frame[1] != 1 || binary.LittleEndian.Uint32(frame[2:6]) != 2 || binary.LittleEndian.Uint32(frame[6:10]) != 1 || binary.LittleEndian.Uint16(frame[10:12]) != 1 || binary.LittleEndian.Uint16(frame[12:14]) != 106 || binary.LittleEndian.Uint32(frame[14:18]) != 5 {
++		t.Fatalf("SERVER_OBJECT_PROPERTY counted single frame=%x", frame)
++	}
++}
++
++func TestLatestClientCurrentBagFramesAtomicRichObject(t *testing.T) {
++	props := []serverViewProperty{
++		viewString(7, "Game_item_hp_001"),
++		viewInt(0x0761, 1),
++		viewInt(0x0763, 1),
++		viewString(0x0765, "7100568-001-0000000001-0001"), // historical UniqueID source; must stay off wire
++		viewInt(0x0766, 5),
++		viewInt(0x0767, 30),
++		viewInt(0x076A, 1),
++	}
++	frames, err := latestClientCurrentBagFrames(2, 3, 1, props)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frames) != 1 {
++		t.Fatalf("frame count=%d, want 1", len(frames))
++	}
++	f := frames[0]
++	if f[0] != 0x18 || binary.LittleEndian.Uint16(f[1:3]) != 2 || binary.LittleEndian.Uint16(f[3:5]) != 3 || binary.LittleEndian.Uint16(f[5:7]) != 7 {
++		t.Fatalf("rich VIEW_ADD header=%x", f[:7])
++	}
++
++	want := []uint16{7, 105, 106, 110, 205, 228, 234}
++	off := 7
++	for i, index := range want {
++		if off+2 > len(f) {
++			t.Fatalf("property[%d] truncated at %d frame=%x", i, off, f)
++		}
++		got := binary.LittleEndian.Uint16(f[off : off+2])
++		off += 2
++		if got != index {
++			t.Fatalf("property[%d].ordinal=%d, want %d frame=%x", i, got, index, f)
++		}
++		switch index {
++		case 7, 105:
++			if off+4 > len(f) {
++				t.Fatalf("string length truncated index=%d", index)
++			}
++			n := int(binary.LittleEndian.Uint32(f[off : off+4]))
++			off += 4
++			if n <= 0 || off+n > len(f) || f[off+n-1] != 0 {
++				t.Fatalf("bad string property index=%d len=%d", index, n)
++			}
++			off += n
++		default:
++			if off+4 > len(f) {
++				t.Fatalf("int32 truncated index=%d", index)
++			}
++			off += 4
++		}
++	}
++	if off != len(f) {
++		t.Fatalf("frame tail=%d bytes frame=%x", len(f)-off, f)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_delete_view_compat.go
+@@ -0,0 +1,8 @@
++package main
++
++// serverDeleteViewCompat encodes the historically verified SERVER_DELETE_VIEW
++// layout: opcode 0x16 followed by a little-endian uint16 view ID.  It is used
++// only by the latest-client live-bag refresh A/B and is not exact-authority code.
++func serverDeleteViewCompat(viewID uint16) []byte {
++	return []byte{0x16, byte(viewID), byte(viewID >> 8)}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_equip_view_ordinal_compat_test.go
+@@ -0,0 +1,95 @@
++package main
++
++import (
++	"encoding/binary"
++	"testing"
++)
++
++func latestClientViewAddPropertyIndexesForTest(t *testing.T, frame []byte) []uint16 {
++	t.Helper()
++	if len(frame) < 7 || frame[0] != 0x18 {
++		t.Fatalf("not VIEW_ADD: %x", frame)
++	}
++	count := int(binary.LittleEndian.Uint16(frame[5:7]))
++	off := 7
++	indexes := make([]uint16, 0, count)
++	for i := 0; i < count; i++ {
++		if off+2 > len(frame) {
++			t.Fatalf("property %d truncated before index", i)
++		}
++		idx := binary.LittleEndian.Uint16(frame[off : off+2])
++		off += 2
++		indexes = append(indexes, idx)
++		if int(idx) >= len(latestClientViewPropertyFields) {
++			t.Fatalf("property ordinal %d outside negotiated table", idx)
++		}
++		switch latestClientViewPropertyFields[idx].Type {
++		case 1: // WireByte
++			off++
++		case 3: // WireInt32
++			off += 4
++		case 7: // WireString
++			if off+4 > len(frame) {
++				t.Fatalf("property %d string length truncated", idx)
++			}
++			n := int(binary.LittleEndian.Uint32(frame[off : off+4]))
++			off += 4 + n
++		default:
++			t.Fatalf("unexpected type %s in normalized equip row at ordinal %d", latestClientViewPropertyFields[idx].Type, idx)
++		}
++		if off > len(frame) {
++			t.Fatalf("property %d value truncated", idx)
++		}
++	}
++	if off != len(frame) {
++		t.Fatalf("VIEW_ADD trailing bytes: parsed=%d size=%d", off, len(frame))
++	}
++	return indexes
++}
++
++func TestLatestClientEquipViewNormalizesHistoricalBodyProperties(t *testing.T) {
++	item := bagItem{
++		ConfigID:     "equip_test",
++		ItemType:     101,
++		BindStatus:   1,
++		MaxAmount:    1,
++		ColorLevel:   4,
++		LogicPack:    7,
++		ArtPack:      123,
++		Hardiness:    900,
++		MaxHardiness: 1000,
++		EquipType:    "Weapon",
++	}
++	frame, err := serverViewAdd(1, 22, equipItemProps(item))
++	if err != nil {
++		t.Fatalf("current equip VIEW_ADD rejected after normalization: %v", err)
++	}
++	got := latestClientViewAddPropertyIndexesForTest(t, frame)
++	want := []uint16{7, 105, 106, 110, 205, 228, 234}
++	if len(got) != len(want) {
++		t.Fatalf("equip wire indexes=%v, want %v", got, want)
++	}
++	for i := range want {
++		if got[i] != want[i] {
++			t.Fatalf("equip wire indexes=%v, want %v", got, want)
++		}
++	}
++}
++
++func TestLatestClientEquipViewNormalizesWeaponNestedConfigID(t *testing.T) {
++	item := bagItem{ConfigID: "weapon_test", ItemType: 101, BindStatus: 1, MaxAmount: 1, EquipType: "Weapon"}
++	frame, err := serverViewAdd(1, 22, weaponRowProps(item))
++	if err != nil {
++		t.Fatalf("current weapon VIEW_ADD rejected after normalization: %v", err)
++	}
++	got := latestClientViewAddPropertyIndexesForTest(t, frame)
++	want := []uint16{7, 105, 106, 110, 205, 228, 234}
++	if len(got) != len(want) {
++		t.Fatalf("weapon wire indexes=%v, want %v", got, want)
++	}
++	for i := range want {
++		if got[i] != want[i] {
++			t.Fatalf("weapon wire indexes=%v, want %v", got, want)
++		}
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat.go
+@@ -0,0 +1,96 @@
++package main
++
++import "fmt"
++
++// latestClientNonBagViewOrdinalFamily identifies the post-ClientReady learned/
++// progression GameViews whose recovered emitters still carry historical V2/
++// global property IDs. FxNet2's current VIEW_ADD decoder indexes the negotiated
++// table by ordinal, so those historical IDs are not valid wire ordinals.
++func latestClientNonBagViewOrdinalFamily(viewID uint16) bool {
++	switch viewID {
++	case viewportSkill, viewportNormalAttack, viewportNeiGong, 45, viewportQingGong, 47, 48:
++		return true
++	default:
++		return false
++	}
++}
++
++// latestClientNonBagViewProperties maps only name/type pairs already present in
++// the current negotiated table. The three legacy View43 metadata IDs
++// below are deliberately omitted: current FxGameLogic references
++// NeiGongLevel/WuXing/BufferID through resource/config paths, while no matching
++// negotiated fields exist. Adding new ordinals for them would be speculative.
++func latestClientNonBagViewProperties(viewID uint16, properties []serverViewProperty) ([]serverViewProperty, error) {
++	if !latestClientNonBagViewOrdinalFamily(viewID) {
++		return properties, nil
++	}
++	result := make([]serverViewProperty, 0, len(properties))
++	for _, property := range properties {
++		switch property.index {
++		case 0x05A0: // historical ConfigID -> current ConfigID/string ordinal 7

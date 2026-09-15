@@ -1,0 +1,515 @@
++			return nil, fmt.Errorf("exchange Prop entry %q has empty property name", entry)
++		}
++		amount, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
++		if err != nil || amount < 0 {
++			return nil, fmt.Errorf("exchange Prop entry %q has invalid non-negative amount", entry)
++		}
++		result = append(result, shopExchangePropertyCost{Name: name, Amount: amount})
++	}
++	return result, nil
++}
++
++func firstShopExchangeMaterialBindPreview(plan exchangeplan.BatchPlan) int32 {
++	if !plan.Satisfied || len(plan.Results) == 0 {
++		return 0
++	}
++	if plan.Results[0].MaterialDerivedBound {
++		return 1
++	}
++	return 0
++}
++
++func currentShopExchangeInventoryStacks(player *playerActor) []exchangeplan.Stack {
++	if player == nil {
++		return nil
++	}
++	items := player.bagSnapshot()
++	result := make([]exchangeplan.Stack, 0, len(items))
++	for index, item := range items {
++		if _, ok := latestClientCurrentBagContainer(item.ViewID); !ok {
++			continue
++		}
++		result = append(result, exchangeplan.Stack{
++			Index:      index,
++			ConfigID:   item.ConfigID,
++			Amount:     item.Amount,
++			BindStatus: item.BindStatus,
++		})
++	}
++	return result
++}
++
++// evaluateShopExchangeConditionPreview follows the exact current form UI's
++// ConditionType composition: zero selects the AND description; any non-zero
++// value selects the OR description. This is a read-only preview/capability
++// result, not a claim that the final server mutation authorization has been
++// proven. Every root is still evaluated so unsupported leaves fail closed.
++func evaluateShopExchangeConditionPreview(definition shopExchangeDefinition, authority *currentShopConditionAuthority, player *playerActor) (supported, satisfied bool, details []shopConditionDetail, err error) {
++	references, err := exchangeConditionReferences(definition.Condition, definition.Condition2, definition.Filters)
++	if err != nil {
++		return false, false, nil, err
++	}
++	if len(references) == 0 {
++		return true, true, nil, nil
++	}
++	if authority == nil || authority.catalog == nil || player == nil {
++		return false, false, nil, nil
++	}
++	evaluator := exactCurrentConditionEvaluator{catalog: authority.catalog, player: player, skillMaxTable: authority.skillMaxTable}
++	details = make([]shopConditionDetail, 0, len(references))
++	allSupported := true
++	andValue := true
++	orValue := false
++	for _, reference := range references {
++		value, rootSupported, evalErr := evaluateConditionRoot(reference.ConditionID, authority.catalog.resolve, evaluator.evaluate)
++		if evalErr != nil {
++			return false, false, nil, fmt.Errorf("condition %d: %w", reference.ConditionID, evalErr)
++		}
++		if !rootSupported {
++			allSupported = false
++			value = false
++		}
++		andValue = andValue && value
++		orValue = orValue || value
++		details = append(details, shopConditionDetail{ConditionID: reference.ConditionID, IsNeedShow: reference.IsNeedShow, Satisfied: value})
++	}
++	if !allSupported {
++		return false, false, details, nil
++	}
++	if definition.ConditionType == 0 {
++		return true, andValue, details, nil
++	}
++	return true, orValue, details, nil
++}
++
++func shopExchangePropertyValue(player *playerActor, name string) (int64, bool) {
++	if player == nil {
++		return 0, false
++	}
++	silver, gold, silverCard, silverTicket := player.currencySnapshot()
++	switch name {
++	case "CapitalType0":
++		return int64(gold), true
++	case "CapitalType1":
++		return int64(silver), true
++	case "CapitalType2":
++		return int64(silverCard), true
++	case "CapitalType4":
++		return int64(silverTicket), true
++	default:
++		// CapitalType3 and arbitrary player properties are intentionally not
++		// guessed: Stage37 does not yet have authoritative mutable state for them.
++		return 0, false
++	}
++}
++
++func evaluateShopExchangePropertyPreview(definition shopExchangeDefinition, player *playerActor, count int32) (supported, satisfied bool, err error) {
++	if count <= 0 {
++		return false, false, fmt.Errorf("exchange count must be positive, got %d", count)
++	}
++	costs, err := parseShopExchangePropertyCosts(definition.Prop)
++	if err != nil {
++		return false, false, err
++	}
++	// Exact current form_exchange.lua treats Type==1 as guild-building exchange
++	// and displays AddValue as an additional guild-currency cost. Stage37 has no
++	// proven authoritative guild-currency state, so such rows remain fail-closed.
++	if definition.Type == 1 {
++		return false, false, nil
++	}
++	for _, cost := range costs {
++		if cost.Amount > math.MaxInt64/int64(count) {
++			return false, false, fmt.Errorf("exchange Prop %s amount overflows batch", cost.Name)
++		}
++		need := cost.Amount * int64(count)
++		have, ok := shopExchangePropertyValue(player, cost.Name)
++		if !ok {
++			return false, false, nil
++		}
++		if have < need {
++			return true, false, nil
++		}
++	}
++	return true, true, nil
++}
++
++func runShopExchangeReadOnlyPreflight(shopPath, exchangePath string, authority *currentShopConditionAuthority, player *playerActor, request shopExchangeBuyRequest) (shopExchangeReadOnlyPreflight, error) {
++	var result shopExchangeReadOnlyPreflight
++	if request.Count < 1 || request.Count > 99 {
++		return result, fmt.Errorf("exchange count %d outside current client range 1..99", request.Count)
++	}
++	items, _, _, err := shopCatalogItems(shopPath, request.ShopID)
++	if err != nil {
++		return result, err
++	}
++	listing := currentShopListing(items, request.Page, request.Position)
++	if listing == nil {
++		return result, fmt.Errorf("shop %s has no current listing at page=%d pos=%d", request.ShopID, request.Page, request.Position)
++	}
++	result.Listing = *listing
++	if listing.priceMode != 3 || listing.exchangeData <= 0 {
++		return result, fmt.Errorf("shop %s page=%d pos=%d is not a mode3 ExchangeData listing", request.ShopID, request.Page, request.Position)
++	}
++	definition, err := loadShopExchangeDefinition(exchangePath, listing.exchangeData)
++	if err != nil {
++		return result, err
++	}
++	result.Definition = definition
++	result.ConditionSupported, result.ConditionSatisfied, result.ConditionDetails, err = evaluateShopExchangeConditionPreview(definition, authority, player)
++	if err != nil {
++		return result, err
++	}
++	result.PropertySupported, result.PropertySatisfied, err = evaluateShopExchangePropertyPreview(definition, player, request.Count)
++	if err != nil {
++		return result, err
++	}
++	requirements, err := parseShopExchangeRequirements(definition.Item)
++	if err != nil {
++		return result, err
++	}
++	result.MaterialPlan, err = exchangeplan.PlanBatch(currentShopExchangeInventoryStacks(player), requirements, request.Count)
++	if err != nil {
++		return result, err
++	}
++	result.ExchangeBindPreview = firstShopExchangeMaterialBindPreview(result.MaterialPlan)
++	if listing.amount <= 0 || int64(listing.amount) > math.MaxInt64/int64(request.Count) {
++		return result, fmt.Errorf("invalid exchange output amount=%d count=%d", listing.amount, request.Count)
++	}
++	result.OutputAmount = int64(listing.amount) * int64(request.Count)
++	return result, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_exchange_preflight_test.go
+@@ -0,0 +1,144 @@
++package main
++
++import (
++	"github.com/local/9yin-go-server/internal/exchangeplan"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestCurrentShopExchangeReadOnlyPreflightPlansBoundFirstWithoutMutation(t *testing.T) {
++	dir := t.TempDir()
++	shopPath := filepath.Join(dir, "shop.ini")
++	exchangePath := filepath.Join(dir, "exchangeitem.ini")
++	if err := os.WriteFile(shopPath, []byte(`[Shop_test]
++Type=0
++0=result_item,2,3,0,0,1,0,1001,0
++`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(exchangePath, []byte(`[1001]
++Item=mat_a,2
++Prop=CapitalType1,10
++`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	player := &playerActor{
++		silver: 100,
++		bagItems: []bagItem{
++			{ConfigID: "mat_a", ViewID: 1, Amount: 1, BindStatus: 0},
++			{ConfigID: "mat_a", ViewID: 1, Amount: 1, BindStatus: 1},
++			{ConfigID: "mat_a", ViewID: 1, Amount: 2, BindStatus: 0},
++		},
++	}
++	before := player.bagSnapshot()
++	got, err := runShopExchangeReadOnlyPreflight(shopPath, exchangePath, nil, player, shopExchangeBuyRequest{ShopID: "Shop_test", Page: 0, Position: 1, Count: 2})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !got.ConditionSupported || !got.ConditionSatisfied {
++		t.Fatalf("empty condition must be satisfied/supported: %+v", got)
++	}
++	if !got.PropertySupported || !got.PropertySatisfied {
++		t.Fatalf("known CapitalType1 cost should be supported/satisfied: %+v", got)
++	}
++	if !got.MaterialPlan.Satisfied || len(got.MaterialPlan.Results) != 2 {
++		t.Fatalf("material plan=%+v", got.MaterialPlan)
++	}
++	if !got.MaterialPlan.Results[0].MaterialDerivedBound || got.MaterialPlan.Results[1].MaterialDerivedBound {
++		t.Fatalf("per-result material bind preview=%+v", got.MaterialPlan.Results)
++	}
++	if got.OutputAmount != 4 {
++		t.Fatalf("output amount=%d want=4", got.OutputAmount)
++	}
++	after := player.bagSnapshot()
++	if len(before) != len(after) {
++		t.Fatalf("read-only preflight mutated bag length before=%d after=%d", len(before), len(after))
++	}
++	for i := range before {
++		if before[i] != after[i] {
++			t.Fatalf("read-only preflight mutated bag[%d]: before=%+v after=%+v", i, before[i], after[i])
++		}
++	}
++	if silver, _, _, _ := player.currencySnapshot(); silver != 100 {
++		t.Fatalf("read-only preflight mutated silver=%d", silver)
++	}
++}
++
++func TestCurrentShopExchangeConditionPreviewUsesCurrentAndOrDisplayRule(t *testing.T) {
++	catalog := &shopConditionCatalog{Definitions: map[int32]shopConditionDefinition{
++		10: {ID: 10, Type: 1, Name: "Sex", Para: [6]string{"=="}, Min: "1", HasMin: true},
++		20: {ID: 20, Type: 1, Name: "Sex", Para: [6]string{"=="}, Min: "2", HasMin: true},
++	}, Formulas: map[int32]string{}}
++	authority := &currentShopConditionAuthority{catalog: catalog}
++	player := &playerActor{sex: 1}
++
++	supported, satisfied, _, err := evaluateShopExchangeConditionPreview(shopExchangeDefinition{ConditionType: 0, Condition: "10,20"}, authority, player)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !supported || satisfied {
++		t.Fatalf("AND preview supported=%v satisfied=%v, want true/false", supported, satisfied)
++	}
++	supported, satisfied, _, err = evaluateShopExchangeConditionPreview(shopExchangeDefinition{ConditionType: 1, Condition: "10,20"}, authority, player)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !supported || !satisfied {
++		t.Fatalf("OR preview supported=%v satisfied=%v, want true/true", supported, satisfied)
++	}
++	// Current Lua chooses OR for every non-zero ConditionType, including the
++	// authored non-boolean values present in the exact current corpus.
++	supported, satisfied, _, err = evaluateShopExchangeConditionPreview(shopExchangeDefinition{ConditionType: 17377, Condition: "10,20"}, authority, player)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !supported || !satisfied {
++		t.Fatalf("non-zero OR preview supported=%v satisfied=%v, want true/true", supported, satisfied)
++	}
++}
++
++func TestCurrentShopExchangePropertyPreviewFailsClosedForUnmappedState(t *testing.T) {
++	player := &playerActor{silver: 100}
++	supported, satisfied, err := evaluateShopExchangePropertyPreview(shopExchangeDefinition{Prop: "RevengeFriendly,10"}, player, 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if supported || satisfied {
++		t.Fatalf("unmapped property supported=%v satisfied=%v, want false/false", supported, satisfied)
++	}
++	supported, satisfied, err = evaluateShopExchangePropertyPreview(shopExchangeDefinition{Type: 1, AddValue: "5"}, player, 1)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if supported || satisfied {
++		t.Fatalf("guild currency supported=%v satisfied=%v, want false/false", supported, satisfied)
++	}
++}
++
++func TestCurrentShopExchangeRequirementsAcceptExactCurrentTrailingSemicolonOnly(t *testing.T) {
++	requirements, err := parseShopExchangeRequirements("Item_xdm_exchange01,440;item_exc_fc_mml,80;")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(requirements) != 2 || requirements[0].ConfigID != "Item_xdm_exchange01" || requirements[0].Amount != 440 || requirements[1].ConfigID != "item_exc_fc_mml" || requirements[1].Amount != 80 {
++		t.Fatalf("requirements=%+v", requirements)
++	}
++	if _, err := parseShopExchangeRequirements("mat_a,1;;mat_b,1"); err == nil {
++		t.Fatal("embedded empty Item entry must remain fail-closed")
++	}
++}
++
++func TestFirstShopExchangeMaterialBindPreview(t *testing.T) {
++	if got := firstShopExchangeMaterialBindPreview(exchangeplan.BatchPlan{}); got != 0 {
++		t.Fatalf("unsatisfied/empty preview=%d, want 0", got)
++	}
++	unbound := exchangeplan.BatchPlan{Satisfied: true, Results: []exchangeplan.ResultPlan{{MaterialDerivedBound: false}}}
++	if got := firstShopExchangeMaterialBindPreview(unbound); got != 0 {
++		t.Fatalf("unbound preview=%d, want 0", got)
++	}
++	bound := exchangeplan.BatchPlan{Satisfied: true, Results: []exchangeplan.ResultPlan{{MaterialDerivedBound: true}, {MaterialDerivedBound: false}}}
++	if got := firstShopExchangeMaterialBindPreview(bound); got != 1 {
++		t.Fatalf("first-result bound preview=%d, want 1", got)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_view_contract.go
+@@ -0,0 +1,92 @@
++package main
++
++// currentShopPageSize is the exact current share/trade/shopconfig.ini PageNum.
++// The current client uses this property both for page membership and for the
++// per-page grid index derived from each view object's built-in Ident.
++const currentShopPageSize int32 = 500
++
++// latestClientShopViewProperties uses the exact ordinals negotiated in the
++// current 0x09 table and the current shopconfig.ini page size.
++func latestClientShopViewProperties(shopID string, shopType, pageCount int32) []serverViewProperty {
++	return []serverViewProperty{
++		viewString(101, shopID),           // ShopID/string
++		viewInt(102, currentShopPageSize), // PageNum/int32 (current shopconfig.ini)
++		viewInt(103, pageCount),           // PageCount/int32
++		viewInt(104, shopType),            // ShopType/int32
++	}
++}
++
++// latestClientShopItemProperties emits only current negotiated name/type pairs.
++// Ordinal 181 is MaxPowerValue/int32 in the current table and must never carry a
++// ConfigID string. ConfigID is negotiated as string at ordinals 7 and 105; the
++// same value is emitted at both, matching the current bag/view identity contract.
++func latestClientShopItemProperties(item shopCatalogItem) []serverViewProperty {
++	properties := []serverViewProperty{
++		viewString(7, item.configID),
++		viewString(105, item.configID),
++		viewInt(106, item.amount),
++		viewInt(107, 0),
++		viewInt(108, 0),
++		viewInt(109, 0),
++		viewInt(110, 99),
++	}
++	switch item.priceMode {
++	case 0:
++		properties[3] = viewInt(107, item.price)
++	case 1:
++		properties[4] = viewInt(108, item.price)
++	case 2:
++		properties[5] = viewInt(109, item.price)
++	case 3:
++		// Current shop.ini mode 3 rows are overwhelmingly exchange rows and
++		// carry their exchange definition id in column 7. Exact current
++		// FxGameLogic queries ExchangeData as int32; ordinal 233 is appended
++		// to our negotiated 0x09 table without moving existing ordinals.
++		if item.exchangeData > 0 {
++			properties = append(properties, viewInt(233, item.exchangeData))
++		}
++	}
++	return properties
++}
++
++// currentShopAuthoredCoordinates converts current form_shop.lua wire
++// coordinates to the current shop.ini coordinates. The numeric INI key is the
++// zero-based page, while the client sends the selected grid index + 1 as pos.
++func currentShopAuthoredCoordinates(wirePage, wirePos int32) (page, position int32, ok bool) {
++	if wirePage < 0 || wirePos < 1 {
++		return 0, 0, false
++	}
++	return wirePage, wirePos - 1, true
++}
++
++// currentShopViewObjectIndex is the built-in Ident/objectIndex expected by the
++// current form_shop.lua paging formula:
++//
++//	PageNum*curpage <= Ident-1 < PageNum*(curpage+1)
++//	grid_index = Ident % PageNum - 1
++//
++// With current shop.ini's zero-based page key and zero-based position, the
++// unique mapping is page*PageNum + position + 1.
++func currentShopViewObjectIndex(item shopCatalogItem) (uint16, bool) {
++	if item.page < 0 || item.position < 0 || item.position >= currentShopPageSize {
++		return 0, false
++	}
++	index := int64(item.page)*int64(currentShopPageSize) + int64(item.position) + 1
++	if index < 1 || index > 0xffff {
++		return 0, false
++	}
++	return uint16(index), true
++}
++
++func currentShopListing(items []shopCatalogItem, wirePage, wirePos int32) *shopCatalogItem {
++	page, position, ok := currentShopAuthoredCoordinates(wirePage, wirePos)
++	if !ok {
++		return nil
++	}
++	for i := range items {
++		if items[i].page == page && items[i].position == position {
++			return &items[i]
++		}
++	}
++	return nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_view_contract_test.go
+@@ -0,0 +1,178 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestLatestClientShopViewMetadataUsesCurrentOrdinals(t *testing.T) {
++	props := latestClientShopViewProperties("Shop_test", 7, 3)
++	if len(props) != 4 {
++		t.Fatalf("shop metadata property count=%d want=4", len(props))
++	}
++	wantIndex := []uint16{101, 102, 103, 104}
++	for i, want := range wantIndex {
++		if props[i].index != want {
++			t.Fatalf("shop metadata[%d] ordinal=%d want=%d", i, props[i].index, want)
++		}
++	}
++	if props[2].int32 == nil || *props[2].int32 != 3 {
++		t.Fatalf("PageCount=%v want=3", props[2].int32)
++	}
++	if props[3].int32 == nil || *props[3].int32 != 7 {
++		t.Fatalf("ShopType=%v want=7", props[3].int32)
++	}
++}
++
++func TestLatestClientShopItemDoesNotEmitStringAtOrdinal181(t *testing.T) {
++	props := latestClientShopItemProperties(shopCatalogItem{configID: "item_test", amount: 2, priceMode: 1, price: 55})
++	wantIndex := []uint16{7, 105, 106, 107, 108, 109, 110}
++	if len(props) != len(wantIndex) {
++		t.Fatalf("shop item property count=%d want=%d", len(props), len(wantIndex))
++	}
++	for i, want := range wantIndex {
++		if props[i].index != want {
++			t.Fatalf("shop item[%d] ordinal=%d want=%d", i, props[i].index, want)
++		}
++		if props[i].index == 181 {
++			t.Fatal("shop item emitted invalid ConfigID/string at current MaxPowerValue ordinal 181")
++		}
++		if int(props[i].index) >= latestClientPlayerWirePropertyTableCount {
++			t.Fatalf("shop item ordinal=%d outside current negotiated count=%d", props[i].index, latestClientPlayerWirePropertyTableCount)
++		}
++	}
++	if props[0].text == nil || *props[0].text != "item_test" || props[1].text == nil || *props[1].text != "item_test" {
++		t.Fatalf("ConfigID duplicates malformed: %#v", props[:2])
++	}
++	if props[4].int32 == nil || *props[4].int32 != 55 {
++		t.Fatalf("SellPrice1=%v want=55", props[4].int32)
++	}
++}
++
++func TestLatestClientShopExchangeDataUsesCurrentNegotiatedOrdinal(t *testing.T) {
++	props := latestClientShopItemProperties(shopCatalogItem{configID: "exchange_item", amount: 1, priceMode: 3, exchangeData: 13097})
++	if len(props) != 8 {
++		t.Fatalf("exchange shop prop count=%d, want 8", len(props))
++	}
++	last := props[len(props)-1]
++	if last.index != 233 || last.int32 == nil || *last.int32 != 13097 {
++		t.Fatalf("ExchangeData property=%#v", last)
++	}
++}
++
++func TestShopCatalogUsesOnlyAuthoredPagesAndParsesExchangeData(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "shop.ini")
++	const data = `[Shop_test]
++PageInfo=Page1,Page2
++Type=0
++0=item_silver,1,1,8,0,1,0,0,0
++1=item_exchange,1,3,0,0,1,3,13097,0
++`
++	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	items, shopType, pageCount, err := shopCatalogItems(path, "Shop_test")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if shopType != 0 || pageCount != 2 {
++		t.Fatalf("shop metadata type=%d pages=%d, want 0/2 authored only", shopType, pageCount)
++	}
++	if len(items) != 2 {
++		t.Fatalf("shop item count=%d, want exactly 2 authored rows", len(items))
++	}
++	if items[0].priceMode != 1 || items[0].price != 8 || items[0].exchangeData != 0 {
++		t.Fatalf("ordinary row=%#v", items[0])
++	}
++	if items[1].priceMode != 3 || items[1].price != 0 || items[1].exchangeData != 13097 {
++		t.Fatalf("exchange row=%#v", items[1])
++	}

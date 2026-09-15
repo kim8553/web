@@ -1,0 +1,500 @@
++// config_str), registered as numeric server custom message 557.
++func serverShopExchangeFormMessage(request shopExchangeFormRequest, config string) ([]byte, error) {
++	return serverCustomIntMessage(557,
++		customInt(request.ViewIdent),
++		customInt(request.BindIndex),
++		customString(request.ShopID),
++		customInt(request.Page),
++		customInt(request.Position),
++		customString(config),
++	)
++}
++
++// serverShopConditionDetailsMessage matches current S2C custom message 508.
++// Payload is a flat repetition of (condition_id, isneedshow, satisfied).
++func serverShopConditionDetailsMessage(details []shopConditionDetail) ([]byte, error) {
++	values := make([]serverCustomValue, 0, len(details)*3)
++	for _, detail := range details {
++		needShow := int32(0)
++		if detail.IsNeedShow {
++			needShow = 1
++		}
++		satisfied := int32(0)
++		if detail.Satisfied {
++			satisfied = 1
++		}
++		values = append(values, customInt(detail.ConditionID), customInt(needShow), customInt(satisfied))
++	}
++	return serverCustomIntMessage(508, values...)
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_exchange_config_test.go
+@@ -0,0 +1,129 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestCurrentShopExchangeConfigFieldOrder(t *testing.T) {
++	definition := shopExchangeDefinition{
++		Type:          2,
++		AddValue:      "17",
++		BindStatus:    3,
++		Item:          "item_a,4;item_b,5",
++		ConditionType: 1,
++		Condition:     "1001,1002",
++		Condition2:    "2001",
++		Filters:       "2001",
++		Prop:          "CapitalType1,99;CapitalType2,1234567890123",
++	}
++	got, err := encodeShopExchangeConfig(definition, shopExchangeRuntimeBind{ShowBind: 4, ExchangeBind: 5})
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := "2|17|3|item_a,4;item_b,5|4|5|1|1001,1002|2001|2001|CapitalType1,99;CapitalType2,1234567890123"
++	if got != want {
++		t.Fatalf("config=%q want=%q", got, want)
++	}
++	if fields := strings.Split(got, "|"); len(fields) != 11 {
++		t.Fatalf("field count=%d want=11", len(fields))
++	}
++}
++
++func TestCurrentShopExchangeDefinition13097Shape(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "exchangeitem.ini")
++	if err := os.WriteFile(path, []byte("[13097]\nCondition2=121209\nItem=axe_leader_xt_test_000,1\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	got, err := loadShopExchangeDefinition(path, 13097)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.Condition2 != "121209" || got.Item != "axe_leader_xt_test_000,1" {
++		t.Fatalf("definition=%+v", got)
++	}
++	if got.Type != 0 || got.BindStatus != 0 || got.ConditionType != 0 || got.AddValue != "" || got.Filters != "" || got.Prop != "" {
++		t.Fatalf("unexpected synthetic fields in definition=%+v", got)
++	}
++}
++
++func TestCurrentShopExchangeDefinitionFiltersRemainConditionIDs(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "exchangeitem.ini")
++	data := "[3490]\nCondition2=107028\nItem=item_99wuxue_ww001,100\nFilters=107028\n"
++	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	got, err := loadShopExchangeDefinition(path, 3490)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.Filters != "107028" || got.Condition2 != "107028" {
++		t.Fatalf("definition=%+v", got)
++	}
++}
++
++func TestCurrentShopExchangeConfigRejectsInvalidCurrentSubgrammar(t *testing.T) {
++	if _, err := encodeShopExchangeConfig(shopExchangeDefinition{Item: "item_without_count"}, shopExchangeRuntimeBind{}); err == nil {
++		t.Fatal("invalid Item pair unexpectedly accepted")
++	}
++	if _, err := encodeShopExchangeConfig(shopExchangeDefinition{Prop: "CapitalType1,not-a-number"}, shopExchangeRuntimeBind{}); err == nil {
++		t.Fatal("invalid Prop int64 unexpectedly accepted")
++	}
++	if _, err := encodeShopExchangeConfig(shopExchangeDefinition{Filters: "107028,x"}, shopExchangeRuntimeBind{}); err == nil {
++		t.Fatal("invalid Filters int32 unexpectedly accepted")
++	}
++}
++
++func TestCurrentShopExchangeFormMessage557(t *testing.T) {
++	request := shopExchangeFormRequest{ViewIdent: 61, BindIndex: 7, ShopID: "Shop_Test", Page: 2, Position: 9}
++	frame, err := serverShopExchangeFormMessage(request, "0||0|item_a,1|0|0|0||||")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) < 3 || frame[0] != 0x1e {
++		t.Fatalf("frame prefix=%x", frame)
++	}
++	// Message id 557 is the first typed int32 value after the 0x1e/count header.
++	if !strings.Contains(string(frame), "Shop_Test\x00") {
++		t.Fatalf("frame does not contain shop id: %x", frame)
++	}
++}
++
++func TestCurrentShopConditionDetailsMessage508(t *testing.T) {
++	frame, err := serverShopConditionDetailsMessage([]shopConditionDetail{
++		{ConditionID: 121209, IsNeedShow: true, Satisfied: false},
++		{ConditionID: 115321, IsNeedShow: false, Satisfied: true},
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) < 3 || frame[0] != 0x1e {
++		t.Fatalf("frame prefix=%x", frame)
++	}
++}
++
++func TestCurrentShopExchangeDefinitionAcceptsExactCurrentItemTrailingTerminator(t *testing.T) {
++	dir := t.TempDir()
++	path := filepath.Join(dir, "exchangeitem.ini")
++	data := "[14087]\nItem=Item_xdm_exchange01,440;item_exc_fc_mml,80;\n"
++	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	got, err := loadShopExchangeDefinition(path, 14087)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got.Item != "Item_xdm_exchange01,440;item_exc_fc_mml,80;" {
++		t.Fatalf("Item=%q", got.Item)
++	}
++	if _, err := encodeShopExchangeConfig(shopExchangeDefinition{Item: "mat_a,1;;mat_b,1"}, shopExchangeRuntimeBind{}); err == nil {
++		t.Fatal("embedded empty Item pair must remain rejected")
++	}
++	if _, err := encodeShopExchangeConfig(shopExchangeDefinition{Prop: "CapitalType1,1;"}, shopExchangeRuntimeBind{}); err == nil {
++		t.Fatal("Prop trailing terminator is not authored in exact-current corpus and must remain rejected")
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_exchange_contract.go
+@@ -0,0 +1,174 @@
++package main
++
++import (
++	"fmt"
++	"log"
++)
++
++// Exact current lua64 contract recovered from custom_sender.lua and
++// share/client_custom_define.lua. These are CustomSend message selectors, not
++// shop price/capital modes.
++const (
++	clientCustomRequestShopExchangeForm int32 = 64 // 0x40
++	clientCustomRequestConditionShop    int32 = 69 // current CLIENT_CUSTOMMSG_REQUEST_CONDITION_SHOP
++	clientCustomExchangeFromShop        int32 = 79 // 0x4f
++)
++
++type shopExchangeFormRequest struct {
++	ViewIdent int32
++	BindIndex int32
++	ShopID    string
++	Page      int32
++	Position  int32
++}
++
++type shopConditionDetailsRequest struct {
++	ExchangeIndex int32
++}
++
++type shopExchangeBuyRequest struct {
++	ShopID   string
++	Page     int32
++	Position int32
++	Count    int32
++}
++
++func parseShopExchangeFormRequest(custom clientCustomMessage) (shopExchangeFormRequest, bool, error) {
++	if len(custom.Values) == 0 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != clientCustomRequestShopExchangeForm {
++		return shopExchangeFormRequest{}, false, nil
++	}
++	// current custom_request_shop_exchange_form(viewid, bindindex, shopid, page, pos)
++	// emits selector + int + int + string + int + int.
++	if len(custom.Values) != 6 {
++		return shopExchangeFormRequest{}, true, fmt.Errorf("shop exchange form request has %d values, want 6", len(custom.Values))
++	}
++	if custom.Values[1].Type != 2 || custom.Values[2].Type != 2 || custom.Values[3].Type != 6 || custom.Values[4].Type != 2 || custom.Values[5].Type != 2 {
++		return shopExchangeFormRequest{}, true, fmt.Errorf("shop exchange form request type layout mismatch: %v", custom.Values)
++	}
++	return shopExchangeFormRequest{
++		ViewIdent: custom.Values[1].Int32,
++		BindIndex: custom.Values[2].Int32,
++		ShopID:    custom.Values[3].Text,
++		Page:      custom.Values[4].Int32,
++		Position:  custom.Values[5].Int32,
++	}, true, nil
++}
++
++func parseShopConditionDetailsRequest(custom clientCustomMessage) (shopConditionDetailsRequest, bool, error) {
++	if len(custom.Values) == 0 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != clientCustomRequestConditionShop {
++		return shopConditionDetailsRequest{}, false, nil
++	}
++	// current custom_condition_details(exchange_index) emits selector + int32.
++	if len(custom.Values) != 2 {
++		return shopConditionDetailsRequest{}, true, fmt.Errorf("shop condition-details request has %d values, want 2", len(custom.Values))
++	}
++	if custom.Values[1].Type != 2 {
++		return shopConditionDetailsRequest{}, true, fmt.Errorf("shop condition-details exchange index must be int32: %v", custom.Values)
++	}
++	return shopConditionDetailsRequest{ExchangeIndex: custom.Values[1].Int32}, true, nil
++}
++
++func parseShopExchangeBuyRequest(custom clientCustomMessage) (shopExchangeBuyRequest, bool, error) {
++	if len(custom.Values) == 0 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != clientCustomExchangeFromShop {
++		return shopExchangeBuyRequest{}, false, nil
++	}
++	// current custom_exchange_item(shopid, page, pos, amount) emits selector +
++	// string + int + int + int. ExchangeData is deliberately not on this wire.
++	if len(custom.Values) != 5 {
++		return shopExchangeBuyRequest{}, true, fmt.Errorf("shop exchange buy request has %d values, want 5", len(custom.Values))
++	}
++	if custom.Values[1].Type != 6 || custom.Values[2].Type != 2 || custom.Values[3].Type != 2 || custom.Values[4].Type != 2 {
++		return shopExchangeBuyRequest{}, true, fmt.Errorf("shop exchange buy request type layout mismatch: %v", custom.Values)
++	}
++	return shopExchangeBuyRequest{
++		ShopID:   custom.Values[1].Text,
++		Page:     custom.Values[2].Int32,
++		Position: custom.Values[3].Int32,
++		Count:    custom.Values[4].Int32,
++	}, true, nil
++}
++
++// handleShopExchangeContract recognizes the exact current-client request
++// layouts without pretending that the server-side exchange implementation is
++// complete. The exact current InitCurExchangeData 11-field grammar is now
++// implemented separately. This handler still blocks before S2C 557 because
++// ShowBind and ExchangeBind are runtime response values not authored by current
++// ExchangeItem.ini. Exact-current Lua+text prove ExchangeBind is the first-result
++// material-derived bind preview (1=bound, 0=unbound). The form response remains
++// blocked because the independent ShowBind server rule is not yet proven.
++func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, custom clientCustomMessage, remote string) (bool, error) {
++	if request, matched, err := parseShopExchangeFormRequest(custom); matched {
++		if err != nil {
++			return true, err
++		}
++		log.Printf("%s: current shop exchange form request view=%d bind=%d shop=%s page=%d pos=%d blocked: ShowBind server rule unresolved (ExchangeBind first-result material preview proven)",
++			remote, request.ViewIdent, request.BindIndex, request.ShopID, request.Page, request.Position)
++		return true, nil
++	}
++	if request, matched, err := parseShopConditionDetailsRequest(custom); matched {
++		if err != nil {
++			return true, err
++		}
++		if link == nil || player == nil {
++			return true, fmt.Errorf("shop condition-details requires active scene/player")
++		}
++		authority, loadErr := loadDefaultCurrentShopConditionAuthority()
++		if loadErr != nil {
++			log.Printf("%s: current shop condition-details request exchange_index=%d blocked: exact-current resource authority unavailable: %v",
++				remote, request.ExchangeIndex, loadErr)
++			return true, nil
++		}
++		definition, ok := authority.definitions[request.ExchangeIndex]
++		if !ok {
++			log.Printf("%s: current shop condition-details request exchange_index=%d blocked: not in exact-current mode3 ExchangeData set",
++				remote, request.ExchangeIndex)
++			return true, nil
++		}
++		evaluator := exactCurrentConditionEvaluator{
++			catalog:       authority.catalog,
++			player:        player,
++			skillMaxTable: authority.skillMaxTable,
++		}
++		details, allSupported, evalErr := evaluateExchangeConditionDetails(definition.Condition, definition.Condition2, definition.Filters, authority.catalog.resolve, evaluator.evaluate)
++		if evalErr != nil {
++			return true, fmt.Errorf("evaluate shop condition-details exchange_index=%d: %w", request.ExchangeIndex, evalErr)
++		}
++		frame, encodeErr := serverShopConditionDetailsMessage(details)
++		if encodeErr != nil {
++			return true, fmt.Errorf("encode shop condition-details exchange_index=%d: %w", request.ExchangeIndex, encodeErr)
++		}
++		if writeErr := link.WriteFrame(frame); writeErr != nil {
++			return true, fmt.Errorf("write shop condition-details exchange_index=%d: %w", request.ExchangeIndex, writeErr)
++		}
++		log.Printf("%s: current shop condition-details exchange_index=%d sent triples=%d all_supported=%t fail_closed=%t",
++			remote, request.ExchangeIndex, len(details), allSupported, !allSupported)
++		return true, nil
++	}
++	if request, matched, err := parseShopExchangeBuyRequest(custom); matched {
++		if err != nil {
++			return true, err
++		}
++		if player == nil {
++			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: no active player",
++				remote, request.ShopID, request.Page, request.Position, request.Count)
++			return true, nil
++		}
++		authority, loadErr := loadDefaultCurrentShopConditionAuthority()
++		if loadErr != nil {
++			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: exact-current authority unavailable: %v",
++				remote, request.ShopID, request.Page, request.Position, request.Count, loadErr)
++			return true, nil
++		}
++		preflight, preflightErr := runShopExchangeReadOnlyPreflight(defaultShopINIPath, defaultExchangeItemINIPath, authority, player, request)
++		if preflightErr != nil {
++			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: preflight error: %v",
++				remote, request.ShopID, request.Page, request.Position, request.Count, preflightErr)
++			return true, nil
++		}
++		log.Printf("%s: current shop exchange buy preflight shop=%s page=%d pos=%d count=%d exchange_data=%d output=%s x%d conditions_supported=%t conditions_satisfied=%t properties_supported=%t properties_satisfied=%t materials_satisfied=%t exchange_bind_preview=%d blocked: final persisted BindStatus/atomic mutation unresolved",
++			remote, request.ShopID, request.Page, request.Position, request.Count, preflight.Listing.exchangeData, preflight.Listing.configID, preflight.OutputAmount,
++			preflight.ConditionSupported, preflight.ConditionSatisfied, preflight.PropertySupported, preflight.PropertySatisfied, preflight.MaterialPlan.Satisfied, preflight.ExchangeBindPreview)
++		return true, nil
++	}
++	return false, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_exchange_contract_test.go
+@@ -0,0 +1,67 @@
++package main
++
++import "testing"
++
++func TestCurrentShopExchangeFormRequestContract(t *testing.T) {
++	custom := clientCustomMessage{Values: []clientCustomValue{
++		{Type: 2, Int32: 64},
++		{Type: 2, Int32: 121},
++		{Type: 2, Int32: 7},
++		{Type: 6, Text: "Shop_Test"},
++		{Type: 2, Int32: 3},
++		{Type: 2, Int32: 9},
++	}}
++	got, matched, err := parseShopExchangeFormRequest(custom)
++	if err != nil || !matched {
++		t.Fatalf("matched=%t err=%v", matched, err)
++	}
++	if got.ViewIdent != 121 || got.BindIndex != 7 || got.ShopID != "Shop_Test" || got.Page != 3 || got.Position != 9 {
++		t.Fatalf("request=%+v", got)
++	}
++}
++
++func TestCurrentShopExchangeBuyRequestContract(t *testing.T) {
++	custom := clientCustomMessage{Values: []clientCustomValue{
++		{Type: 2, Int32: 79},
++		{Type: 6, Text: "Shop_Test"},
++		{Type: 2, Int32: 3},
++		{Type: 2, Int32: 9},
++		{Type: 2, Int32: 4},
++	}}
++	got, matched, err := parseShopExchangeBuyRequest(custom)
++	if err != nil || !matched {
++		t.Fatalf("matched=%t err=%v", matched, err)
++	}
++	if got.ShopID != "Shop_Test" || got.Page != 3 || got.Position != 9 || got.Count != 4 {
++		t.Fatalf("request=%+v", got)
++	}
++}
++
++func TestCurrentShopExchangeBuyDoesNotAcceptExchangeDataOnWire(t *testing.T) {
++	custom := clientCustomMessage{Values: []clientCustomValue{
++		{Type: 2, Int32: 79},
++		{Type: 6, Text: "Shop_Test"},
++		{Type: 2, Int32: 3},
++		{Type: 2, Int32: 9},
++		{Type: 2, Int32: 4},
++		{Type: 2, Int32: 13097},
++	}}
++	_, matched, err := parseShopExchangeBuyRequest(custom)
++	if !matched || err == nil {
++		t.Fatalf("matched=%t err=%v", matched, err)
++	}
++}
++
++func TestCurrentShopConditionDetailsRequestContract(t *testing.T) {
++	custom := clientCustomMessage{Values: []clientCustomValue{
++		{Type: 2, Int32: 69},
++		{Type: 2, Int32: 13097},
++	}}
++	got, matched, err := parseShopConditionDetailsRequest(custom)
++	if err != nil || !matched {
++		t.Fatalf("matched=%t err=%v", matched, err)
++	}
++	if got.ExchangeIndex != 13097 {
++		t.Fatalf("request=%+v", got)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_exchange_preflight.go
+@@ -0,0 +1,269 @@
++package main
++
++import (
++	"fmt"
++	"math"
++	"strconv"
++	"strings"
++
++	"github.com/local/9yin-go-server/internal/exchangeplan"
++)
++
++// shopExchangeReadOnlyPreflight is deliberately side-effect free. It resolves
++// the exact current listing/ExchangeData row, evaluates only condition/property
++// state Stage37 can prove, and asks exchangeplan for a concrete bound-first
++// material plan. It does not deduct materials, create the result, persist DB
++// state, emit View mutations, or decide final output BindStatus.
++type shopExchangeReadOnlyPreflight struct {
++	Listing            shopCatalogItem
++	Definition         shopExchangeDefinition
++	ConditionSupported bool
++	ConditionSatisfied bool
++	ConditionDetails   []shopConditionDetail
++	PropertySupported  bool
++	PropertySatisfied  bool
++	MaterialPlan       exchangeplan.BatchPlan
++	// ExchangeBindPreview is the exact-current UI value for the first result:
++	// 1 when bound-first material consumption makes that first result bound,
++	// otherwise 0. It is not the final persisted BindStatus because separately
++	// proven static bind-on-acquire can still bind an item after creation.
++	ExchangeBindPreview int32
++	OutputAmount        int64
++}
++
++type shopExchangePropertyCost struct {
++	Name   string
++	Amount int64
++}
++
++func parseShopExchangeRequirements(raw string) ([]exchangeplan.Requirement, error) {
++	raw = strings.TrimSpace(raw)
++	if raw == "" {
++		return nil, nil
++	}
++	entries := strings.Split(raw, ";")
++	result := make([]exchangeplan.Requirement, 0, len(entries))
++	for i, entry := range entries {
++		entry = strings.TrimSpace(entry)
++		// Exact-current ExchangeItem.ini contains reachable mode3 Item lists
++		// ending in a single trailing semicolon (for example ExchangeData
++		// 11564, 14087..14089, 14286..14288, 14322..14324). Treat only
++		// that final empty token as list termination; embedded empty entries
++		// remain malformed and fail closed.
++		if entry == "" && i == len(entries)-1 {
++			continue
++		}
++		if entry == "" {
++			return nil, fmt.Errorf("exchange Item has empty entry in %q", raw)
++		}
++		parts := strings.Split(entry, ",")
++		if len(parts) < 2 {
++			return nil, fmt.Errorf("exchange Item entry %q has no amount", entry)
++		}
++		configID := strings.TrimSpace(parts[0])
++		if configID == "" {
++			return nil, fmt.Errorf("exchange Item entry %q has empty ConfigID", entry)
++		}
++		amount, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 32)
++		if err != nil || amount <= 0 {
++			return nil, fmt.Errorf("exchange Item entry %q has invalid positive amount", entry)
++		}
++		result = append(result, exchangeplan.Requirement{ConfigID: configID, Amount: int32(amount)})
++	}
++	return result, nil
++}
++
++func parseShopExchangePropertyCosts(raw string) ([]shopExchangePropertyCost, error) {
++	raw = strings.TrimSpace(raw)
++	if raw == "" {
++		return nil, nil
++	}
++	entries := strings.Split(raw, ";")
++	result := make([]shopExchangePropertyCost, 0, len(entries))
++	for _, entry := range entries {
++		parts := strings.Split(entry, ",")
++		if len(parts) < 2 {
++			return nil, fmt.Errorf("exchange Prop entry %q has no amount", entry)
++		}
++		name := strings.TrimSpace(parts[0])
++		if name == "" {

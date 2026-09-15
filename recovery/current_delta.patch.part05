@@ -1,0 +1,529 @@
++			if property.text == nil {
++				return nil, fmt.Errorf("view %d legacy ConfigID has non-string value", viewID)
++			}
++			result = append(result, viewString(7, *property.text))
++		case 0x0761: // historical ItemType -> current ItemType/int32 ordinal 205
++			if property.int32 == nil {
++				return nil, fmt.Errorf("view %d legacy ItemType has non-int32 value", viewID)
++			}
++			result = append(result, viewInt(205, *property.int32))
++		case 0x08BD: // historical StaticData -> current StaticData/int32 ordinal 204
++			if property.int32 == nil {
++				return nil, fmt.Errorf("view %d legacy StaticData has non-int32 value", viewID)
++			}
++			result = append(result, viewInt(204, *property.int32))
++		case 0x05B9: // historical Level/byte -> current Level/int32 ordinal 6
++			if property.byte1 == nil {
++				return nil, fmt.Errorf("view %d legacy Level has non-byte value", viewID)
++			}
++			result = append(result, viewInt(6, int32(*property.byte1)))
++		case 0x0823: // historical MaxLevel -> current MaxLevel/int32 ordinal 203
++			if property.int32 == nil {
++				return nil, fmt.Errorf("view %d legacy MaxLevel has non-int32 value", viewID)
++			}
++			result = append(result, viewInt(203, *property.int32))
++		case 0x02FC: // historical CurFillValue -> current ordinal 176
++			if property.int32 == nil {
++				return nil, fmt.Errorf("view %d legacy CurFillValue has non-int32 value", viewID)
++			}
++			result = append(result, viewInt(176, *property.int32))
++		case 0x02FD: // historical TotalFillValue -> current ordinal 177
++			if property.int32 == nil {
++				return nil, fmt.Errorf("view %d legacy TotalFillValue has non-int32 value", viewID)
++			}
++			result = append(result, viewInt(177, *property.int32))
++		case 0x08BC: // historical CanUse/byte -> current CanUse/byte ordinal 225
++			if property.byte1 == nil {
++				return nil, fmt.Errorf("view %d legacy CanUse has non-byte value", viewID)
++			}
++			result = append(result, viewByte(225, *property.byte1))
++		case 0x07F2: // recovered skill lease value -> current PauseTime/float32 ordinal 212
++			if property.int32 != nil {
++				result = append(result, viewFloat(212, float32(*property.int32)))
++			} else if property.real32 != nil {
++				result = append(result, viewFloat(212, *property.real32))
++			} else {
++				return nil, fmt.Errorf("view %d legacy PauseTime has unsupported value type", viewID)
++			}
++		case 0x08EC, 0x08C3, 0x08ED:
++			if viewID != viewportNeiGong {
++				return nil, fmt.Errorf("view %d contains unnegotiated legacy metadata property 0x%04X", viewID, property.index)
++			}
++			// Current table has no proven matching field; intentionally omit.
++		default:
++			if int(property.index) >= latestClientPlayerWirePropertyTableCount {
++				return nil, fmt.Errorf("view %d contains unmapped property ordinal %d >= negotiated count %d", viewID, property.index, latestClientPlayerWirePropertyTableCount)
++			}
++			result = append(result, property)
++		}
++	}
++	for _, property := range result {
++		if int(property.index) >= latestClientPlayerWirePropertyTableCount {
++			return nil, fmt.Errorf("view %d normalized property ordinal %d >= negotiated count %d", viewID, property.index, latestClientPlayerWirePropertyTableCount)
++		}
++	}
++	return result, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_nonbag_view_ordinal_compat_test.go
+@@ -0,0 +1,119 @@
++package main
++
++import "testing"
++
++func TestLatestClientNonBagViewLegacyOrdinalsNormalizeWithinNegotiatedTable(t *testing.T) {
++	props := []serverViewProperty{
++		viewInt(0x0761, 1000),
++		viewString(0x05A0, "CS_jh_cqgf01"),
++		viewByte(0x08BC, 1),
++		viewInt(0x08BD, 4401),
++		viewByte(0x05B9, 3),
++		viewInt(0x0823, 5),
++		viewInt(0x07F2, 1000),
++	}
++	got, err := latestClientNonBagViewProperties(viewportSkill, props)
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := []uint16{205, 7, 225, 204, 6, 203, 212}
++	if len(got) != len(want) {
++		t.Fatalf("len=%d want=%d", len(got), len(want))
++	}
++	for i := range got {
++		if got[i].index != want[i] {
++			t.Fatalf("property[%d]=%d want=%d", i, got[i].index, want[i])
++		}
++		if int(got[i].index) >= latestClientPlayerWirePropertyTableCount {
++			t.Fatalf("property[%d]=%d outside table=%d", i, got[i].index, latestClientPlayerWirePropertyTableCount)
++		}
++	}
++	if got[4].int32 == nil || *got[4].int32 != 3 {
++		t.Fatalf("Level conversion=%+v", got[4])
++	}
++	if got[6].real32 == nil || *got[6].real32 != 1000 {
++		t.Fatalf("PauseTime conversion=%+v", got[6])
++	}
++}
++
++func TestLatestClientNeiGongDropsOnlyUnnegotiatedLegacyMetadata(t *testing.T) {
++	props := []serverViewProperty{
++		viewString(0x05A0, "ng_jh_001"),
++		viewInt(0x0761, 1002),
++		viewInt(0x08BD, 123),
++		viewByte(0x05B9, 2),
++		viewInt(0x0823, 36),
++		viewInt(0x08EC, 2),
++		viewInt(0x02FD, 750),
++		viewInt(0x08C3, 3),
++		viewString(0x08ED, "buff_test"),
++	}
++	got, err := latestClientNonBagViewProperties(viewportNeiGong, props)
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := []uint16{7, 205, 204, 6, 203, 177}
++	if len(got) != len(want) {
++		t.Fatalf("len=%d want=%d got=%+v", len(got), len(want), got)
++	}
++	for i := range got {
++		if got[i].index != want[i] {
++			t.Fatalf("property[%d]=%d want=%d", i, got[i].index, want[i])
++		}
++	}
++}
++
++func TestLatestClientNonBagViewRejectsUnknownOutOfRangeProperty(t *testing.T) {
++	_, err := latestClientNonBagViewProperties(viewportSkill, []serverViewProperty{viewInt(0x0900, 1)})
++	if err == nil {
++		t.Fatal("expected unmapped out-of-range property rejection")
++	}
++}
++
++func TestLatestClientNonBagServerViewAddNormalizesBeforeEncoding(t *testing.T) {
++	frame, err := serverViewAdd(viewportNormalAttack, 1, []serverViewProperty{
++		viewInt(0x0761, 1000), viewString(0x05A0, "CS_light_rad_81"), viewByte(0x08BC, 1),
++		viewInt(0x08BD, 5266), viewByte(0x05B9, 1), viewInt(0x0823, 1), viewInt(0x07F2, 0),
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) < 7 || frame[0] != 0x18 {
++		t.Fatalf("frame=%x", frame)
++	}
++}
++
++func TestLatestClientNonBagServerObjectPropertyNormalizesBeforeEncoding(t *testing.T) {
++	frame, err := serverObjectProperty(viewportSkill, 7, []serverViewProperty{viewByte(0x08BC, 1)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) != 15 {
++		t.Fatalf("len(frame)=%d frame=%x", len(frame), frame)
++	}
++	if frame[0] != 0x10 || frame[1] != 0x01 {
++		t.Fatalf("opcode/view flag=%x/%x frame=%x", frame[0], frame[1], frame)
++	}
++	if got := uint16(frame[12]) | uint16(frame[13])<<8; got != 225 {
++		t.Fatalf("encoded CanUse ordinal=%d want=225 frame=%x", got, frame)
++	}
++	if frame[14] != 1 {
++		t.Fatalf("encoded CanUse value=%d want=1 frame=%x", frame[14], frame)
++	}
++}
++
++func TestLatestClientNonBagServerObjectPropertyWidensLegacyLevel(t *testing.T) {
++	frame, err := serverObjectProperty(45, 3, []serverViewProperty{viewByte(0x05B9, 4)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) != 18 {
++		t.Fatalf("len(frame)=%d frame=%x", len(frame), frame)
++	}
++	if got := uint16(frame[12]) | uint16(frame[13])<<8; got != 6 {
++		t.Fatalf("encoded Level ordinal=%d want=6 frame=%x", got, frame)
++	}
++	if got := uint32(frame[14]) | uint32(frame[15])<<8 | uint32(frame[16])<<16 | uint32(frame[17])<<24; got != 4 {
++		t.Fatalf("encoded Level value=%d want=4 frame=%x", got, frame)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_player_property_ordinal_compat.go
+@@ -0,0 +1,58 @@
++package main
++
++import "github.com/local/9yin-go-server/internal/clientdata"
++
++type latestClientPlayerPropertyKey struct {
++	name string
++	typ  clientdata.WireType
++}
++
++var latestClientPlayerWirePropertyOrdinals, latestClientPlayerWirePropertyTableCount = func() (map[latestClientPlayerPropertyKey]uint16, int) {
++	fields := sceneVisiblePropertyFields(clientdata.VisibleNPCModernV1().Fields)
++	ordinals := make(map[latestClientPlayerPropertyKey]uint16, len(fields))
++	for ordinal, field := range fields {
++		key := latestClientPlayerPropertyKey{name: field.Name, typ: field.Type}
++		// The 0x09 encoder transmits fields in slice order and does not serialize
++		// FieldSpec.Index.  When the same name exists with a different wire type
++		// (for example Force), the exact wire type disambiguates it.  For an exact
++		// duplicate, keep the first negotiated ordinal.
++		if _, exists := ordinals[key]; exists {
++			continue
++		}
++		ordinals[key] = uint16(ordinal)
++	}
++	return ordinals, len(fields)
++}()
++
++// latestClientSceneObjectWireProperties converts server/global property IDs to
++// ordinal indexes of the exact table Stage37 sends in opcode 0x09. FxNet2 uses
++// that negotiated table for non-view ServerObjectProperty updates regardless of
++// whether the target object is the main player or an NPC. Only exact
++// name+wire-type matches survive; unsupported or type-mismatched legacy fields
++// are dropped instead of being guessed onto a current ordinal.
++func latestClientSceneObjectWireProperties(properties []clientdata.IndexedProperty) []clientdata.IndexedProperty {
++	if len(properties) == 0 {
++		return nil
++	}
++	result := make([]clientdata.IndexedProperty, 0, len(properties))
++	seen := make(map[uint16]struct{}, len(properties))
++	for _, property := range properties {
++		ordinal, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: property.Name, typ: property.Value.Type}]
++		if !ok {
++			continue
++		}
++		if _, duplicate := seen[ordinal]; duplicate {
++			continue
++		}
++		property.Index = ordinal
++		result = append(result, property)
++		seen[ordinal] = struct{}{}
++	}
++	return result
++}
++
++// latestClientPlayerWireProperties is retained for player-construction call
++// sites; player and NPC non-view updates share the same negotiated table.
++func latestClientPlayerWireProperties(properties []clientdata.IndexedProperty) []clientdata.IndexedProperty {
++	return latestClientSceneObjectWireProperties(properties)
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_player_property_ordinal_compat_test.go
+@@ -0,0 +1,86 @@
++package main
++
++import (
++	"encoding/binary"
++	"testing"
++
++	"github.com/local/9yin-go-server/internal/clientdata"
++)
++
++func TestLatestClientPlayerPropertyOrdinalMapMatchesNegotiatedTable(t *testing.T) {
++	if latestClientPlayerWirePropertyTableCount != 235 {
++		t.Fatalf("negotiated property table count=%d, want 235 after append-only runtime BindStatus", latestClientPlayerWirePropertyTableCount)
++	}
++	cases := []struct {
++		name string
++		typ  clientdata.WireType
++		want uint16
++	}{
++		{"Type", clientdata.WireByte, 0},
++		{"MoveSpeed", clientdata.WireFloat32, 23},
++		{"MaxHP", clientdata.WireInt32, 30},
++		{"HP", clientdata.WireInt32, 32},
++		{"NpcType", clientdata.WireInt32, 34},
++		{"Name", clientdata.WireWideString, 36},
++		{"CapitalType1", clientdata.WireInt64, 111},
++		{"QingGongPoint", clientdata.WireInt32, 114},
++		{"Gravity", clientdata.WireFloat32, 168},
++		{"Force", clientdata.WireString, 226},
++		{"NewSchool", clientdata.WireString, 227},
++		{"ViewID", clientdata.WireInt32, 228},
++		{"CapitalType2", clientdata.WireInt64, 229},
++		{"CapitalType4", clientdata.WireInt64, 230},
++		{"CapitalType0", clientdata.WireInt64, 231},
++		{"CapitalType3", clientdata.WireInt64, 232},
++		{"ExchangeData", clientdata.WireInt32, 233},
++		{"BindStatus", clientdata.WireInt32, 234},
++	}
++	for _, tc := range cases {
++		got, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: tc.name, typ: tc.typ}]
++		if !ok || got != tc.want {
++			t.Fatalf("%s/%s ordinal=(%d,%v), want (%d,true)", tc.name, tc.typ, got, ok, tc.want)
++		}
++	}
++	if _, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "Job", typ: clientdata.WireString}]; ok {
++		t.Fatal("Job/string must not be guessed onto the negotiated Job/int32 slot")
++	}
++}
++
++func TestLatestClientPlayerWirePropertiesDropsUnknownMismatchAndDeduplicates(t *testing.T) {
++	raw := []clientdata.IndexedProperty{
++		{Index: 181, Name: "Type", Value: clientdata.ByteValue(2)},
++		{Index: 578, Name: "MaxHP", Value: clientdata.Int32Value(1000)},
++		{Index: 1588, Name: "Job", Value: clientdata.StringValue("")},
++		{Index: 405, Name: "ActionSet", Value: clientdata.StringValue("set")},
++		{Index: 406, Name: "ActionSet", Value: clientdata.StringValue("set")},
++		{Index: 9999, Name: "NoSuchProperty", Value: clientdata.Int32Value(1)},
++	}
++	got := latestClientPlayerWireProperties(raw)
++	if len(got) != 3 {
++		t.Fatalf("normalized count=%d, want 3: %#v", len(got), got)
++	}
++	want := []uint16{0, 30, 18}
++	for i, index := range want {
++		if got[i].Index != index {
++			t.Fatalf("normalized[%d].Index=%d, want %d", i, got[i].Index, index)
++		}
++	}
++}
++
++func TestSceneObjectPropertiesNormalizesAllNonViewSceneObjects(t *testing.T) {
++	raw := []clientdata.IndexedProperty{{Index: 578, Name: "MaxHP", Value: clientdata.Int32Value(1000)}}
++	playerFrame, err := sceneObjectProperties(playerObjectID, playerOwnerID, 0, raw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := binary.LittleEndian.Uint16(playerFrame[12:14]); got != 30 {
++		t.Fatalf("player MaxHP wire index=%d, want 30", got)
++	}
++	npcFrame, err := sceneObjectProperties(0x1234, 1, 0, raw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := binary.LittleEndian.Uint16(npcFrame[12:14]); got != 30 {
++		t.Fatalf("NPC MaxHP wire index=%d, want negotiated ordinal 30", got)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_scene_object_property_test.go
+@@ -0,0 +1,35 @@
++package main
++
++import (
++	"encoding/binary"
++	"testing"
++
++	"github.com/local/9yin-go-server/internal/entity"
++)
++
++func TestLatestClientNPCCombatPropertiesUseNegotiatedOrdinals(t *testing.T) {
++	raw := npcCombatProperties(entity.ActorState{
++		HP: 750, BaseMaxHP: 1000, MaxHP: 1000, HitHP: 900, LogicState: entity.LogicStateFighting,
++	})
++	got := latestClientSceneObjectWireProperties(raw)
++	want := []uint16{21, 28, 30, 32, 112, 209}
++	if len(got) != len(want) {
++		t.Fatalf("normalized NPC combat property count=%d, want %d: %#v", len(got), len(want), got)
++	}
++	for i, ordinal := range want {
++		if got[i].Index != ordinal {
++			t.Fatalf("normalized NPC combat property[%d]=%d, want %d", i, got[i].Index, ordinal)
++		}
++		if got[i].Index >= uint16(latestClientPlayerWirePropertyTableCount) {
++			t.Fatalf("normalized NPC combat property[%d]=%d outside negotiated table count=%d", i, got[i].Index, latestClientPlayerWirePropertyTableCount)
++		}
++	}
++
++	frame, err := sceneObjectProperties(0x1234, 1, 0, raw)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if count := binary.LittleEndian.Uint16(frame[10:12]); count != uint16(len(want)) {
++		t.Fatalf("ServerObjectProperty count=%d, want %d after legacy duplicate removal", count, len(want))
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_authority.go
+@@ -0,0 +1,198 @@
++package main
++
++import (
++	"bufio"
++	"crypto/sha256"
++	"encoding/hex"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++	"sync"
++)
++
++// Exact-current resource fingerprints recovered independently from the current
++// share.package payload. The two condition_formula payloads differ only in
++// formula ids 122425/122426; neither is reachable from any of the 8,575 current
++// mode3 ExchangeData roots. Both produce the identical mode3 reachable graph.
++const (
++	exactCurrentShopINISHA256          = "f42fce7631f7fe302d3fdedad60b12eaa20da12396de412ff0a84edcddc1a6d9"
++	exactCurrentExchangeItemSHA256     = "ed931884d8a8bb19bad512b5eb571fe8ac97b783449144d4a4834eb050f0dee6"
++	exactCurrentConditionINISHA256     = "b4fcbb6934617658af6f0e75f7e06734e1dd776b72d6fdf4b687643c1b778d3f"
++	exactCurrentSkillMaxLevelSHA256    = "d4a35d90b84921f733afd632b15558bebe4ccdf474cc9ef5d5b6bc636bd99829"
++	exactCurrentFormulaSHA256A         = "9a4053f5bd4ac0e3895fe42a44db8bbbf44a469e0cf6fe226571dc3e7fcd1b57"
++	exactCurrentFormulaSHA256B         = "272bdce8cf161a70dbaea5fb828e7c4905e0ffff3402073d9c1909c895af9862"
++	exactCurrentMode3ExchangeDataCount = 8575
++	exactCurrentMode3LeafCount         = 872
++	exactCurrentExactLeafCount         = 327
++	exactCurrentSafeExchangeDataCount  = 2422
++)
++
++type currentShopConditionAuthority struct {
++	catalog       *shopConditionCatalog
++	definitions   map[int32]exchangeConditionSpec
++	skillMaxTable iniTable
++	audit         shopExchangeConditionCapabilityAudit
++}
++
++var (
++	currentShopConditionAuthorityOnce  sync.Once
++	currentShopConditionAuthorityValue *currentShopConditionAuthority
++	currentShopConditionAuthorityErr   error
++)
++
++func fileSHA256Hex(path string) (string, error) {
++	data, err := os.ReadFile(path)
++	if err != nil {
++		return "", err
++	}
++	sum := sha256.Sum256(data)
++	return hex.EncodeToString(sum[:]), nil
++}
++
++func requireFileSHA256(path string, allowed ...string) error {
++	got, err := fileSHA256Hex(path)
++	if err != nil {
++		return fmt.Errorf("hash %s: %w", path, err)
++	}
++	for _, want := range allowed {
++		if strings.EqualFold(got, want) {
++			return nil
++		}
++	}
++	return fmt.Errorf("resource authority mismatch %s sha256=%s", path, got)
++}
++
++func loadCurrentMode3ExchangeDataSet(path string) (map[int32]struct{}, int, int, error) {
++	file, err := os.Open(path)
++	if err != nil {
++		return nil, 0, 0, err
++	}
++	defer file.Close()
++	result := make(map[int32]struct{}, exactCurrentMode3ExchangeDataCount)
++	mode3Rows, nonzeroRows := 0, 0
++	scanner := bufio.NewScanner(file)
++	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
++	for scanner.Scan() {
++		line := strings.TrimSpace(scanner.Text())
++		if line == "" || strings.HasPrefix(line, "[") || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
++			continue
++		}
++		key, raw, ok := strings.Cut(line, "=")
++		if !ok {
++			continue
++		}
++		if _, err := strconv.ParseInt(strings.TrimSpace(key), 10, 32); err != nil {
++			continue
++		}
++		parts := strings.Split(raw, ",")
++		if len(parts) < 8 {
++			continue
++		}
++		mode, err := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 32)
++		if err != nil || mode != 3 {
++			continue
++		}
++		mode3Rows++
++		exchangeData, err := strconv.ParseInt(strings.TrimSpace(parts[7]), 10, 32)
++		if err != nil || exchangeData == 0 {
++			continue
++		}
++		nonzeroRows++
++		result[int32(exchangeData)] = struct{}{}
++	}
++	if err := scanner.Err(); err != nil {
++		return nil, 0, 0, err
++	}
++	return result, mode3Rows, nonzeroRows, nil
++}
++
++func loadExchangeConditionSpecs(path string, used map[int32]struct{}) (map[int32]exchangeConditionSpec, error) {
++	table, err := loadINISections(path)
++	if err != nil {
++		return nil, err
++	}
++	result := make(map[int32]exchangeConditionSpec, len(used))
++	for id := range used {
++		fields, ok := table[strconv.FormatInt(int64(id), 10)]
++		if !ok {
++			return nil, fmt.Errorf("ExchangeItem missing current mode3 ExchangeData %d", id)
++		}
++		result[id] = exchangeConditionSpec{
++			Condition:  strings.TrimSpace(iniValue(fields, "Condition")),
++			Condition2: strings.TrimSpace(iniValue(fields, "Condition2")),
++			Filters:    strings.TrimSpace(iniValue(fields, "Filters")),
++		}
++	}
++	return result, nil
++}
++
++func loadDefaultCurrentShopConditionAuthority() (*currentShopConditionAuthority, error) {
++	currentShopConditionAuthorityOnce.Do(func() {
++		currentShopConditionAuthorityValue, currentShopConditionAuthorityErr = buildCurrentShopConditionAuthority(
++			defaultShopINIPath, defaultExchangeItemINIPath, defaultConditionINIPath, defaultConditionFormulaINIPath,
++			filepath.Join(defaultModernShareRoot, "skill", "skill_maxlevel.ini"),
++		)
++	})
++	return currentShopConditionAuthorityValue, currentShopConditionAuthorityErr
++}
++
++func buildCurrentShopConditionAuthority(shopPath, exchangePath, conditionPath, formulaPath, skillMaxLevelPath string) (*currentShopConditionAuthority, error) {
++	if err := requireFileSHA256(shopPath, exactCurrentShopINISHA256); err != nil {
++		return nil, err
++	}
++	if err := requireFileSHA256(exchangePath, exactCurrentExchangeItemSHA256); err != nil {
++		return nil, err
++	}
++	if err := requireFileSHA256(conditionPath, exactCurrentConditionINISHA256); err != nil {
++		return nil, err
++	}

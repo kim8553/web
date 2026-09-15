@@ -17,4 +17,4 @@ jobs:
       - name: Dispatch current recovery build
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run jiuyin-stage37-real-build.yml --ref stage37-current-recovery-20260916
+        run: gh workflow run jiuyin-stage37-real-build.yml --repo kim8553/web --ref stage37-current-recovery-20260916

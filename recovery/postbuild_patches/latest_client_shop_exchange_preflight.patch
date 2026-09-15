@@ -1,0 +1,118 @@
+--- a/cmd/protocol-probe/latest_client_shop_exchange_preflight.go
++++ b/cmd/protocol-probe/latest_client_shop_exchange_preflight.go
+@@ -23,6 +23,9 @@
+ 	PropertySupported  bool
+ 	PropertySatisfied  bool
+ 	MaterialPlan       exchangeplan.BatchPlan
++	CapacitySupported  bool
++	CapacitySatisfied  bool
++	CapacityPlan       exchangeplan.CapacityPlan
+ 	// ExchangeBindPreview is the exact-current UI value for the first result:
+ 	// 1 when bound-first material consumption makes that first result bound,
+ 	// otherwise 0. It is not the final persisted BindStatus because separately
+@@ -108,11 +111,7 @@
+ 	return 0
+ }
+ 
+-func currentShopExchangeInventoryStacks(player *playerActor) []exchangeplan.Stack {
+-	if player == nil {
+-		return nil
+-	}
+-	items := player.bagSnapshot()
++func currentShopExchangeInventoryStacksFromSnapshot(items []bagItem) []exchangeplan.Stack {
+ 	result := make([]exchangeplan.Stack, 0, len(items))
+ 	for index, item := range items {
+ 		if _, ok := latestClientCurrentBagContainer(item.ViewID); !ok {
+@@ -126,6 +125,63 @@
+ 		})
+ 	}
+ 	return result
++}
++
++func currentShopExchangeInventoryStacks(player *playerActor) []exchangeplan.Stack {
++	if player == nil {
++		return nil
++	}
++	return currentShopExchangeInventoryStacksFromSnapshot(player.bagSnapshot())
++}
++
++func currentShopExchangeInventorySlotsFromSnapshot(items []bagItem) []exchangeplan.InventorySlot {
++	result := make([]exchangeplan.InventorySlot, 0, len(items))
++	for index, item := range items {
++		container, ok := latestClientCurrentBagContainer(item.ViewID)
++		if !ok {
++			continue
++		}
++		result = append(result, exchangeplan.InventorySlot{Index: index, Container: container, Slot: item.Slot, Amount: item.Amount})
++	}
++	return result
++}
++
++func currentShopExchangeContainerCapacity(container uint16) (int32, bool) {
++	for _, spec := range starterBagViews() {
++		if spec.ID != container {
++			continue
++		}
++		switch container {
++		case 2, 121, 123, 125:
++			return int32(spec.Capacity), true
++		default:
++			return 0, false
++		}
++	}
++	return 0, false
++}
++
++func evaluateShopExchangeCapacityPreview(itemCatalog *itemCatalog, bagSnapshot []bagItem, listing shopCatalogItem, materialPlan exchangeplan.BatchPlan, outputAmount int64) (supported, satisfied bool, plan exchangeplan.CapacityPlan, err error) {
++	if itemCatalog == nil {
++		return false, false, plan, nil
++	}
++	staticItem, ok := itemCatalog.Lookup(listing.configID)
++	if !ok {
++		return false, false, plan, nil
++	}
++	container, ok := latestClientCurrentBagContainer(staticItem.ViewID)
++	if !ok {
++		return false, false, plan, nil
++	}
++	capacity, ok := currentShopExchangeContainerCapacity(container)
++	if !ok {
++		return false, false, plan, nil
++	}
++	plan, err = exchangeplan.PlanConservativeCapacity(currentShopExchangeInventorySlotsFromSnapshot(bagSnapshot), materialPlan, container, capacity, outputAmount, staticItem.MaxAmount)
++	if err != nil {
++		return false, false, plan, err
++	}
++	return true, plan.Fits, plan, nil
+ }
+ 
+ // evaluateShopExchangeConditionPreview follows the exact current form UI's
+@@ -222,7 +278,7 @@
+ 	return true, true, nil
+ }
+ 
+-func runShopExchangeReadOnlyPreflight(shopPath, exchangePath string, authority *currentShopConditionAuthority, player *playerActor, request shopExchangeBuyRequest) (shopExchangeReadOnlyPreflight, error) {
++func runShopExchangeReadOnlyPreflight(shopPath, exchangePath string, authority *currentShopConditionAuthority, player *playerActor, itemCatalog *itemCatalog, request shopExchangeBuyRequest) (shopExchangeReadOnlyPreflight, error) {
+ 	var result shopExchangeReadOnlyPreflight
+ 	if request.Count < 1 || request.Count > 99 {
+ 		return result, fmt.Errorf("exchange count %d outside current client range 1..99", request.Count)
+@@ -256,7 +312,8 @@
+ 	if err != nil {
+ 		return result, err
+ 	}
+-	result.MaterialPlan, err = exchangeplan.PlanBatch(currentShopExchangeInventoryStacks(player), requirements, request.Count)
++	bagSnapshot := player.bagSnapshot()
++	result.MaterialPlan, err = exchangeplan.PlanBatch(currentShopExchangeInventoryStacksFromSnapshot(bagSnapshot), requirements, request.Count)
+ 	if err != nil {
+ 		return result, err
+ 	}
+@@ -265,5 +322,9 @@
+ 		return result, fmt.Errorf("invalid exchange output amount=%d count=%d", listing.amount, request.Count)
+ 	}
+ 	result.OutputAmount = int64(listing.amount) * int64(request.Count)
++	result.CapacitySupported, result.CapacitySatisfied, result.CapacityPlan, err = evaluateShopExchangeCapacityPreview(itemCatalog, bagSnapshot, *listing, result.MaterialPlan, result.OutputAmount)
++	if err != nil {
++		return result, err
++	}
+ 	return result, nil
+ }

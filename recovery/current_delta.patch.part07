@@ -1,0 +1,586 @@
++	if err != nil {
++		return nil, fmt.Errorf("Condition2: %w", err)
++	}
++	filterIDs, err := parseExchangeConditionIDs(filters)
++	if err != nil {
++		return nil, fmt.Errorf("Filters: %w", err)
++	}
++	filterSet := make(map[int32]struct{}, len(filterIDs))
++	for _, id := range filterIDs {
++		filterSet[id] = struct{}{}
++	}
++	result := make([]exchangeConditionReference, 0, len(primary)+len(secondary))
++	for _, id := range primary {
++		_, filtered := filterSet[id]
++		result = append(result, exchangeConditionReference{ConditionID: id, IsNeedShow: !filtered, Source: exchangeConditionPrimary})
++	}
++	for _, id := range secondary {
++		_, filtered := filterSet[id]
++		result = append(result, exchangeConditionReference{ConditionID: id, IsNeedShow: filtered, Source: exchangeConditionSecondary})
++	}
++	return result, nil
++}
++
++// evaluateExchangeConditionDetails is the wire-inert bridge from one authored
++// ExchangeItem definition to the exact S2C 508 triples. Formula expansion and
++// leaf evaluation are authoritative-only: if any referenced condition cannot
++// be evaluated from proven server state, that entry is emitted unsatisfied and
++// allSupported is false. This function does not enable C2S69 dispatch.
++func evaluateExchangeConditionDetails(condition, condition2, filters string, resolve conditionFormulaResolver, evaluateLeaf conditionFormulaLeafEvaluator) (details []shopConditionDetail, allSupported bool, err error) {
++	references, err := exchangeConditionReferences(condition, condition2, filters)
++	if err != nil {
++		return nil, false, err
++	}
++	details = make([]shopConditionDetail, 0, len(references))
++	allSupported = true
++	for _, reference := range references {
++		satisfied, supported, evalErr := evaluateConditionRoot(reference.ConditionID, resolve, evaluateLeaf)
++		if evalErr != nil {
++			return nil, false, fmt.Errorf("condition %d: %w", reference.ConditionID, evalErr)
++		}
++		if !supported {
++			allSupported = false
++			satisfied = false
++		}
++		details = append(details, shopConditionDetail{
++			ConditionID: reference.ConditionID,
++			IsNeedShow:  reference.IsNeedShow,
++			Satisfied:   satisfied,
++		})
++	}
++	return details, allSupported, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_detail_test.go
+@@ -0,0 +1,96 @@
++package main
++
++import (
++	"reflect"
++	"testing"
++)
++
++func TestCurrentExchangeConditionIsNeedShowRule(t *testing.T) {
++	got, err := exchangeConditionReferences("10,20,30", "40,20", "20,40")
++	if err != nil {
++		t.Fatal(err)
++	}
++	want := []exchangeConditionReference{
++		{ConditionID: 10, IsNeedShow: true, Source: exchangeConditionPrimary},
++		{ConditionID: 20, IsNeedShow: false, Source: exchangeConditionPrimary},
++		{ConditionID: 30, IsNeedShow: true, Source: exchangeConditionPrimary},
++		{ConditionID: 40, IsNeedShow: true, Source: exchangeConditionSecondary},
++		{ConditionID: 20, IsNeedShow: true, Source: exchangeConditionSecondary},
++	}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("refs=%#v want=%#v", got, want)
++	}
++}
++
++func TestCurrentExchangeConditionListsPreserveAuthoredOrderAndDuplicates(t *testing.T) {
++	got, err := exchangeConditionReferences("3,1,3", "2,2", "2")
++	if err != nil {
++		t.Fatal(err)
++	}
++	ids := make([]int32, 0, len(got))
++	for _, entry := range got {
++		ids = append(ids, entry.ConditionID)
++	}
++	if want := []int32{3, 1, 3, 2, 2}; !reflect.DeepEqual(ids, want) {
++		t.Fatalf("ids=%v want=%v", ids, want)
++	}
++}
++
++func TestCurrentExchangeConditionListRejectsEmptyToken(t *testing.T) {
++	if _, err := exchangeConditionReferences("1,,2", "", ""); err == nil {
++		t.Fatal("malformed Condition unexpectedly accepted")
++	}
++}
++
++func TestCurrentExchangeConditionDetailsEvaluateRecursiveAndFailClosed(t *testing.T) {
++	formulas := map[int32]string{
++		10: "1&2",
++		20: "3|4",
++	}
++	resolve := func(id int32) (string, bool) { value, ok := formulas[id]; return value, ok }
++	leaves := func(id int32) (bool, bool) {
++		switch id {
++		case 1, 2, 3:
++			return true, true
++		case 4:
++			return false, false
++		default:
++			return false, false
++		}
++	}
++	details, supported, err := evaluateExchangeConditionDetails("10", "20", "20", resolve, leaves)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if supported {
++		t.Fatal("unsupported recursive leaf must mark ExchangeData fail-closed")
++	}
++	want := []shopConditionDetail{
++		{ConditionID: 10, IsNeedShow: true, Satisfied: true},
++		{ConditionID: 20, IsNeedShow: true, Satisfied: false},
++	}
++	if !reflect.DeepEqual(details, want) {
++		t.Fatalf("details=%#v want=%#v", details, want)
++	}
++}
++
++func TestCurrentExchangeConditionDetailsAllSupported(t *testing.T) {
++	resolve := func(int32) (string, bool) { return "", false }
++	details, supported, err := evaluateExchangeConditionDetails("1,2", "3", "2,3", resolve, func(id int32) (bool, bool) {
++		return id != 2, true
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !supported {
++		t.Fatal("all authoritative leaves unexpectedly marked unsupported")
++	}
++	want := []shopConditionDetail{
++		{ConditionID: 1, IsNeedShow: true, Satisfied: true},
++		{ConditionID: 2, IsNeedShow: false, Satisfied: false},
++		{ConditionID: 3, IsNeedShow: true, Satisfied: true},
++	}
++	if !reflect.DeepEqual(details, want) {
++		t.Fatalf("details=%#v want=%#v", details, want)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_evaluator.go
+@@ -0,0 +1,282 @@
++package main
++
++import (
++	"strconv"
++	"strings"
++)
++
++// exactCurrentConditionEvaluator implements only leaf families whose current
++// native semantics are closed and whose required Stage37 state is authoritative.
++// Everything else returns supported=false and is therefore fail-closed by the
++// formula/detail layer.
++type exactCurrentConditionEvaluator struct {
++	catalog       *shopConditionCatalog
++	player        *playerActor
++	skillMaxTable iniTable
++}
++
++func (e exactCurrentConditionEvaluator) evaluate(conditionID int32) (bool, bool) {
++	if e.catalog == nil || e.player == nil {
++		return false, false
++	}
++	definition, ok := e.catalog.Definitions[conditionID]
++	if !ok {
++		return false, false
++	}
++	var value bool
++	switch definition.Type {
++	case 1:
++		value, ok = e.evaluatePlayerProperty(definition)
++	case 2:
++		if !strings.EqualFold(definition.Name, "ToolBox") {
++			return false, false
++		}
++		amount := e.toolBoxAmount(definition.Para[0])
++		value, ok = conditionNumericRange(amount, definition)
++	case 3:
++		value, ok = e.evaluateContainerProperty(definition)
++	default:
++		return false, false
++	}
++	if !ok {
++		return false, false
++	}
++	if definition.Not > 0 {
++		value = !value
++	}
++	return value, true
++}
++
++func (e exactCurrentConditionEvaluator) evaluatePlayerProperty(definition shopConditionDefinition) (bool, bool) {
++	e.player.mu.Lock()
++	faction := e.player.faction
++	sex := int64(e.player.sex)
++	jmActCount := int64(len(e.player.activeJingMaiOrder))
++	powerLevel := int64(powerLevelFromBooks(e.player.progress.books))
++	e.player.mu.Unlock()
++
++	school, force, newSchool := "", "", ""
++	if strings.HasPrefix(faction, "force_") {
++		force = faction
++	} else if strings.HasPrefix(faction, "newschool_") {
++		newSchool = faction
++	} else {
++		school = faction
++	}
++
++	switch definition.Name {
++	case "School":
++		return conditionDirectStringCompare(school, definition)
++	case "Force":
++		return conditionDirectStringCompare(force, definition)
++	case "NewSchool":
++		return conditionDirectStringCompare(newSchool, definition)
++	case "Sex":
++		return conditionDirectNumericCompare(sex, definition)
++	case "jmActCount":
++		return conditionDirectNumericCompare(jmActCount, definition)
++	case "PowerLevel":
++		// Current PowerLevel mode3 rows use the numeric-range branch (Para1="<>").
++		if definition.Para[0] == "==" || definition.Para[0] == "!=" {
++			return conditionDirectNumericCompare(powerLevel, definition)
++		}
++		return conditionNumericRange(powerLevel, definition)
++	default:
++		return false, false
++	}
++}
++
++func conditionDirectStringCompare(value string, definition shopConditionDefinition) (bool, bool) {
++	switch definition.Para[0] {
++	case "==":
++		if !definition.HasMin {
++			return false, false
++		}
++		return value == definition.Min, true
++	case "!=":
++		if !definition.HasMin {
++			return false, false
++		}
++		return value != definition.Min, true
++	default:
++		return false, false
++	}
++}
++
++func conditionDirectNumericCompare(value int64, definition shopConditionDefinition) (bool, bool) {
++	if !definition.HasMin {
++		return false, false
++	}
++	compare, err := strconv.ParseInt(strings.TrimSpace(definition.Min), 10, 64)
++	if err != nil {
++		return false, false
++	}
++	switch definition.Para[0] {
++	case "==":
++		return value == compare, true
++	case "!=":
++		return value != compare, true
++	default:
++		return false, false
++	}
++}
++
++func conditionNumericRange(value int64, definition shopConditionDefinition) (bool, bool) {
++	// Exact-current common rule: no Min and no Max is false, not "no limit".
++	if !definition.HasMin && !definition.HasMax {
++		return false, true
++	}
++	if definition.HasMin {
++		minimum, err := strconv.ParseInt(strings.TrimSpace(definition.Min), 10, 64)
++		if err != nil {
++			return false, false
++		}
++		if value < minimum {
++			return false, true
++		}
++	}
++	if definition.HasMax {
++		maximum, err := strconv.ParseInt(strings.TrimSpace(definition.Max), 10, 64)
++		if err != nil {
++			return false, false
++		}
++		if value > maximum {
++			return false, true
++		}
++	}
++	return true, true
++}
++
++func (e exactCurrentConditionEvaluator) toolBoxAmount(configID string) int64 {
++	e.player.mu.Lock()
++	defer e.player.mu.Unlock()
++	var total int64
++	for _, item := range e.player.bagItems {
++		if item.ConfigID != configID {
++			continue
++		}
++		if _, ok := latestClientCurrentBagContainer(item.ViewID); !ok {
++			continue
++		}
++		total += int64(item.Amount)
++	}
++	return total
++}
++
++func (e exactCurrentConditionEvaluator) evaluateContainerProperty(definition shopConditionDefinition) (bool, bool) {
++	switch definition.Name {
++	case "SkillContainer":
++		e.player.mu.Lock()
++		level, learned := e.player.learnedSkills[definition.Para[0]]
++		e.player.mu.Unlock()
++		if !learned || level <= 0 {
++			return false, true
++		}
++		var propertyValue int64
++		switch definition.Para[1] {
++		case "Level":
++			propertyValue = int64(level)
++		case "MaxLevel":
++			table := e.skillMaxTable
++			if table == nil {
++				return false, false
++			}
++			fields := table["book_"+definition.Para[0]]
++			if len(fields) == 0 {
++				maxLevel := skillMaxLevelFromTable(table, definition.Para[0])
++				if maxLevel <= 1 {
++					return false, false
++				}
++				propertyValue = int64(maxLevel)
++			} else {
++				propertyValue = int64(maxCultivationLevel(fields))
++			}
++		default:
++			return false, false
++		}
++		return conditionNumericRange(propertyValue, definition)
++	case "NeiGongContainer":
++		if definition.Para[1] != "Level" {
++			return false, false
++		}
++		e.player.mu.Lock()
++		var level int32
++		found := false
++		for i := range e.player.progress.books {
++			if e.player.progress.books[i].configID == definition.Para[0] {
++				level = e.player.progress.books[i].level
++				found = true
++				break
++			}
++		}
++		e.player.mu.Unlock()
++		if !found {
++			return false, true
++		}
++		return conditionNumericRange(int64(level), definition)
++	default:
++		return false, false
++	}
++}
++
++func exactCurrentConditionCapability(catalog *shopConditionCatalog, conditionID int32) conditionCapabilityClass {
++	if catalog == nil {
++		return conditionCapabilitySemanticsUnresolved
++	}
++	definition, ok := catalog.Definitions[conditionID]
++	if !ok {
++		return conditionCapabilitySemanticsUnresolved
++	}
++	switch definition.Type {
++	case 1:
++		switch definition.Name {
++		case "School", "Force", "NewSchool", "Sex", "jmActCount", "PowerLevel":
++			return conditionCapabilityExactEvaluator
++		case "LastSchool", "VipStatus", "SuperVipStatus", "LeaveSchoolType", "SchoolMark",
++			"Landflag", "IsGuildCaptain", "DongFangHonour", "NanGongHonour", "YanMenHonour",
++			"MuRongHonour", "SwornTitleLevel", "XueDaoShaQi":
++			return conditionCapabilityAuthoritativeStateMissing
++		default:
++			return conditionCapabilityAuthoritativeStateMissing
++		}
++	case 2:
++		if definition.Name == "ToolBox" {
++			return conditionCapabilityExactEvaluator
++		}
++		if definition.Name == "BufferContainer" {
++			return conditionCapabilitySemanticsUnresolved
++		}
++		return conditionCapabilitySemanticsUnresolved
++	case 3:
++		switch definition.Name {
++		case "SkillContainer", "NeiGongContainer":
++			return conditionCapabilityExactEvaluator
++		case "XueWeiContainer":
++			return conditionCapabilityAuthoritativeStateMissing
++		default:
++			return conditionCapabilitySemanticsUnresolved
++		}
++	case 4:
++		return conditionCapabilityAuthoritativeStateMissing
++	case 5, 8, 10:
++		return conditionCapabilityAuthoritativeStateMissing
++	case 16, 19, 21:
++		return conditionCapabilitySemanticsUnresolved
++	default:
++		return conditionCapabilitySemanticsUnresolved
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_evaluator_test.go
+@@ -0,0 +1,93 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestCurrentConditionCatalogPreservesAbsentVsZeroRange(t *testing.T) {
++	dir := t.TempDir()
++	conditionPath := filepath.Join(dir, "condition.ini")
++	formulaPath := filepath.Join(dir, "condition_formula.ini")
++	condition := "[1]\nType=1\nName=Sex\nPara1===\nmin=0\nNot=0\n\n[2]\nType=1\nName=PowerLevel\nPara1=<>\n\n"
++	formula := "[10]\nFormula=1&2\n"
++	if err := os.WriteFile(conditionPath, []byte(condition), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(formulaPath, []byte(formula), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	catalog, err := loadShopConditionCatalog(conditionPath, formulaPath)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !catalog.Definitions[1].HasMin || catalog.Definitions[1].Min != "0" || catalog.Definitions[1].HasMax {
++		t.Fatalf("condition 1 range=%+v", catalog.Definitions[1])
++	}
++	if catalog.Definitions[2].HasMin || catalog.Definitions[2].HasMax {
++		t.Fatalf("condition 2 unexpectedly has bounds: %+v", catalog.Definitions[2])
++	}
++	if got, ok := catalog.resolve(10); !ok || got != "1&2" {
++		t.Fatalf("formula 10=(%q,%t)", got, ok)
++	}
++}
++
++func TestCurrentConditionEvaluatorAuthoritativeSubset(t *testing.T) {
++	player := &playerActor{
++		faction:            "newschool_gumu",
++		sex:                1,
++		activeJingMaiOrder: []string{"jm1", "jm2", "jm3"},
++		learnedSkills:      map[string]int32{"CS_test": 4},
++		progress:           playerProgress{books: []learnedNeiGong{{configID: "ng_test", level: 7}}},
++		bagItems:           []bagItem{{ConfigID: "item_a", ViewID: 1, Amount: 2}, {ConfigID: "item_a", ViewID: 3, Amount: 1}},
++	}
++	definitions := map[int32]shopConditionDefinition{
++		1: {ID: 1, Type: 1, Name: "NewSchool", Para: [6]string{"=="}, Min: "newschool_gumu", HasMin: true},
++		2: {ID: 2, Type: 1, Name: "Sex", Para: [6]string{"=="}, Min: "1", HasMin: true},
++		3: {ID: 3, Type: 1, Name: "jmActCount", Para: [6]string{"=="}, Min: "3", HasMin: true},
++		4: {ID: 4, Type: 2, Name: "ToolBox", Para: [6]string{"item_a"}, Min: "3", HasMin: true},
++		5: {ID: 5, Type: 3, Name: "SkillContainer", Para: [6]string{"CS_test", "Level"}, Min: "4", HasMin: true},
++		6: {ID: 6, Type: 3, Name: "NeiGongContainer", Para: [6]string{"ng_test", "Level"}, Min: "7", HasMin: true},
++		7: {ID: 7, Type: 3, Name: "XueWeiContainer", Para: [6]string{"xw_test", "Level"}, Min: "1", HasMin: true},
++		8: {ID: 8, Type: 2, Name: "ToolBox", Para: [6]string{"item_missing"}, Max: "0", HasMax: true},
++	}
++	catalog := &shopConditionCatalog{Definitions: definitions, Formulas: map[int32]string{10: "1&2|3"}}
++	evaluator := exactCurrentConditionEvaluator{catalog: catalog, player: player}
++	for _, id := range []int32{1, 2, 3, 4, 5, 6, 8} {
++		got, supported := evaluator.evaluate(id)
++		if !supported || !got {
++			t.Fatalf("condition %d got=%t supported=%t", id, got, supported)
++		}
++	}
++	if got, supported := evaluator.evaluate(7); got || supported {
++		t.Fatalf("XueWei got=%t supported=%t", got, supported)
++	}
++	got, supported, err := evaluateConditionRoot(10, catalog.resolve, evaluator.evaluate)
++	if err != nil || !supported || !got {
++		t.Fatalf("formula got=%t supported=%t err=%v", got, supported, err)
++	}
++}
++
++func TestCurrentConditionCapabilityClassification(t *testing.T) {
++	catalog := &shopConditionCatalog{Definitions: map[int32]shopConditionDefinition{
++		1: {ID: 1, Type: 1, Name: "School"},
++		2: {ID: 2, Type: 1, Name: "VipStatus"},
++		3: {ID: 3, Type: 2, Name: "BufferContainer"},
++		4: {ID: 4, Type: 3, Name: "SkillContainer"},
++		5: {ID: 5, Type: 19, Name: "Func"},
++	}}
++	cases := map[int32]conditionCapabilityClass{
++		1:     conditionCapabilityExactEvaluator,
++		2:     conditionCapabilityAuthoritativeStateMissing,
++		3:     conditionCapabilitySemanticsUnresolved,
++		4:     conditionCapabilityExactEvaluator,
++		5:     conditionCapabilitySemanticsUnresolved,
++		26526: conditionCapabilitySemanticsUnresolved,
++	}
++	for id, want := range cases {
++		if got := exactCurrentConditionCapability(catalog, id); got != want {
++			t.Fatalf("condition %d class=%d want=%d", id, got, want)
++		}
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_formula.go
+@@ -0,0 +1,327 @@
++package main
++
++import (
++	"fmt"
++	"strconv"
++	"strings"
++	"unicode"
++)
++
++// conditionFormulaOp mirrors the exact-current condition formula node kinds:
++// op0 is either a leaf condition id or a parenthesized wrapper, op1 is AND,
++// and op2 is OR.  The grammar deliberately gives '&' and '|' the same
++// precedence and descends on the right-hand side, so expressions are
++// right-associative rather than using conventional boolean precedence.
++type conditionFormulaOp uint8
++
++const (
++	conditionFormulaLeafOrWrapper conditionFormulaOp = 0
++	conditionFormulaAnd           conditionFormulaOp = 1
++	conditionFormulaOr            conditionFormulaOp = 2
++)
++
++type conditionFormulaNode struct {
++	Op          conditionFormulaOp
++	ConditionID int32
++	Child       *conditionFormulaNode
++	Left        *conditionFormulaNode
++	Right       *conditionFormulaNode
++}
++
++type conditionFormulaParser struct {
++	input string
++	pos   int
++}
++
++// parseConditionFormula implements the exact-current right-descending grammar.
++// Examples fixed by the native parser evidence:
++//
++//	1&2|3 => 1 & (2 | 3)
++//	1|2&3 => 1 | (2 & 3)
++//	1&2&3 => 1 & (2 & 3)
++//
++// Parentheses create an op0 wrapper and therefore force grouping.
++func parseConditionFormula(raw string) (*conditionFormulaNode, error) {
++	parser := conditionFormulaParser{input: strings.TrimSpace(raw)}
++	if parser.input == "" {
++		return nil, fmt.Errorf("empty condition formula")
++	}
++	node, err := parser.parseExpression()
++	if err != nil {
++		return nil, err
++	}
++	parser.skipSpace()
++	if parser.pos != len(parser.input) {
++		return nil, fmt.Errorf("unexpected token %q at byte %d", parser.input[parser.pos], parser.pos)
++	}
++	return node, nil
++}
++
++func (parser *conditionFormulaParser) parseExpression() (*conditionFormulaNode, error) {
++	left, err := parser.parsePrimary()
++	if err != nil {
++		return nil, err
++	}
++	parser.skipSpace()

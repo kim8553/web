@@ -1,0 +1,557 @@
++}
++
++func TestCurrentShopAuthoredCoordinatesUseCurrentClientBases(t *testing.T) {
++	tests := []struct {
++		wirePage, wirePos int32
++		wantPage, wantPos int32
++		ok                bool
++	}{
++		{wirePage: 0, wirePos: 1, wantPage: 0, wantPos: 0, ok: true},
++		{wirePage: 1, wirePos: 1, wantPage: 1, wantPos: 0, ok: true},
++		{wirePage: 2, wirePos: 10, wantPage: 2, wantPos: 9, ok: true},
++		{wirePage: -1, wirePos: 1, ok: false},
++		{wirePage: 0, wirePos: 0, ok: false},
++	}
++	for _, tc := range tests {
++		page, pos, ok := currentShopAuthoredCoordinates(tc.wirePage, tc.wirePos)
++		if ok != tc.ok || page != tc.wantPage || pos != tc.wantPos {
++			t.Fatalf("wire page=%d pos=%d -> page=%d pos=%d ok=%v; want page=%d pos=%d ok=%v", tc.wirePage, tc.wirePos, page, pos, ok, tc.wantPage, tc.wantPos, tc.ok)
++		}
++	}
++}
++
++func TestCurrentShopListingDoesNotAcceptLegacyPageBase(t *testing.T) {
++	items := []shopCatalogItem{
++		{configID: "first", page: 0, position: 0},
++		{configID: "second", page: 1, position: 0},
++	}
++	if got := currentShopListing(items, 0, 1); got == nil || got.configID != "first" {
++		t.Fatalf("current first-page wire coordinate resolved %#v, want first", got)
++	}
++	if got := currentShopListing(items, 1, 1); got == nil || got.configID != "second" {
++		t.Fatalf("current second-page wire coordinate resolved %#v, want second", got)
++	}
++}
++
++func TestLatestClientShopPageNumUsesCurrentShopConfig(t *testing.T) {
++	props := latestClientShopViewProperties("Shop_test", 1, 3)
++	if props[1].int32 == nil || *props[1].int32 != 500 {
++		t.Fatalf("PageNum=%v want=500", props[1].int32)
++	}
++}
++
++func TestCurrentShopViewObjectIndexMatchesClientPagingFormula(t *testing.T) {
++	tests := []struct {
++		item shopCatalogItem
++		want uint16
++	}{
++		{item: shopCatalogItem{page: 0, position: 0}, want: 1},
++		{item: shopCatalogItem{page: 0, position: 35}, want: 36},
++		{item: shopCatalogItem{page: 1, position: 0}, want: 501},
++		{item: shopCatalogItem{page: 4, position: 35}, want: 2036},
++	}
++	for _, tc := range tests {
++		got, ok := currentShopViewObjectIndex(tc.item)
++		if !ok || got != tc.want {
++			t.Fatalf("page=%d pos=%d -> ident=%d ok=%v want=%d", tc.item.page, tc.item.position, got, ok, tc.want)
++		}
++		ident := int32(got)
++		page := (ident - 1) / currentShopPageSize
++		grid := ident%currentShopPageSize - 1
++		if page != tc.item.page || grid != tc.item.position {
++			t.Fatalf("ident=%d decodes page=%d grid=%d want page=%d grid=%d", ident, page, grid, tc.item.page, tc.item.position)
++		}
++	}
++}
++
++func TestShopCatalogPageInfoDrivesPageCountAndNumericKeyDrivesPage(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "shop.ini")
++	const data = `[Shop_pages]
++PageInfo=Page1,Page2,Page3
++Type=1
++0=first,1,1,8,0,1,0,0,0
++1=second,1,1,9,0,1,0,0,0
++`
++	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	items, _, pageCount, err := shopCatalogItems(path, "Shop_pages")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if pageCount != 3 {
++		t.Fatalf("PageCount=%d want=3 from PageInfo", pageCount)
++	}
++	if len(items) != 2 || items[0].page != 0 || items[1].page != 1 {
++		t.Fatalf("numeric page keys not retained: %#v", items)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_task_accepted_contract_test.go
+@@ -0,0 +1,55 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"reflect"
++	"testing"
++)
++
++func TestLatestClientTaskAcceptedSevenColumnPrefixTypes(t *testing.T) {
++	if int(recordTaskAccepted) >= len(qingGongRecordSchemas) {
++		t.Fatalf("Task_Accepted record index %d missing", recordTaskAccepted)
++	}
++	got := qingGongRecordSchemas[recordTaskAccepted].colTypes
++	want := []byte{3, 3, 3, 3, 7, 7, 3}
++	if !reflect.DeepEqual(got, want) {
++		t.Fatalf("Task_Accepted prefix types=%v want=%v", got, want)
++	}
++	if _, err := serverRecordAddCells(playerObjectID, playerOwnerID, recordTaskAccepted, []recordCell{
++		recordInt(10), recordInt(1), recordInt(0), recordString("17"), recordString("npc"), recordString("title"), recordInt(0),
++	}); err == nil {
++		t.Fatal("Task_Accepted column 3 accepted string; current client requires int32")
++	}
++	if _, err := serverRecordAddCells(playerObjectID, playerOwnerID, recordTaskAccepted, []recordCell{
++		recordInt(10), recordInt(1), recordInt(0), recordInt(17), recordString("npc"), recordString("title"), recordInt(0),
++	}); err != nil {
++		t.Fatalf("current Task_Accepted prefix rejected: %v", err)
++	}
++}
++
++func TestQuestCatalogLoadsNumericSubmitSceneIDOnlyWhenColumnExists(t *testing.T) {
++	root := t.TempDir()
++	taskDir := filepath.Join(root, "task", "task")
++	if err := os.MkdirAll(taskDir, 0o755); err != nil {
++		t.Fatal(err)
++	}
++	withScene := "meta\nID\tLine\tSubmitSceneID\tAcceptNpc\tSubmitNpc\tTitleId\tContextId\tCompleteDialogId\tTaskTargetId\tAcceptDialogId\n100\t7\t17\tnpc_a\tnpc_b\ttitle\tcontext\tcomplete\ttarget\tmenu\n"
++	withoutScene := "meta\nID\tLine\tAcceptNpc\tSubmitNpc\tTitleId\tContextId\tCompleteDialogId\tTaskTargetId\tAcceptDialogId\n101\t8\tnpc_c\tnpc_d\ttitle2\tcontext2\tcomplete2\ttarget2\tmenu2\n"
++	if err := os.WriteFile(filepath.Join(taskDir, "task_a.txt"), []byte(withScene), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.WriteFile(filepath.Join(taskDir, "task_b.txt"), []byte(withoutScene), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	catalog, err := loadQuestCatalogFromTables(root)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := catalog[100]; got == nil || got.SubmitSceneID != 17 {
++		t.Fatalf("task 100 SubmitSceneID=%v", got)
++	}
++	if got := catalog[101]; got == nil || got.SubmitSceneID != 0 {
++		t.Fatalf("task 101 missing SubmitSceneID should remain 0, got=%v", got)
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_view_property_contract.go
+@@ -0,0 +1,47 @@
++package main
++
++import (
++	"fmt"
++
++	"github.com/local/9yin-go-server/internal/clientdata"
++)
++
++// latestClientViewPropertyFields is the exact ordinal/type table Stage37 sends
++// in opcode 0x09. The latest FxNet2 ServerCreateView and ServerViewAdd handlers
++// both dispatch their property lists through the same decoder, which rejects an
++// index >= this table length and decodes the value using the type at that
++// ordinal. Validate locally so a stale global property ID cannot reach the
++// client as a property error.
++var latestClientViewPropertyFields = sceneVisiblePropertyFields(clientdata.VisibleNPCModernV1().Fields)
++
++func latestClientServerViewPropertyType(property serverViewProperty) (clientdata.WireType, bool) {
++	switch {
++	case property.byte1 != nil:
++		return clientdata.WireByte, true
++	case property.text != nil:
++		return clientdata.WireString, true
++	case property.int32 != nil:
++		return clientdata.WireInt32, true
++	case property.real32 != nil:
++		return clientdata.WireFloat32, true
++	default:
++		return 0, false
++	}
++}
++
++func latestClientValidateViewWireProperties(viewID uint16, operation string, properties []serverViewProperty) error {
++	for _, property := range properties {
++		if int(property.index) >= len(latestClientViewPropertyFields) {
++			return fmt.Errorf("%s view %d property ordinal %d outside negotiated count %d", operation, viewID, property.index, len(latestClientViewPropertyFields))
++		}
++		got, ok := latestClientServerViewPropertyType(property)
++		if !ok {
++			return fmt.Errorf("%s view %d property ordinal %d has unsupported wire value", operation, viewID, property.index)
++		}
++		want := latestClientViewPropertyFields[property.index].Type
++		if got != want {
++			return fmt.Errorf("%s view %d property ordinal %d wire type %s does not match negotiated %s (%s)", operation, viewID, property.index, got, want, latestClientViewPropertyFields[property.index].Name)
++		}
++	}
++	return nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_view_property_contract_test.go
+@@ -0,0 +1,37 @@
++package main
++
++import "testing"
++
++func TestLatestClientCreateViewRejectsLegacyGlobalPropertyID(t *testing.T) {
++	_, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 1}, []serverViewProperty{viewInt(0x08A7, 1)})
++	if err == nil {
++		t.Fatal("CreateView accepted legacy global property 0x08A7")
++	}
++}
++
++func TestLatestClientCreateViewRejectsWrongOrdinalType(t *testing.T) {
++	// ordinal 181 is MaxPowerValue/int32 in the currently negotiated table.
++	_, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 1}, []serverViewProperty{viewString(181, "bad")})
++	if err == nil {
++		t.Fatal("CreateView accepted string at MaxPowerValue/int32 ordinal 181")
++	}
++}
++
++func TestLatestClientViewAddRejectsWrongOrdinalType(t *testing.T) {
++	_, err := serverViewAdd(61, 0, []serverViewProperty{viewString(181, "bad")})
++	if err == nil {
++		t.Fatal("ViewAdd accepted string at MaxPowerValue/int32 ordinal 181")
++	}
++}
++
++func TestLatestClientStarterBagCreateDropsUnnegotiatedBaseCapProperties(t *testing.T) {
++	frame, err := serverCreateViewWithProperties(serverViewSpec{ID: 2, Capacity: 132, BaseCap: 6}, []serverViewProperty{
++		viewInt(0x00E8, 6), viewInt(0x08A7, 6),
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(frame) != 7 || frame[5] != 0 || frame[6] != 0 {
++		t.Fatalf("starter bag CreateView still emitted BaseCap properties: %x", frame)
++	}
++}
+--- /dev/null
++++ b/internal/exchangeplan/plan.go
+@@ -0,0 +1,174 @@
++// Package exchangeplan implements the evidence-closed, side-effect-free portion
++// of current shop-exchange material planning. It deliberately does not decide
++// final output BindStatus, ShowBind, ExchangeBind, capacity, or persistence.
++package exchangeplan
++
++import (
++	"fmt"
++	"math"
++)
++
++// Stack is one concrete inventory stack. BindStatus is runtime item-instance
++// state and is valid only when it is 0 (unbound) or 1 (bound).
++type Stack struct {
++	Index      int
++	ConfigID   string
++	Amount     int32
++	BindStatus int32
++}
++
++// Requirement is the material cost for one exchange result.
++type Requirement struct {
++	ConfigID string
++	Amount   int32
++}
++
++// Deduction records the exact stack slice selected by the planner.
++type Deduction struct {
++	StackIndex int
++	ConfigID   string
++	Amount     int32
++	BindStatus int32
++}
++
++// ResultPlan is the concrete material plan for one produced result.
++type ResultPlan struct {
++	Deductions           []Deduction
++	MaterialDerivedBound bool
++}
++
++// BatchPlan is atomic at planning time. If Satisfied is false, Results is empty
++// and Remaining is an unchanged copy of the input stacks; callers must not
++// commit a partially satisfiable prefix.
++type BatchPlan struct {
++	Satisfied bool
++	Results   []ResultPlan
++	Remaining []Stack
++}
++
++// PlanBatch plans count sequential results. Material selection is exact and
++// case-sensitive by ConfigID. Bound stacks are consumed before unbound stacks;
++// each ResultPlan independently records whether any bound material was actually
++// selected for that result.
++func PlanBatch(stacks []Stack, requirements []Requirement, count int32) (BatchPlan, error) {
++	original := cloneStacks(stacks)
++	if count <= 0 {
++		return BatchPlan{}, fmt.Errorf("exchangeplan: result count must be positive, got %d", count)
++	}
++	seenStackIndexes := make(map[int]struct{}, len(stacks))
++	for i, stack := range stacks {
++		if _, exists := seenStackIndexes[stack.Index]; exists {
++			return BatchPlan{}, fmt.Errorf("exchangeplan: duplicate stack index %d", stack.Index)
++		}
++		seenStackIndexes[stack.Index] = struct{}{}
++		if stack.ConfigID == "" {
++			return BatchPlan{}, fmt.Errorf("exchangeplan: stack %d has empty ConfigID", i)
++		}
++		if stack.Amount < 0 {
++			return BatchPlan{}, fmt.Errorf("exchangeplan: stack %d has negative amount %d", i, stack.Amount)
++		}
++		if stack.BindStatus != 0 && stack.BindStatus != 1 {
++			return BatchPlan{}, fmt.Errorf("exchangeplan: stack %d has invalid runtime BindStatus %d", i, stack.BindStatus)
++		}
++	}
++
++	aggregated, err := aggregateRequirements(requirements)
++	if err != nil {
++		return BatchPlan{}, err
++	}
++	remaining := cloneStacks(stacks)
++	results := make([]ResultPlan, 0, int(count))
++	for resultIndex := int32(0); resultIndex < count; resultIndex++ {
++		result, ok := planOne(remaining, aggregated)
++		if !ok {
++			return BatchPlan{Satisfied: false, Remaining: original}, nil
++		}
++		applyDeductions(remaining, result.Deductions)
++		results = append(results, result)
++	}
++	return BatchPlan{Satisfied: true, Results: results, Remaining: remaining}, nil
++}
++
++func aggregateRequirements(requirements []Requirement) ([]Requirement, error) {
++	order := make([]string, 0, len(requirements))
++	amounts := make(map[string]int64, len(requirements))
++	for i, requirement := range requirements {
++		if requirement.ConfigID == "" {
++			return nil, fmt.Errorf("exchangeplan: requirement %d has empty ConfigID", i)
++		}
++		if requirement.Amount <= 0 {
++			return nil, fmt.Errorf("exchangeplan: requirement %d has non-positive amount %d", i, requirement.Amount)
++		}
++		if _, exists := amounts[requirement.ConfigID]; !exists {
++			order = append(order, requirement.ConfigID)
++		}
++		amounts[requirement.ConfigID] += int64(requirement.Amount)
++		if amounts[requirement.ConfigID] > math.MaxInt32 {
++			return nil, fmt.Errorf("exchangeplan: requirement %q amount overflows int32", requirement.ConfigID)
++		}
++	}
++	result := make([]Requirement, 0, len(order))
++	for _, configID := range order {
++		result = append(result, Requirement{ConfigID: configID, Amount: int32(amounts[configID])})
++	}
++	return result, nil
++}
++
++func planOne(stacks []Stack, requirements []Requirement) (ResultPlan, bool) {
++	var result ResultPlan
++	for _, requirement := range requirements {
++		need := requirement.Amount
++		for _, bindStatus := range []int32{1, 0} {
++			for _, stack := range stacks {
++				if need == 0 {
++					break
++				}
++				if stack.ConfigID != requirement.ConfigID || stack.BindStatus != bindStatus || stack.Amount <= 0 {
++					continue
++				}
++				available := stack.Amount
++				for _, deduction := range result.Deductions {
++					if deduction.StackIndex == stack.Index {
++						available -= deduction.Amount
++					}
++				}
++				if available <= 0 {
++					continue
++				}
++				take := available
++				if take > need {
++					take = need
++				}
++				result.Deductions = append(result.Deductions, Deduction{
++					StackIndex: stack.Index,
++					ConfigID:   stack.ConfigID,
++					Amount:     take,
++					BindStatus: bindStatus,
++				})
++				if bindStatus == 1 {
++					result.MaterialDerivedBound = true
++				}
++				need -= take
++			}
++		}
++		if need != 0 {
++			return ResultPlan{}, false
++		}
++	}
++	return result, true
++}
++
++func applyDeductions(stacks []Stack, deductions []Deduction) {
++	for _, deduction := range deductions {
++		for i := range stacks {
++			if stacks[i].Index == deduction.StackIndex {
++				stacks[i].Amount -= deduction.Amount
++				break
++			}
++		}
++	}
++}
++
++func cloneStacks(stacks []Stack) []Stack {
++	return append([]Stack(nil), stacks...)
++}
+--- /dev/null
++++ b/internal/exchangeplan/plan_test.go
+@@ -0,0 +1,116 @@
++package exchangeplan
++
++import (
++	"reflect"
++	"testing"
++)
++
++func TestPlanBatchConsumesBoundBeforeUnboundAndTracksPerResult(t *testing.T) {
++	stacks := []Stack{
++		{Index: 10, ConfigID: "mat_a", Amount: 1, BindStatus: 0},
++		{Index: 11, ConfigID: "mat_a", Amount: 1, BindStatus: 1},
++		{Index: 12, ConfigID: "mat_a", Amount: 2, BindStatus: 0},
++	}
++	plan, err := PlanBatch(stacks, []Requirement{{ConfigID: "mat_a", Amount: 2}}, 2)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !plan.Satisfied || len(plan.Results) != 2 {
++		t.Fatalf("plan=%+v", plan)
++	}
++	if !plan.Results[0].MaterialDerivedBound {
++		t.Fatal("first result must be bound because the bound stack is consumed first")
++	}
++	if plan.Results[1].MaterialDerivedBound {
++		t.Fatal("second result must be unbound after the bound stack was exhausted")
++	}
++	if got := plan.Remaining[0].Amount + plan.Remaining[1].Amount + plan.Remaining[2].Amount; got != 0 {
++		t.Fatalf("remaining total=%d, want 0", got)
++	}
++}
++
++func TestPlanBatchInsufficientIsAtomic(t *testing.T) {
++	stacks := []Stack{{Index: 1, ConfigID: "mat", Amount: 3, BindStatus: 1}}
++	plan, err := PlanBatch(stacks, []Requirement{{ConfigID: "mat", Amount: 2}}, 2)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if plan.Satisfied || len(plan.Results) != 0 {
++		t.Fatalf("insufficient plan must have no committable prefix: %+v", plan)
++	}
++	if !reflect.DeepEqual(plan.Remaining, stacks) {
++		t.Fatalf("remaining=%+v, want original=%+v", plan.Remaining, stacks)
++	}
++}
++
++func TestPlanBatchAggregatesDuplicateRequirements(t *testing.T) {
++	plan, err := PlanBatch(
++		[]Stack{{Index: 1, ConfigID: "mat", Amount: 3, BindStatus: 0}},
++		[]Requirement{{ConfigID: "mat", Amount: 1}, {ConfigID: "mat", Amount: 2}},
++		1,
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !plan.Satisfied || len(plan.Results) != 1 {
++		t.Fatalf("plan=%+v", plan)
++	}
++	var consumed int32
++	for _, deduction := range plan.Results[0].Deductions {
++		consumed += deduction.Amount
++	}
++	if consumed != 3 {
++		t.Fatalf("consumed=%d, want 3", consumed)
++	}
++}
++
++func TestPlanBatchConfigIDIsCaseSensitive(t *testing.T) {
++	plan, err := PlanBatch(
++		[]Stack{{Index: 1, ConfigID: "Mat_A", Amount: 1, BindStatus: 0}},
++		[]Requirement{{ConfigID: "mat_a", Amount: 1}},
++		1,
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if plan.Satisfied {
++		t.Fatal("ConfigID matching must remain case-sensitive")
++	}
++}
++
++func TestPlanBatchRejectsInvalidRuntimeBindStatus(t *testing.T) {
++	if _, err := PlanBatch([]Stack{{Index: 1, ConfigID: "mat", Amount: 1, BindStatus: 2}}, []Requirement{{ConfigID: "mat", Amount: 1}}, 1); err == nil {
++		t.Fatal("invalid runtime BindStatus must fail closed")
++	}
++}
++
++func TestPlanBatchPreservesStableStackIndexAfterFiltering(t *testing.T) {
++	plan, err := PlanBatch(
++		[]Stack{{Index: 7, ConfigID: "other", Amount: 1, BindStatus: 0}, {Index: 42, ConfigID: "mat", Amount: 1, BindStatus: 1}},
++		[]Requirement{{ConfigID: "mat", Amount: 1}},
++		1,
++	)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !plan.Satisfied || len(plan.Results) != 1 || len(plan.Results[0].Deductions) != 1 {
++		t.Fatalf("plan=%+v", plan)
++	}
++	if got := plan.Results[0].Deductions[0].StackIndex; got != 42 {
++		t.Fatalf("deduction stable stack index=%d want=42", got)
++	}
++	if plan.Remaining[1].Amount != 0 || plan.Remaining[0].Amount != 1 {
++		t.Fatalf("remaining=%+v", plan.Remaining)
++	}
++}
++
++func TestPlanBatchRejectsDuplicateStableStackIndex(t *testing.T) {
++	_, err := PlanBatch(
++		[]Stack{{Index: 5, ConfigID: "a", Amount: 1, BindStatus: 0}, {Index: 5, ConfigID: "b", Amount: 1, BindStatus: 0}},
++		[]Requirement{{ConfigID: "a", Amount: 1}},
++		1,
++	)
++	if err == nil {
++		t.Fatal("duplicate stable stack index must fail closed")
++	}
++}
+--- /dev/null
++++ b/migrations/0012_persist_runtime_bind_status.sql
+@@ -0,0 +1,22 @@
++-- migrate:statement
++CREATE PROCEDURE nineyin_m12_bind_status()
++BEGIN
++  IF (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'role_bag_items') <> 1 THEN
++    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'M12 preflight: role_bag_items is required';
++  END IF;
++  IF (SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'role_equip_items') <> 1 THEN
++    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'M12 preflight: role_equip_items is required';
++  END IF;
++  IF (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'role_bag_items' AND column_name = 'bind_status') = 0 THEN
++    ALTER TABLE role_bag_items ADD COLUMN bind_status TINYINT UNSIGNED NOT NULL DEFAULT 0;
++  END IF;
++  IF (SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'role_equip_items' AND column_name = 'bind_status') = 0 THEN
++    ALTER TABLE role_equip_items ADD COLUMN bind_status TINYINT UNSIGNED NOT NULL DEFAULT 0;
++  END IF;
++END
++
++-- migrate:statement
++CALL nineyin_m12_bind_status()
++
++-- migrate:statement
++DROP PROCEDURE nineyin_m12_bind_status

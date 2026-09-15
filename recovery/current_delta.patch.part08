@@ -1,0 +1,605 @@
++	if parser.pos >= len(parser.input) || (parser.input[parser.pos] != '&' && parser.input[parser.pos] != '|') {
++		return left, nil
++	}
++	token := parser.input[parser.pos]
++	parser.pos++
++	right, err := parser.parseExpression()
++	if err != nil {
++		return nil, err
++	}
++	op := conditionFormulaAnd
++	if token == '|' {
++		op = conditionFormulaOr
++	}
++	return &conditionFormulaNode{Op: op, Left: left, Right: right}, nil
++}
++
++func (parser *conditionFormulaParser) parsePrimary() (*conditionFormulaNode, error) {
++	parser.skipSpace()
++	if parser.pos >= len(parser.input) {
++		return nil, fmt.Errorf("missing condition at byte %d", parser.pos)
++	}
++	if parser.input[parser.pos] == '(' {
++		open := parser.pos
++		parser.pos++
++		child, err := parser.parseExpression()
++		if err != nil {
++			return nil, err
++		}
++		parser.skipSpace()
++		if parser.pos >= len(parser.input) || parser.input[parser.pos] != ')' {
++			return nil, fmt.Errorf("unclosed parenthesis at byte %d", open)
++		}
++		parser.pos++
++		return &conditionFormulaNode{Op: conditionFormulaLeafOrWrapper, Child: child}, nil
++	}
++
++	start := parser.pos
++	if parser.input[parser.pos] == '+' || parser.input[parser.pos] == '-' {
++		parser.pos++
++	}
++	digits := parser.pos
++	for parser.pos < len(parser.input) && parser.input[parser.pos] >= '0' && parser.input[parser.pos] <= '9' {
++		parser.pos++
++	}
++	if parser.pos == digits {
++		return nil, fmt.Errorf("expected int32 condition id at byte %d", start)
++	}
++	value, err := strconv.ParseInt(parser.input[start:parser.pos], 10, 32)
++	if err != nil {
++		return nil, fmt.Errorf("condition id %q is not int32: %w", parser.input[start:parser.pos], err)
++	}
++	return &conditionFormulaNode{Op: conditionFormulaLeafOrWrapper, ConditionID: int32(value)}, nil
++}
++
++func (parser *conditionFormulaParser) skipSpace() {
++	for parser.pos < len(parser.input) && unicode.IsSpace(rune(parser.input[parser.pos])) {
++		parser.pos++
++	}
++}
++
++// conditionFormulaLeafEvaluator returns both the condition result and whether
++// that result is authoritative. Unsupported leaves must return supported=false;
++// evaluateConditionFormula then fails closed rather than inventing a value.
++type conditionFormulaLeafEvaluator func(conditionID int32) (satisfied bool, supported bool)
++
++func evaluateConditionFormula(node *conditionFormulaNode, evaluateLeaf conditionFormulaLeafEvaluator) (satisfied bool, supported bool, err error) {
++	if node == nil {
++		return false, false, fmt.Errorf("nil condition formula node")
++	}
++	switch node.Op {
++	case conditionFormulaLeafOrWrapper:
++		if node.Child != nil {
++			if node.Left != nil || node.Right != nil {
++				return false, false, fmt.Errorf("op0 wrapper contains binary children")
++			}
++			return evaluateConditionFormula(node.Child, evaluateLeaf)
++		}
++		if node.Left != nil || node.Right != nil {
++			return false, false, fmt.Errorf("op0 leaf contains binary children")
++		}
++		if evaluateLeaf == nil {
++			return false, false, fmt.Errorf("nil condition leaf evaluator")
++		}
++		satisfied, supported := evaluateLeaf(node.ConditionID)
++		if !supported {
++			return false, false, nil
++		}
++		return satisfied, true, nil
++
++	case conditionFormulaAnd, conditionFormulaOr:
++		if node.Child != nil || node.Left == nil || node.Right == nil {
++			return false, false, fmt.Errorf("binary condition formula node is malformed")
++		}
++		// Evaluate both sides even when the boolean result could short-circuit.
++		// SAFE classification requires every leaf to be authoritative.
++		leftValue, leftSupported, err := evaluateConditionFormula(node.Left, evaluateLeaf)
++		if err != nil {
++			return false, false, err
++		}
++		rightValue, rightSupported, err := evaluateConditionFormula(node.Right, evaluateLeaf)
++		if err != nil {
++			return false, false, err
++		}
++		if !leftSupported || !rightSupported {
++			return false, false, nil
++		}
++		if node.Op == conditionFormulaAnd {
++			return leftValue && rightValue, true, nil
++		}
++		return leftValue || rightValue, true, nil
++
++	default:
++		return false, false, fmt.Errorf("unsupported condition formula op %d", node.Op)
++	}
++}
++
++func conditionFormulaLeafIDs(node *conditionFormulaNode) ([]int32, error) {
++	if node == nil {
++		return nil, fmt.Errorf("nil condition formula node")
++	}
++	result := make([]int32, 0, 4)
++	var walk func(*conditionFormulaNode) error
++	walk = func(current *conditionFormulaNode) error {
++		if current == nil {
++			return fmt.Errorf("nil child in condition formula")
++		}
++		switch current.Op {
++		case conditionFormulaLeafOrWrapper:
++			if current.Child != nil {
++				return walk(current.Child)
++			}
++			result = append(result, current.ConditionID)
++			return nil
++		case conditionFormulaAnd, conditionFormulaOr:
++			if current.Left == nil || current.Right == nil {
++				return fmt.Errorf("binary condition formula node is malformed")
++			}
++			if err := walk(current.Left); err != nil {
++				return err
++			}
++			return walk(current.Right)
++		default:
++			return fmt.Errorf("unsupported condition formula op %d", current.Op)
++		}
++	}
++	if err := walk(node); err != nil {
++		return nil, err
++	}
++	return result, nil
++}
++
++// conditionFormulaResolver returns the authored formula for a condition id.
++// found=false means the id is a terminal leaf handled by the server evaluator.
++type conditionFormulaResolver func(conditionID int32) (formula string, found bool)
++
++// evaluateConditionRoot recursively expands formula ids and evaluates terminal
++// leaves. It never converts an unsupported terminal leaf into an authoritative
++// false: supported=false propagates to the root and the value is fail-closed.
++func evaluateConditionRoot(rootID int32, resolve conditionFormulaResolver, evaluateLeaf conditionFormulaLeafEvaluator) (satisfied bool, supported bool, err error) {
++	return evaluateConditionRootStack(rootID, resolve, evaluateLeaf, make(map[int32]bool))
++}
++
++func evaluateConditionRootStack(conditionID int32, resolve conditionFormulaResolver, evaluateLeaf conditionFormulaLeafEvaluator, stack map[int32]bool) (bool, bool, error) {
++	if resolve == nil {
++		return false, false, fmt.Errorf("nil condition formula resolver")
++	}
++	formula, found := resolve(conditionID)
++	if !found {
++		if evaluateLeaf == nil {
++			return false, false, fmt.Errorf("nil condition leaf evaluator")
++		}
++		value, supported := evaluateLeaf(conditionID)
++		if !supported {
++			return false, false, nil
++		}
++		return value, true, nil
++	}
++	if stack[conditionID] {
++		return false, false, fmt.Errorf("condition formula cycle at id %d", conditionID)
++	}
++	stack[conditionID] = true
++	defer delete(stack, conditionID)
++
++	node, err := parseConditionFormula(formula)
++	if err != nil {
++		return false, false, fmt.Errorf("condition formula %d: %w", conditionID, err)
++	}
++	return evaluateResolvedConditionFormula(node, resolve, evaluateLeaf, stack)
++}
++
++func evaluateResolvedConditionFormula(node *conditionFormulaNode, resolve conditionFormulaResolver, evaluateLeaf conditionFormulaLeafEvaluator, stack map[int32]bool) (bool, bool, error) {
++	if node == nil {
++		return false, false, fmt.Errorf("nil condition formula node")
++	}
++	switch node.Op {
++	case conditionFormulaLeafOrWrapper:
++		if node.Child != nil {
++			return evaluateResolvedConditionFormula(node.Child, resolve, evaluateLeaf, stack)
++		}
++		return evaluateConditionRootStack(node.ConditionID, resolve, evaluateLeaf, stack)
++	case conditionFormulaAnd, conditionFormulaOr:
++		left, leftSupported, err := evaluateResolvedConditionFormula(node.Left, resolve, evaluateLeaf, stack)
++		if err != nil {
++			return false, false, err
++		}
++		right, rightSupported, err := evaluateResolvedConditionFormula(node.Right, resolve, evaluateLeaf, stack)
++		if err != nil {
++			return false, false, err
++		}
++		if !leftSupported || !rightSupported {
++			return false, false, nil
++		}
++		if node.Op == conditionFormulaAnd {
++			return left && right, true, nil
++		}
++		return left || right, true, nil
++	default:
++		return false, false, fmt.Errorf("unsupported condition formula op %d", node.Op)
++	}
++}
++
++// terminalConditionLeaves expands nested formulas and returns terminal ids in
++// authored traversal order. It is used by the capability audit and therefore
++// reports cycles or malformed formula rows instead of silently dropping them.
++func terminalConditionLeaves(rootID int32, resolve conditionFormulaResolver) ([]int32, error) {
++	result := make([]int32, 0, 4)
++	stack := make(map[int32]bool)
++	var expand func(int32) error
++	expand = func(conditionID int32) error {
++		formula, found := resolve(conditionID)
++		if !found {
++			result = append(result, conditionID)
++			return nil
++		}
++		if stack[conditionID] {
++			return fmt.Errorf("condition formula cycle at id %d", conditionID)
++		}
++		stack[conditionID] = true
++		defer delete(stack, conditionID)
++		node, err := parseConditionFormula(formula)
++		if err != nil {
++			return fmt.Errorf("condition formula %d: %w", conditionID, err)
++		}
++		ids, err := conditionFormulaLeafIDs(node)
++		if err != nil {
++			return fmt.Errorf("condition formula %d: %w", conditionID, err)
++		}
++		for _, childID := range ids {
++			if err := expand(childID); err != nil {
++				return err
++			}
++		}
++		return nil
++	}
++	if resolve == nil {
++		return nil, fmt.Errorf("nil condition formula resolver")
++	}
++	if err := expand(rootID); err != nil {
++		return nil, err
++	}
++	return result, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_formula_test.go
+@@ -0,0 +1,177 @@
++package main
++
++import (
++	"reflect"
++	"testing"
++)
++
++func TestCurrentConditionFormulaRightDescendingShape(t *testing.T) {
++	tests := []struct {
++		raw  string
++		want string
++	}{
++		{"1&2|3", "&(1,|(2,3))"},
++		{"1|2&3", "|(1,&(2,3))"},
++		{"1&2&3", "&(1,&(2,3))"},
++		{"(1&2)|3", "|(wrap(&(1,2)),3)"},
++		{"1&(2|3)", "&(1,wrap(|(2,3)))"},
++	}
++	for _, tt := range tests {
++		node, err := parseConditionFormula(tt.raw)
++		if err != nil {
++			t.Fatalf("parse %q: %v", tt.raw, err)
++		}
++		if got := conditionFormulaTestShape(node); got != tt.want {
++			t.Fatalf("parse %q shape=%s want=%s", tt.raw, got, tt.want)
++		}
++	}
++}
++
++func TestCurrentConditionFormulaEvaluationRequiresEveryLeafSupported(t *testing.T) {
++	node, err := parseConditionFormula("1|2")
++	if err != nil {
++		t.Fatal(err)
++	}
++	calls := make([]int32, 0, 2)
++	satisfied, supported, err := evaluateConditionFormula(node, func(id int32) (bool, bool) {
++		calls = append(calls, id)
++		if id == 1 {
++			return true, true
++		}
++		return false, false
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if satisfied || supported {
++		t.Fatalf("unsupported RHS must fail closed, got satisfied=%t supported=%t", satisfied, supported)
++	}
++	if !reflect.DeepEqual(calls, []int32{1, 2}) {
++		t.Fatalf("all leaves must be audited, calls=%v", calls)
++	}
++}
++
++func TestCurrentConditionFormulaEvaluationAndLeaves(t *testing.T) {
++	node, err := parseConditionFormula("10&(20|30)")
++	if err != nil {
++		t.Fatal(err)
++	}
++	gotLeaves, err := conditionFormulaLeafIDs(node)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if want := []int32{10, 20, 30}; !reflect.DeepEqual(gotLeaves, want) {
++		t.Fatalf("leaf ids=%v want=%v", gotLeaves, want)
++	}
++	satisfied, supported, err := evaluateConditionFormula(node, func(id int32) (bool, bool) {
++		switch id {
++		case 10, 30:
++			return true, true
++		case 20:
++			return false, true
++		default:
++			return false, false
++		}
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !supported || !satisfied {
++		t.Fatalf("got satisfied=%t supported=%t want true,true", satisfied, supported)
++	}
++}
++
++func TestCurrentConditionFormulaRejectsMalformedInput(t *testing.T) {
++	for _, raw := range []string{"", "1&", "&1", "1||2", "(1|2", "1|2)", "x"} {
++		if _, err := parseConditionFormula(raw); err == nil {
++			t.Fatalf("parse %q unexpectedly succeeded", raw)
++		}
++	}
++}
++
++func conditionFormulaTestShape(node *conditionFormulaNode) string {
++	if node == nil {
++		return "nil"
++	}
++	switch node.Op {
++	case conditionFormulaLeafOrWrapper:
++		if node.Child != nil {
++			return "wrap(" + conditionFormulaTestShape(node.Child) + ")"
++		}
++		return int32Text(node.ConditionID)
++	case conditionFormulaAnd:
++		return "&(" + conditionFormulaTestShape(node.Left) + "," + conditionFormulaTestShape(node.Right) + ")"
++	case conditionFormulaOr:
++		return "|(" + conditionFormulaTestShape(node.Left) + "," + conditionFormulaTestShape(node.Right) + ")"
++	default:
++		return "?"
++	}
++}
++
++func int32Text(value int32) string {
++	if value == 0 {
++		return "0"
++	}
++	negative := value < 0
++	var n int64 = int64(value)
++	if negative {
++		n = -n
++	}
++	var buf [12]byte
++	pos := len(buf)
++	for n > 0 {
++		pos--
++		buf[pos] = byte('0' + n%10)
++		n /= 10
++	}
++	if negative {
++		pos--
++		buf[pos] = '-'
++	}
++	return string(buf[pos:])
++}
++
++func TestCurrentConditionFormulaRecursiveExpansion(t *testing.T) {
++	formulas := map[int32]string{
++		100: "1|200",
++		200: "2&3",
++	}
++	resolve := func(id int32) (string, bool) {
++		value, ok := formulas[id]
++		return value, ok
++	}
++	leaves, err := terminalConditionLeaves(100, resolve)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if want := []int32{1, 2, 3}; !reflect.DeepEqual(leaves, want) {
++		t.Fatalf("terminal leaves=%v want=%v", leaves, want)
++	}
++	value, supported, err := evaluateConditionRoot(100, resolve, func(id int32) (bool, bool) {
++		switch id {
++		case 1:
++			return false, true
++		case 2, 3:
++			return true, true
++		default:
++			return false, false
++		}
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !supported || !value {
++		t.Fatalf("recursive formula got value=%t supported=%t want true,true", value, supported)
++	}
++}
++
++func TestCurrentConditionFormulaCycleFailsClosedWithError(t *testing.T) {
++	formulas := map[int32]string{100: "200", 200: "100"}
++	resolve := func(id int32) (string, bool) { value, ok := formulas[id]; return value, ok }
++	if _, err := terminalConditionLeaves(100, resolve); err == nil {
++		t.Fatal("cycle unexpectedly accepted by leaf expansion")
++	}
++	if _, _, err := evaluateConditionRoot(100, resolve, func(int32) (bool, bool) { return true, true }); err == nil {
++		t.Fatal("cycle unexpectedly accepted by evaluator")
++	}
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_exchange_config.go
+@@ -0,0 +1,189 @@
++package main
++
++import (
++	"fmt"
++	"path/filepath"
++	"strconv"
++	"strings"
++)
++
++// The exact current FxGameLogic.dll exchange_item_manager::InitCurExchangeData
++// parser consumes exactly eleven pipe-separated fields in this order. Item and
++// Prop keep the authored semicolon/comma sub-grammar; Condition, Condition2 and
++// Filters keep the authored comma-separated integer-list grammar.
++var defaultExchangeItemINIPath = filepath.Join(defaultModernShareRoot, "item", "exchangeitem.ini")
++
++type shopExchangeDefinition struct {
++	Type          int32
++	AddValue      string
++	BindStatus    int32
++	Item          string
++	ConditionType int32
++	Condition     string
++	Condition2    string
++	Filters       string
++	Prop          string
++}
++
++type shopExchangeRuntimeBind struct {
++	ShowBind     int32
++	ExchangeBind int32
++}
++
++// loadShopExchangeDefinition reads only values authored in the current
++// share/Item/ExchangeItem.ini schema. ShowBind and ExchangeBind are deliberately
++// absent: current ExchangeItem.ini does not author those two response fields.
++func loadShopExchangeDefinition(path string, exchangeData int32) (shopExchangeDefinition, error) {
++	if exchangeData <= 0 {
++		return shopExchangeDefinition{}, fmt.Errorf("exchange data id must be positive, got %d", exchangeData)
++	}
++	table, err := loadINISections(path)
++	if err != nil {
++		return shopExchangeDefinition{}, fmt.Errorf("load exchange item table %s: %w", path, err)
++	}
++	fields, ok := table[strconv.FormatInt(int64(exchangeData), 10)]
++	if !ok {
++		return shopExchangeDefinition{}, fmt.Errorf("exchange item table %s has no section %d", path, exchangeData)
++	}
++	definition := shopExchangeDefinition{
++		Type:          iniInt(fields, "Type"),
++		AddValue:      strings.TrimSpace(iniValue(fields, "AddValue")),
++		BindStatus:    iniInt(fields, "BindStatus"),
++		Item:          strings.TrimSpace(iniValue(fields, "Item")),
++		ConditionType: iniInt(fields, "ConditionType"),
++		Condition:     strings.TrimSpace(iniValue(fields, "Condition")),
++		Condition2:    strings.TrimSpace(iniValue(fields, "Condition2")),
++		Filters:       strings.TrimSpace(iniValue(fields, "Filters")),
++		Prop:          strings.TrimSpace(iniValue(fields, "Prop")),
++	}
++	if err := validateShopExchangeDefinition(definition); err != nil {
++		return shopExchangeDefinition{}, fmt.Errorf("exchange item section %d: %w", exchangeData, err)
++	}
++	return definition, nil
++}
++
++func validateShopExchangeDefinition(definition shopExchangeDefinition) error {
++	// InitCurExchangeData has no escaping layer for the top-level pipe delimiter.
++	for name, value := range map[string]string{
++		"AddValue":   definition.AddValue,
++		"Item":       definition.Item,
++		"Condition":  definition.Condition,
++		"Condition2": definition.Condition2,
++		"Filters":    definition.Filters,
++		"Prop":       definition.Prop,
++	} {
++		if strings.Contains(value, "|") {
++			return fmt.Errorf("%s contains unsupported top-level delimiter", name)
++		}
++	}
++	if err := validateExchangePairList(definition.Item, 32, "Item", true); err != nil {
++		return err
++	}
++	if err := validateExchangePairList(definition.Prop, 64, "Prop", false); err != nil {
++		return err
++	}
++	for name, value := range map[string]string{
++		"Condition":  definition.Condition,
++		"Condition2": definition.Condition2,
++		"Filters":    definition.Filters,
++	} {
++		if err := validateExchangeIntList(value, name); err != nil {
++			return err
++		}
++	}
++	return nil
++}
++
++func validateExchangePairList(value string, bits int, name string, allowTrailingTerminator bool) error {
++	if value == "" {
++		return nil
++	}
++	entries := strings.Split(value, ";")
++	for i, entry := range entries {
++		entry = strings.TrimSpace(entry)
++		if entry == "" && allowTrailingTerminator && i == len(entries)-1 {
++			continue
++		}
++		if entry == "" {
++			return fmt.Errorf("%s contains empty pair entry", name)
++		}
++		parts := strings.Split(entry, ",")
++		if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
++			return fmt.Errorf("%s entry %q does not match current name,value grammar", name, entry)
++		}
++		if _, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, bits); err != nil {
++			return fmt.Errorf("%s entry %q has invalid integer value: %w", name, entry, err)
++		}
++	}
++	return nil
++}
++
++func validateExchangeIntList(value, name string) error {
++	if value == "" {
++		return nil
++	}
++	for _, token := range strings.Split(value, ",") {
++		if _, err := strconv.ParseInt(strings.TrimSpace(token), 10, 32); err != nil {
++			return fmt.Errorf("%s token %q is not int32: %w", name, token, err)
++		}
++	}
++	return nil
++}
++
++// encodeShopExchangeConfig emits the field order accepted by the exact current
++// InitCurExchangeData parser:
++// Type|AddValue|BindStatus|Item|ShowBind|ExchangeBind|ConditionType|Condition|Condition2|Filters|Prop.
++//
++// The caller must supply ShowBind/ExchangeBind from a separately proven server
++// rule. This helper does not synthesize them.
++func encodeShopExchangeConfig(definition shopExchangeDefinition, bind shopExchangeRuntimeBind) (string, error) {
++	if err := validateShopExchangeDefinition(definition); err != nil {
++		return "", err
++	}
++	fields := []string{
++		strconv.FormatInt(int64(definition.Type), 10),
++		definition.AddValue,
++		strconv.FormatInt(int64(definition.BindStatus), 10),
++		definition.Item,
++		strconv.FormatInt(int64(bind.ShowBind), 10),
++		strconv.FormatInt(int64(bind.ExchangeBind), 10),
++		strconv.FormatInt(int64(definition.ConditionType), 10),
++		definition.Condition,
++		definition.Condition2,
++		definition.Filters,
++		definition.Prop,
++	}
++	return strings.Join(fields, "|"), nil
++}
++
++// serverShopExchangeFormMessage matches the exact current Lua handler
++// on_open_shop_exchange_form(view_ident, bind_index, shop_id, page, pos,

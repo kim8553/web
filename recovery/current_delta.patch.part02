@@ -1,0 +1,356 @@
++var qingGongRecordSchemas = []recordSchema{{name: "QingGongRec", colTypes: []byte{7}}, {name: "ActiveQGSkillRec", colTypes: []byte{7}}, {name: "Task_Accepted", colTypes: []byte{3, 3, 3, 3, 7, 7, 3}}, {name: "Task_Completed", colTypes: []byte{3}}, {name: "shortcut_rec", colTypes: []byte{3, 7, 7}}, {name: "cooldown_rec", colTypes: []byte{3, 4, 4, 3}}, {name: "active_jingmai_rec", colTypes: []byte{7}}, {name: "CollectSkillRec", colTypes: []byte{7, 3}}, {name: "CardRec", colTypes: []byte{3}}, {name: "UseCardRec", colTypes: []byte{3, 3}}}
+ var starterQingGongIDs = []string{"qinggong_1"}
+ var starterQingGongSkillIDs = []string{"QG_JH_001"}
+ 
+@@ -228,10 +228,9 @@
+ 		state := uint32(9)
+ 		zero0 := uint32(0)
+ 		zero1 := uint32(0)
+-		empty0 := ""
+ 		empty1 := ""
+ 		empty2 := ""
+-		frame, err := serverRecordAddCells(0x11000001, 0x007a5c0b, 2, []recordCell{{intValue: &taskID}, {intValue: &state}, {intValue: &zero0}, {text: &empty0}, {text: &empty1}, {text: &empty2}, {intValue: &zero1}})
++		frame, err := serverRecordAddCells(0x11000001, 0x007a5c0b, 2, []recordCell{{intValue: &taskID}, {intValue: &state}, {intValue: &zero0}, {intValue: &zero0}, {text: &empty1}, {text: &empty2}, {intValue: &zero1}})
+ 		if err != nil {
+ 			return fmt.Errorf("encode Task_Accepted task %d: %w", taskID, err)
+ 		}
+--- a/cmd/protocol-probe/qinggong_records_test.go
++++ b/cmd/protocol-probe/qinggong_records_test.go
+@@ -154,8 +154,8 @@
+ 	if create[0] != 0x15 || first[0] != 0x18 {
+ 		t.Fatalf("grant sequence create=%x first=%x", create, first)
+ 	}
+-	if got := binary.LittleEndian.Uint16(first[7:]); got != qingGongStoredIDProperty {
+-		t.Fatalf("QingGong stored ID property=%#x want=%#x", got, qingGongStoredIDProperty)
++	if got := binary.LittleEndian.Uint16(first[7:]); got != 7 {
++		t.Fatalf("QingGong ConfigID wire ordinal=%#x want=0x7", got)
+ 	}
+ 	if !strings.Contains(string(first), starterQingGongIDs[0]) {
+ 		t.Fatalf("first QingGong row=%x", first)
+--- a/cmd/protocol-probe/scene_lifecycle.go
++++ b/cmd/protocol-probe/scene_lifecycle.go
+@@ -377,6 +377,13 @@
+ 	if len(delta.Adds) != 0 || len(delta.Removes) != 0 {
+ 		log.Printf("%s: scene viewport delta adds=%d removes=%d", s.remote, len(delta.Adds), len(delta.Removes))
+ 	}
++	// LATEST-CLIENT COMPATIBILITY A/B ONLY. This is deliberately not part of
++	// the exact-current-EXE authority reconstruction. Historical successful
++	// LIVE captures show that the client receives an immediate ServerLocation
++	// after each newly materialized Actor2 and five delayed location replays
++	// before it emits the final stage_main ClientReady. The September live
++	// client reaches the same pre-ready traffic but stalls before that boundary.
++	locationReplays := make([]sceneLocationReplay, 0, len(delta.Adds))
+ 	newPatrol := make([]worldcore.EntityID, 0, len(delta.Adds))
+ 	for _, addition := range delta.Adds {
+ 		id := addition.Entity.ID
+@@ -390,7 +397,16 @@
+ 		if err := s.conn.WriteFrame(payload); err != nil {
+ 			return nil, fmt.Errorf("add scene object %d: %w", id, err)
+ 		}
+-		log.Printf("%s: sent modern scene object id=%d via ServerAddObject", s.remote, id)
++		if entity.ownerID != 0 {
++			location := serverLocation(entity.id, entity.ownerID, entity.transform)
++			if err := s.conn.WriteFrame(location); err != nil {
++				return nil, fmt.Errorf("latest-client compat locate scene object %d: %w", id, err)
++			}
++			locationReplays = append(locationReplays, sceneLocationReplay{
++				id: uint32(id), payload: append([]byte(nil), location...),
++			})
++		}
++		log.Printf("%s: sent modern scene object id=%d via ServerAddObject + latest-client location compatibility", s.remote, id)
+ 		if patrolCandidateMeta(entity) && !entity.patrolAssigned {
+ 			newPatrol = append(newPatrol, id)
+ 		}
+@@ -398,6 +414,10 @@
+ 	if err := s.viewport.Commit(delta); err != nil {
+ 		return nil, err
+ 	}
++	if len(locationReplays) != 0 {
++		s.scheduleLocationReplaysLocked(locationReplays)
++		log.Printf("%s: latest-client scene compatibility armed location replays objects=%d delays=%v", s.remote, len(locationReplays), actor2LocationReplayDelays)
++	}
+ 	return newPatrol, nil
+ }
+ func (s *sceneLifecycle) objectRequest(request clientObjectRequest) (string, error) {
+@@ -417,7 +437,7 @@
+ 		log.Printf("%s: coalesced duplicate object request sequence=%d id=%d owner=%d", s.remote, request.Sequence, entity.id, entity.ownerID)
+ 		return entity.description, nil
+ 	}
+-	if err := s.conn.WriteFrame(sceneObjectObjectProperty(playerObjectID, playerOwnerID, 0x19E, entity.id, entity.ownerID)); err != nil {
++	if err := s.conn.WriteFrame(sceneObjectObjectProperty(playerObjectID, playerOwnerID, uint32(propLastObject), entity.id, entity.ownerID)); err != nil {
+ 		return "", fmt.Errorf("set player LastObject=%d-%d: %w", entity.id, entity.ownerID, err)
+ 	}
+ 	s.selectedObject = entity.id
+@@ -459,7 +479,7 @@
+ 	if err != nil {
+ 		return err
+ 	}
+-	frame, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 100}, []serverViewProperty{viewString(101, shopID), viewInt(102, 10), viewInt(103, shopType), viewInt(104, pageCount)})
++	frame, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 100}, latestClientShopViewProperties(shopID, shopType, pageCount))
+ 	if err != nil {
+ 		return fmt.Errorf("encode shop view %q: %w", shopID, err)
+ 	}
+@@ -467,22 +487,17 @@
+ 		return fmt.Errorf("create shop view %q: %w", shopID, err)
+ 	}
+ 	for _, item := range items {
+-		switch item.capitalType {
++		switch item.priceMode {
+ 		case 0, 1, 2:
+ 		default:
+ 			continue
+ 		}
+-		objectIndex := item.page*10 + item.position
+-		properties := []serverViewProperty{viewString(181, item.configID), viewString(7, item.configID), viewInt(106, item.amount), viewInt(107, 0), viewInt(108, 0), viewInt(109, 0), viewInt(110, 99)}
+-		switch item.capitalType {
+-		case 0:
+-			properties[2] = viewInt(107, item.price)
+-		case 1:
+-			properties[3] = viewInt(108, item.price)
+-		case 2:
+-			properties[4] = viewInt(109, item.price)
++		objectIndex, ok := currentShopViewObjectIndex(item)
++		if !ok {
++			return fmt.Errorf("shop %q item %q has invalid current-client page=%d position=%d", shopID, item.configID, item.page, item.position)
+ 		}
+-		itemFrame, encodeErr := serverViewAdd(61, uint16(objectIndex-9), properties)
++		properties := latestClientShopItemProperties(item)
++		itemFrame, encodeErr := serverViewAdd(61, objectIndex, properties)
+ 		if encodeErr != nil {
+ 			return fmt.Errorf("encode shop %q item %q: %w", shopID, item.configID, encodeErr)
+ 		}
+--- a/cmd/protocol-probe/scene_transition.go
++++ b/cmd/protocol-probe/scene_transition.go
+@@ -111,12 +111,17 @@
+ 	if err := r.world.begin(destination.location.Scene.Config, destination.location.Scene.Resource); err != nil {
+ 		return fmt.Errorf("begin replacement scene: %w", err)
+ 	}
+-	time.Sleep(750 * time.Millisecond)
++	time.Sleep(2750 * time.Millisecond) // latest-client REENTRY-EXIT-DRAIN A/B discriminator
+ 	if err := sendEntryScene(r.conn, destination.location.Scene, r.activeRole.Name); err != nil {
+ 		return fmt.Errorf("write EntryScene: %w", err)
+ 	}
+-	if err := sendPlayerAddObject(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {
+-		return fmt.Errorf("write player re-entry archive: %w", err)
++	// 2026-09-14 LIVE reached OnEntryScene create new after the 2750ms drain but
++	// never reached flow player data ready. Reuse the same already-recovered
++	// player spawn sequence that succeeds on initial entry: AddObject, Snapshot608,
++	// Appearance, then Location/Vitals. This is an A/B discriminator, not a claim
++	// that any one of those post-AddObject frames is independently proven causal.
++	if err := sendPlayerSpawn(r.conn, r.player, destination.location.Position, resolveRoleVisual(r.activeRole.Appearance.Values)); err != nil {
++		return fmt.Errorf("write full player re-entry spawn: %w", err)
+ 	}
+ 	clear(r.activeNPCs)
+ 	if _, _, err := synchronizeNPCViewport(r.world, catalog, r.activeNPCs, destination.location.Position, r.radius); err != nil {
+--- a/cmd/protocol-probe/shop_catalog.go
++++ b/cmd/protocol-probe/shop_catalog.go
+@@ -12,12 +12,13 @@
+ var defaultShopINIPath = filepath.Join(defaultModernShareRoot, "trade", "shop.ini")
+ 
+ type shopCatalogItem struct {
+-	configID    string
+-	amount      int32
+-	capitalType int32
+-	price       int32
+-	page        int32
+-	position    int32
++	configID     string
++	amount       int32
++	priceMode    int32
++	exchangeData int32
++	price        int32
++	page         int32
++	position     int32
+ }
+ 
+ func loadShopCatalogSection(path, shopID string) ([]shopCatalogItem, int32, int32, error) {
+@@ -29,7 +30,8 @@
+ 	wantedHeader := "[" + shopID + "]"
+ 	inSection := false
+ 	shopType := int32(0)
+-	maxPage := int32(1)
++	pageCount := int32(0)
++	maxPageKey := int32(-1)
+ 	items := make([]shopCatalogItem, 0, 10)
+ 	scanner := bufio.NewScanner(file)
+ 	lineNumber := 0
+@@ -63,9 +65,23 @@
+ 			shopType = int32(parsed)
+ 			continue
+ 		}
+-		if _, parseErr := strconv.ParseInt(key, 10, 32); parseErr != nil {
++		if key == "PageInfo" {
++			count := int32(0)
++			for _, pageName := range strings.Split(value, ",") {
++				if strings.TrimSpace(pageName) != "" {
++					count++
++				}
++			}
++			if count > 0 {
++				pageCount = count
++			}
++			continue
++		}
++		parsedPage, parseErr := strconv.ParseInt(key, 10, 32)
++		if parseErr != nil {
+ 			continue
+ 		}
++		page := int32(parsedPage)
+ 		parts := strings.Split(value, ",")
+ 		if len(parts) < 7 {
+ 			return nil, 0, 0, fmt.Errorf("shop %s line %d: expected at least 7 item columns, got %d", shopID, lineNumber, len(parts))
+@@ -81,7 +97,7 @@
+ 		if parseErr != nil {
+ 			return nil, 0, 0, parseErr
+ 		}
+-		capitalType, parseErr := parseColumn(2, "capital type")
++		priceMode, parseErr := parseColumn(2, "price mode")
+ 		if parseErr != nil {
+ 			return nil, 0, 0, parseErr
+ 		}
+@@ -89,20 +105,23 @@
+ 		if parseErr != nil {
+ 			return nil, 0, 0, parseErr
+ 		}
+-		page, parseErr := parseColumn(5, "page")
+-		if parseErr != nil {
+-			return nil, 0, 0, parseErr
+-		}
+ 		position, parseErr := parseColumn(6, "position")
+ 		if parseErr != nil {
+ 			return nil, 0, 0, parseErr
+ 		}
+-		if page < 1 || position < 0 {
++		exchangeData := int32(0)
++		if len(parts) > 7 && strings.TrimSpace(parts[7]) != "" {
++			exchangeData, parseErr = parseColumn(7, "exchange data")
++			if parseErr != nil {
++				return nil, 0, 0, parseErr
++			}
++		}
++		if page < 0 || position < 0 {
+ 			return nil, 0, 0, fmt.Errorf("shop %s line %d: invalid page=%d position=%d", shopID, lineNumber, page, position)
+ 		}
+-		items = append(items, shopCatalogItem{configID: strings.TrimSpace(parts[0]), amount: amount, capitalType: capitalType, price: price, page: page, position: position})
+-		if page > maxPage {
+-			maxPage = page
++		items = append(items, shopCatalogItem{configID: strings.TrimSpace(parts[0]), amount: amount, priceMode: priceMode, price: price, page: page, position: position, exchangeData: exchangeData})
++		if page > maxPageKey {
++			maxPageKey = page
+ 		}
+ 	}
+ 	if err := scanner.Err(); err != nil {
+@@ -114,5 +133,8 @@
+ 	if len(items) == 0 {
+ 		return nil, 0, 0, fmt.Errorf("shop catalog %s section %q has no items", path, shopID)
+ 	}
+-	return items, shopType, maxPage, nil
++	if pageCount == 0 {
++		pageCount = maxPageKey + 1
++	}
++	return items, shopType, pageCount, nil
+ }
+--- a/cmd/protocol-probe/skill_view_test.go
++++ b/cmd/protocol-probe/skill_view_test.go
+@@ -30,14 +30,14 @@
+ 		}
+ 		for _, expected := range [][]byte{
+ 			[]byte(skill.configID + "\x00"),
+-			binary.LittleEndian.AppendUint16(nil, propStaticData),
+-			binary.LittleEndian.AppendUint16(nil, propItemType),
+-			{6, 0},
+-			binary.LittleEndian.AppendUint16(nil, propMaxLevel),
+-			binary.LittleEndian.AppendUint16(nil, propCurFillValue),
+-			binary.LittleEndian.AppendUint16(nil, propTotalFillValue),
+-			binary.LittleEndian.AppendUint16(nil, propPauseTime),
+-			append(binary.LittleEndian.AppendUint16(nil, propSkillCanUse), 1),
++			binary.LittleEndian.AppendUint16(nil, 204), // StaticData
++			binary.LittleEndian.AppendUint16(nil, 205), // ItemType
++			{6, 0}, // Level
++			binary.LittleEndian.AppendUint16(nil, 203),            // MaxLevel
++			binary.LittleEndian.AppendUint16(nil, 176),            // CurFillValue
++			binary.LittleEndian.AppendUint16(nil, 177),            // TotalFillValue
++			binary.LittleEndian.AppendUint16(nil, 212),            // PauseTime
++			append(binary.LittleEndian.AppendUint16(nil, 225), 1), // CanUse
+ 		} {
+ 			if !bytes.Contains(frame, expected) {
+ 				t.Fatalf("%s ViewAdd lacks %x: %x", skill.configID, expected, frame)
+--- a/cmd/protocol-probe/zz_recovered_overlay.go
++++ b/cmd/protocol-probe/zz_recovered_overlay.go
+@@ -186,14 +186,19 @@
+ 	for _, item := range items {
+ 		item = enrichBagItem(item, itemCatalog, equipCatalog)
+ 		view, slot := assignSlot(item)
++		if view == 0 {
++			return fmt.Errorf("latest-client bag item %s has unsupported ViewID category %d", item.ConfigID, item.ViewID)
++		}
+ 		views[view] = struct{}{}
+-		frame, err := serverViewAdd(view, uint16(slot), bagItemProps(view, item))
++		frames, err := latestClientCurrentBagFrames(view, uint16(slot), item.ViewID, bagItemProps(view, item))
+ 		if err != nil {
+-			return err
++			return fmt.Errorf("latest-client bag item %s view=%d slot=%d: %w", item.ConfigID, view, slot, err)
+ 		}
+-		log.Printf("%s: grant bag item=%s view=%d slot=%d frame=%x", remote, item.ConfigID, view, uint16(slot), frame)
+-		if err := link.WriteFrame(frame); err != nil {
+-			return err
++		log.Printf("%s: latest-client CURRENT-BAG-FULL item=%s category=%d container=%d slot=%d table=%d frame=%x", remote, item.ConfigID, item.ViewID, view, uint16(slot), latestClientPlayerWirePropertyTableCount, frames[0])
++		for _, frame := range frames {
++			if err := link.WriteFrame(frame); err != nil {
++				return err
++			}
+ 		}
+ 	}
+ 	if len(items) != 0 {
+@@ -222,16 +227,11 @@
+ }
+ 
+ func bagViewForViewID(viewID int32) uint16 {
+-	switch viewID {
+-	case 2:
+-		return 121
+-	case 3:
+-		return 123
+-	case 4:
+-		return 125
+-	default:
+-		return 2
++	view, ok := latestClientCurrentBagContainer(viewID)
++	if !ok {
++		return 0
+ 	}
++	return view
+ }
+ func openBagStore() (*bagStore, error) {
+ 	return openBagStoreAt(filepath.Join(runtimeProjectRoot, "data", "bag_items.json"))
+@@ -1012,7 +1012,7 @@
+ 		if correct := equipBodySlot(item.EquipType); correct > 0 {
+ 			slot = correct
+ 		}
+-		bag := bagItem{ConfigID: item.ConfigID, ItemType: item.ItemType, Hardiness: item.Hardiness, MaxHardiness: item.MaxHardiness, EquipType: item.EquipType, ArtPack: item.ArtPack}
++		bag := bagItem{ConfigID: item.ConfigID, ItemType: item.ItemType, BindStatus: item.BindStatus, Hardiness: item.Hardiness, MaxHardiness: item.MaxHardiness, EquipType: item.EquipType, ArtPack: item.ArtPack}
+ 		if equipCatalog != nil {
+ 			if cat, ok := equipCatalog.Lookup(item.ConfigID); ok {
+ 				if bag.ColorLevel == 0 {
+@@ -1180,20 +1180,20 @@
+ 		if isWeaponEquip(item.EquipType) {
+ 			return weaponRowProps(item)
+ 		}
+-		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, 0), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0786, 1), viewInt(0x0787, 1), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewInt(0x01FD, 0), viewInt(0x01FE, 0), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A0, 0), viewInt(0x07A1, 0), viewInt(0x07A3, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0))
++		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0786, 1), viewInt(0x0787, 1), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewInt(0x01FD, 0), viewInt(0x01FE, 0), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A0, 0), viewInt(0x07A1, 0), viewInt(0x07A3, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0))
+ 	case 123:
+-		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack))
++		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack))
+ 	case 125:
+-		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x0768, 1), viewInt(0x076A, 0), viewInt(0x0779, item.LogicPack), viewInt(0x07DA, item.FuncPack))
++		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x0768, 1), viewInt(0x076A, item.BindStatus), viewInt(0x0779, item.LogicPack), viewInt(0x07DA, item.FuncPack))
+ 	default:
+-		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, 0), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack), viewInt(0x07E7, item.PropModifyPack), viewInt(0x07EE, 1))
++		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack), viewInt(0x07E7, item.PropModifyPack), viewInt(0x07EE, 1))
+ 	}
+ }
+ func equipItemProps(item bagItem) []serverViewProperty {
+-	return []serverViewProperty{viewString(0x0007, item.ConfigID), viewInt(0x0761, item.ItemType), viewInt(0x0763, 2), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, 1), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, 0), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewString(0x0793, ""), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A7, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0), viewString(0x07C0, "")}
++	return []serverViewProperty{viewString(0x0007, item.ConfigID), viewInt(0x0761, item.ItemType), viewInt(0x0763, 2), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, 1), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewString(0x0793, ""), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A7, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0), viewString(0x07C0, "")}
+ }
+ func weaponRowProps(item bagItem) []serverViewProperty {

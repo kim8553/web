@@ -7,6 +7,7 @@ on:
       - '.github/workflows/jiuyin-stage37-real-build.yml'
       - 'tools/stage37_current_recovery_build.sh'
       - 'tools/stage37_current_recovery_stage2.sh'
+      - 'tools/stage37_current_recovery_stage3.sh'
   workflow_dispatch:
 
 permissions:
@@ -25,7 +26,7 @@ jobs:
 
       - name: Reconstruct, verify, stage, test and build current source
         shell: bash
-        run: bash tools/stage37_current_recovery_stage2.sh
+        run: bash tools/stage37_current_recovery_stage3.sh
 
       - name: Upload verification evidence
         if: always()

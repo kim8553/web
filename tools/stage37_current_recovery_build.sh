@@ -7,6 +7,8 @@ HANDOFF_ZIP="$ROOT/JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip"
 QUICKLZ='github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0'
 PATCH_SHA='50c20c9abaa91fb42cc885b3a8e81a5c8acee2a5bb09d80f53a1420772989c25'
 MANIFEST_SHA='43522bed8e5ff9cd1712bab8ed85d03f9ee483ace199b0c458c439234c70ec31'
+POST_PATCH_SHA='fc1d63f3b56a742638b5a7271a918ba1e0ab47c7adc67055ac46f9737d36faa6'
+POST_MANIFEST_SHA='7632477cdc006efe7c95bbbdee58fd7ec8d79d9df26bdbf594b0a2e32f88c749'
 
 cat JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part00 JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip.part01 > "$HANDOFF_ZIP"
 echo '56a49fa0abb9b4aa6192a9e2d93f7e780c29e585cf11ccb3ff0cf9f398955fdb  JIUYIN_STAGE37_BUILDPROBE_HANDOFF_20260913.zip' | sha256sum -c -
@@ -42,6 +44,15 @@ test -f "$BUILD/migrations/0012_persist_runtime_bind_status.sql"
 test -f "$BUILD/internal/exchangeplan/plan.go"
 test -f "$BUILD/cmd/protocol-probe/latest_client_shop_exchange_preflight.go"
 test -f "$BUILD/cmd/protocol-probe/latest_client_equip_view_ordinal_compat_test.go"
+
+test "$(sha256sum recovery/current_postbuild_delta_20260916.patch | awk '{print $1}')" = "$POST_PATCH_SHA"
+(cd "$BUILD" && patch --batch --forward -p1 < "$ROOT/recovery/current_postbuild_delta_20260916.patch")
+test "$(find "$BUILD" -type f | wc -l | tr -d ' ')" = '195'
+(cd "$BUILD" && find . -type f -printf '%P\0' | sort -z | xargs -0 sha256sum > "$ROOT/generated-manifest.txt")
+test "$(sha256sum generated-manifest.txt | awk '{print $1}')" = "$POST_MANIFEST_SHA"
+test -f "$BUILD/internal/exchangeplan/capacity.go"
+test -f "$BUILD/internal/exchangeplan/capacity_test.go"
+test -f "$BUILD/cmd/protocol-probe/latest_client_bag_bind_arrange_test.go"
 
 cd "$BUILD"
 cp go.mod ci.real.mod

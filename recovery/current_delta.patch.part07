@@ -324,6 +324,7 @@
 +		level, learned := e.player.learnedSkills[definition.Para[0]]
 +		e.player.mu.Unlock()
 +		if !learned || level <= 0 {
++			// Native container lookup failed: exact result is unsatisfied, not unsupported.
 +			return false, true
 +		}
 +		var propertyValue int64
@@ -331,12 +332,17 @@
 +		case "Level":
 +			propertyValue = int64(level)
 +		case "MaxLevel":
++			// The authority gate hashes and parses the exact-current
++			// skill_maxlevel.ini.  Evaluation must use that exact parsed table,
++			// not a second global file lookup that could drift after validation.
 +			table := e.skillMaxTable
 +			if table == nil {
 +				return false, false
 +			}
 +			fields := table["book_"+definition.Para[0]]
 +			if len(fields) == 0 {
++				// Some skills use numbered/suffix rows; require a >1 recovered
++				// value to avoid treating the generic helper fallback=1 as authored.
 +				maxLevel := skillMaxLevelFromTable(table, definition.Para[0])
 +				if maxLevel <= 1 {
 +					return false, false
@@ -349,6 +355,7 @@
 +			return false, false
 +		}
 +		return conditionNumericRange(propertyValue, definition)
++
 +	case "NeiGongContainer":
 +		if definition.Para[1] != "Level" {
 +			return false, false
@@ -368,6 +375,7 @@
 +			return false, true
 +		}
 +		return conditionNumericRange(int64(level), definition)
++
 +	default:
 +		return false, false
 +	}
@@ -379,6 +387,8 @@
 +	}
 +	definition, ok := catalog.Definitions[conditionID]
 +	if !ok {
++		// Includes current dangling id 26526 and id 0 sentinel until exact native
++		// semantics for those ids are proven.
 +		return conditionCapabilitySemanticsUnresolved
 +	}
 +	switch definition.Type {
@@ -411,8 +421,12 @@
 +			return conditionCapabilitySemanticsUnresolved
 +		}
 +	case 4:
++		// NewRideRec semantics are exact for current mode3, but Stage37 has no
++		// authoritative NewRideRec state.
 +		return conditionCapabilityAuthoritativeStateMissing
 +	case 5, 8, 10:
++		// Native semantics are recovered; the required complete record/bitset
++		// state for current mode3 rows is not authoritative in Stage37.
 +		return conditionCapabilityAuthoritativeStateMissing
 +	case 16, 19, 21:
 +		return conditionCapabilitySemanticsUnresolved

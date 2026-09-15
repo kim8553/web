@@ -1,0 +1,160 @@
++	if err := requireFileSHA256(formulaPath, exactCurrentFormulaSHA256A, exactCurrentFormulaSHA256B); err != nil {
++		return nil, err
++	}
++	if err := requireFileSHA256(skillMaxLevelPath, exactCurrentSkillMaxLevelSHA256); err != nil {
++		return nil, err
++	}
++	skillMaxTable, err := loadINISections(skillMaxLevelPath)
++	if err != nil {
++		return nil, fmt.Errorf("load exact current skill max-level table: %w", err)
++	}
++
++	used, mode3Rows, nonzeroRows, err := loadCurrentMode3ExchangeDataSet(shopPath)
++	if err != nil {
++		return nil, fmt.Errorf("load exact current shop mode3 set: %w", err)
++	}
++	if mode3Rows != 42985 || nonzeroRows != 42936 || len(used) != exactCurrentMode3ExchangeDataCount {
++		return nil, fmt.Errorf("current mode3 invariant mismatch rows=%d nonzero=%d unique=%d", mode3Rows, nonzeroRows, len(used))
++	}
++	definitions, err := loadExchangeConditionSpecs(exchangePath, used)
++	if err != nil {
++		return nil, err
++	}
++	catalog, err := loadShopConditionCatalog(conditionPath, formulaPath)
++	if err != nil {
++		return nil, err
++	}
++	audit, err := auditShopExchangeConditionCapabilities(definitions, catalog.resolve, func(id int32) conditionCapabilityClass {
++		return exactCurrentConditionCapability(catalog, id)
++	})
++	if err != nil {
++		return nil, err
++	}
++	if len(audit.UniqueLeaves) != exactCurrentMode3LeafCount {
++		return nil, fmt.Errorf("current mode3 leaf invariant mismatch=%d want=%d", len(audit.UniqueLeaves), exactCurrentMode3LeafCount)
++	}
++	if audit.ClassCounts[conditionCapabilityExactEvaluator] != exactCurrentExactLeafCount {
++		return nil, fmt.Errorf("current exact leaf invariant mismatch=%d want=%d", audit.ClassCounts[conditionCapabilityExactEvaluator], exactCurrentExactLeafCount)
++	}
++	if audit.SafeExchangeData != exactCurrentSafeExchangeDataCount {
++		return nil, fmt.Errorf("current SAFE ExchangeData invariant mismatch=%d want=%d", audit.SafeExchangeData, exactCurrentSafeExchangeDataCount)
++	}
++	return &currentShopConditionAuthority{catalog: catalog, definitions: definitions, skillMaxTable: skillMaxTable, audit: audit}, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_authority_integration_test.go
+@@ -0,0 +1,141 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"sort"
++	"strings"
++	"testing"
++)
++
++type exactCurrentConditionResourcePaths struct { shop, exchange, condition, formula, skillMaxLevel string }
++
++func exactCurrentConditionTestResourcePaths(t *testing.T) exactCurrentConditionResourcePaths {
++	t.Helper()
++	paths := exactCurrentConditionResourcePaths{shop: strings.TrimSpace(os.Getenv("JIUYIN_EXACT_CURRENT_SHOP_INI")), exchange: strings.TrimSpace(os.Getenv("JIUYIN_EXACT_CURRENT_EXCHANGEITEM_INI")), condition: strings.TrimSpace(os.Getenv("JIUYIN_EXACT_CURRENT_CONDITION_INI")), formula: strings.TrimSpace(os.Getenv("JIUYIN_EXACT_CURRENT_CONDITION_FORMULA_INI")), skillMaxLevel: strings.TrimSpace(os.Getenv("JIUYIN_EXACT_CURRENT_SKILL_MAXLEVEL_INI"))}
++	if paths.shop == "" || paths.exchange == "" || paths.condition == "" || paths.formula == "" || paths.skillMaxLevel == "" { t.Skip("exact-current resource paths are not configured") }
++	return paths
++}
++
++func buildExactCurrentConditionTestAuthority(t *testing.T, paths exactCurrentConditionResourcePaths) *currentShopConditionAuthority {
++	t.Helper(); authority, err := buildCurrentShopConditionAuthority(paths.shop, paths.exchange, paths.condition, paths.formula, paths.skillMaxLevel); if err != nil { t.Fatalf("build exact-current shop condition authority: %v", err) }; return authority
++}
++
++func TestExactCurrentShopConditionExhaustiveS2C508Generation(t *testing.T) {
++	paths := exactCurrentConditionTestResourcePaths(t); authority := buildExactCurrentConditionTestAuthority(t, paths)
++	player := &playerActor{learnedSkills: make(map[string]int32)}
++	for _, leaf := range authority.audit.UniqueLeaves { definition, ok := authority.catalog.Definitions[leaf]; if !ok || definition.Type != 3 { continue }; switch definition.Name { case "SkillContainer": if definition.Para[0] != "" { player.learnedSkills[definition.Para[0]] = 1 }; case "NeiGongContainer": if definition.Para[0] != "" { player.progress.books = append(player.progress.books, learnedNeiGong{configID: definition.Para[0], level: 1}) } } }
++	evaluator := exactCurrentConditionEvaluator{catalog: authority.catalog, player: player, skillMaxTable: authority.skillMaxTable}
++	ids := make([]int32, 0, len(authority.definitions)); for id := range authority.definitions { ids = append(ids, id) }; sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
++	safe, failClosed := 0, 0
++	for _, exchangeData := range ids { definition := authority.definitions[exchangeData]; details, allSupported, err := evaluateExchangeConditionDetails(definition.Condition, definition.Condition2, definition.Filters, authority.catalog.resolve, evaluator.evaluate); if err != nil { t.Fatalf("ExchangeData %d condition evaluation: %v", exchangeData, err) }; capability, ok := authority.audit.ByExchangeData[exchangeData]; if !ok { t.Fatalf("ExchangeData %d missing capability audit row", exchangeData) }; if allSupported != capability.Safe { t.Fatalf("ExchangeData %d support mismatch all_supported=%t audit_safe=%t leaves=%v classes=%v", exchangeData, allSupported, capability.Safe, capability.Leaves, capability.Classes) }; frame, err := serverShopConditionDetailsMessage(details); if err != nil { t.Fatalf("ExchangeData %d S2C508 encode: %v", exchangeData, err) }; if len(frame) == 0 { t.Fatalf("ExchangeData %d S2C508 encoded empty frame", exchangeData) }; if capability.Safe { safe++ } else { failClosed++ } }
++	if safe != exactCurrentSafeExchangeDataCount { t.Fatalf("SAFE ExchangeData=%d want=%d", safe, exactCurrentSafeExchangeDataCount) }
++	if failClosed != exactCurrentMode3ExchangeDataCount-exactCurrentSafeExchangeDataCount { t.Fatalf("FAIL_CLOSED ExchangeData=%d want=%d", failClosed, exactCurrentMode3ExchangeDataCount-exactCurrentSafeExchangeDataCount) }
++}
++
++func TestExactCurrentShopConditionAuthorityRejectsSkillMaxLevelDrift(t *testing.T) {
++	paths := exactCurrentConditionTestResourcePaths(t); original, err := os.ReadFile(paths.skillMaxLevel); if err != nil { t.Fatal(err) }; if len(original) == 0 { t.Fatal("exact-current skill_maxlevel.ini is empty") }; mutated := append([]byte(nil), original...); mutated[len(mutated)-1] ^= 0x01; badPath := filepath.Join(t.TempDir(), "skill_maxlevel.ini"); if err := os.WriteFile(badPath, mutated, 0o600); err != nil { t.Fatal(err) }; _, err = buildCurrentShopConditionAuthority(paths.shop, paths.exchange, paths.condition, paths.formula, badPath); if err == nil || !strings.Contains(err.Error(), "resource authority mismatch") { t.Fatalf("skill_maxlevel drift error=%v, want authority mismatch", err) }
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_capability.go
+@@ -0,0 +1,126 @@
++package main
++
++import (
++	"fmt"
++	"sort"
++)
++
++type conditionCapabilityClass uint8
++const (
++	conditionCapabilityExactEvaluator conditionCapabilityClass = iota + 1
++	conditionCapabilityStateMapperMissing
++	conditionCapabilityAuthoritativeStateMissing
++	conditionCapabilitySemanticsUnresolved
++)
++type conditionCapabilityClassifier func(conditionID int32) conditionCapabilityClass
++type exchangeConditionSpec struct { Condition, Condition2, Filters string }
++type exchangeConditionCapability struct { ExchangeData int32; Safe bool; Leaves []int32; Classes map[int32]conditionCapabilityClass }
++type shopExchangeConditionCapabilityAudit struct { ExchangeDataTotal, SafeExchangeData, FailClosed int; UniqueLeaves []int32; ClassCounts map[conditionCapabilityClass]int; ByExchangeData map[int32]exchangeConditionCapability }
++
++func auditShopExchangeConditionCapabilities(definitions map[int32]exchangeConditionSpec, resolve conditionFormulaResolver, classify conditionCapabilityClassifier) (shopExchangeConditionCapabilityAudit, error) {
++	if resolve == nil { return shopExchangeConditionCapabilityAudit{}, fmt.Errorf("nil condition formula resolver") }; if classify == nil { return shopExchangeConditionCapabilityAudit{}, fmt.Errorf("nil condition capability classifier") }
++	audit := shopExchangeConditionCapabilityAudit{ExchangeDataTotal: len(definitions), ClassCounts: make(map[conditionCapabilityClass]int), ByExchangeData: make(map[int32]exchangeConditionCapability, len(definitions))}; globalLeaves := make(map[int32]conditionCapabilityClass); ids := make([]int32, 0, len(definitions)); for id := range definitions { ids = append(ids, id) }; sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
++	for _, exchangeData := range ids { definition := definitions[exchangeData]; references, err := exchangeConditionReferences(definition.Condition, definition.Condition2, definition.Filters); if err != nil { return shopExchangeConditionCapabilityAudit{}, fmt.Errorf("ExchangeData %d: %w", exchangeData, err) }; entry := exchangeConditionCapability{ExchangeData: exchangeData, Safe: true, Classes: make(map[int32]conditionCapabilityClass)}; seen := make(map[int32]struct{}); for _, reference := range references { leaves, err := terminalConditionLeaves(reference.ConditionID, resolve); if err != nil { return shopExchangeConditionCapabilityAudit{}, fmt.Errorf("ExchangeData %d condition %d: %w", exchangeData, reference.ConditionID, err) }; for _, leaf := range leaves { if _, ok := seen[leaf]; ok { continue }; seen[leaf] = struct{}{}; class := classify(leaf); if class < conditionCapabilityExactEvaluator || class > conditionCapabilitySemanticsUnresolved { return shopExchangeConditionCapabilityAudit{}, fmt.Errorf("condition %d has invalid capability class %d", leaf, class) }; entry.Leaves = append(entry.Leaves, leaf); entry.Classes[leaf] = class; if class != conditionCapabilityExactEvaluator { entry.Safe = false }; if prior, ok := globalLeaves[leaf]; ok && prior != class { return shopExchangeConditionCapabilityAudit{}, fmt.Errorf("condition %d classified inconsistently: %d then %d", leaf, prior, class) }; globalLeaves[leaf] = class } }; if entry.Safe { audit.SafeExchangeData++ } else { audit.FailClosed++ }; audit.ByExchangeData[exchangeData] = entry }
++	audit.UniqueLeaves = make([]int32, 0, len(globalLeaves)); for leaf, class := range globalLeaves { audit.UniqueLeaves = append(audit.UniqueLeaves, leaf); audit.ClassCounts[class]++ }; sort.Slice(audit.UniqueLeaves, func(i, j int) bool { return audit.UniqueLeaves[i] < audit.UniqueLeaves[j] }); return audit, nil
++}
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_catalog.go
+@@ -0,0 +1,101 @@
++package main
++
++import (
++	"fmt"
++	"path/filepath"
++	"strconv"
++	"strings"
++)
++
++var ( defaultConditionINIPath = filepath.Join(defaultModernShareRoot, "rule", "condition.ini"); defaultConditionFormulaINIPath = filepath.Join(defaultModernShareRoot, "rule", "condition_formula.ini") )
++type shopConditionDefinition struct { ID, Type int32; Name string; TargetType, Not int32; Para [6]string; Min, Max string; HasMin, HasMax bool }
++type shopConditionCatalog struct { Definitions map[int32]shopConditionDefinition; Formulas map[int32]string }
++
++func iniValuePresent(fields []iniField, key string) (string, bool) { for i := len(fields)-1; i >= 0; i-- { if strings.EqualFold(fields[i].key,key) { return fields[i].value,true } }; return "",false }
++func loadShopConditionCatalog(conditionPath, formulaPath string) (*shopConditionCatalog,error) {
++	conditionTable,err:=loadINISections(conditionPath); if err!=nil{return nil,fmt.Errorf("load current condition table %s: %w",conditionPath,err)}; formulaTable,err:=loadINISections(formulaPath); if err!=nil{return nil,fmt.Errorf("load current condition formula table %s: %w",formulaPath,err)}; catalog:=&shopConditionCatalog{Definitions:make(map[int32]shopConditionDefinition,len(conditionTable)),Formulas:make(map[int32]string,len(formulaTable))}
++	for section,fields:=range conditionTable { rawID:=strings.TrimSpace(section); id64,parseErr:=strconv.ParseInt(rawID,10,32); if parseErr!=nil{continue}; id:=int32(id64); minValue,hasMin:=iniValuePresent(fields,"Min"); maxValue,hasMax:=iniValuePresent(fields,"Max"); definition:=shopConditionDefinition{ID:id,Type:iniInt(fields,"Type"),Name:strings.TrimSpace(iniValue(fields,"Name")),TargetType:iniInt(fields,"TargetType"),Not:iniInt(fields,"Not"),Min:strings.TrimSpace(minValue),Max:strings.TrimSpace(maxValue),HasMin:hasMin,HasMax:hasMax}; for i:=range definition.Para { definition.Para[i]=strings.TrimSpace(iniValue(fields,fmt.Sprintf("Para%d",i+1))) }; catalog.Definitions[id]=definition }
++	for section,fields:=range formulaTable { rawID:=strings.TrimSpace(section); id64,parseErr:=strconv.ParseInt(rawID,10,32); if parseErr!=nil{continue}; formula,ok:=iniValuePresent(fields,"Formula"); if !ok||strings.TrimSpace(formula)==""{continue}; catalog.Formulas[int32(id64)]=strings.TrimSpace(formula) }; return catalog,nil
++}
++func (catalog *shopConditionCatalog) resolve(conditionID int32)(string,bool){ if catalog==nil{return "",false}; formula,ok:=catalog.Formulas[conditionID]; return formula,ok }
+--- /dev/null
++++ b/cmd/protocol-probe/latest_client_shop_condition_detail.go
+@@ -0,0 +1,115 @@
++package main
++
++import (
++	"fmt"
++	"strconv"
++	"strings"
++)
++
++type exchangeConditionSource uint8
++const ( exchangeConditionPrimary exchangeConditionSource = iota + 1; exchangeConditionSecondary )
++type exchangeConditionReference struct { ConditionID int32; IsNeedShow bool; Source exchangeConditionSource }
++type shopConditionDetail struct { ConditionID int32; IsNeedShow bool; Satisfied bool }
++
++func parseExchangeConditionIDs(raw string)([]int32,error){ raw=strings.TrimSpace(raw); if raw==""{return nil,nil}; parts:=strings.Split(raw,","); result:=make([]int32,0,len(parts)); for _,part:=range parts{ token:=strings.TrimSpace(part); if token==""{return nil,fmt.Errorf("empty condition id in %q",raw)}; value,err:=strconv.ParseInt(token,10,32); if err!=nil{return nil,fmt.Errorf("condition id %q is not int32: %w",token,err)}; result=append(result,int32(value)) }; return result,nil }
++
++// exchangeConditionReferences reproduces the exact-current ExchangeItem
++// isNeedShow rule recovered from native/Lua behavior:
++// Condition -> show when the id is NOT in Filters
++// Condition2 -> show when the id IS in Filters
++// Authored order is preserved and entries are not deduplicated.
++func exchangeConditionReferences(condition, condition2, filters string) ([]exchangeConditionReference,error) {
++	primary,err:=parseExchangeConditionIDs(condition); if err!=nil{return nil,fmt.Errorf("Condition: %w",err)}; secondary,err:=parseExchangeConditionIDs(condition2)

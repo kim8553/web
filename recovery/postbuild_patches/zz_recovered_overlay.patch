@@ -1,0 +1,15 @@
+--- a/cmd/protocol-probe/zz_recovered_overlay.go
++++ b/cmd/protocol-probe/zz_recovered_overlay.go
+@@ -4704,7 +4704,11 @@
+ 			if rest <= 0 {
+ 				break
+ 			}
+-			if merged[i].ConfigID != item.ConfigID || merged[i].Amount >= cap {
++			// Runtime BindStatus is item-instance state and must survive any
++			// container merge. Bound and unbound instances of the same ConfigID
++			// are distinct stacks; merging them would silently discard binding
++			// semantics and contradict bind-status-aware material consumption.
++			if merged[i].ConfigID != item.ConfigID || merged[i].BindStatus != item.BindStatus || merged[i].Amount >= cap {
+ 				continue
+ 			}
+ 			room := cap - merged[i].Amount

@@ -4,8 +4,7 @@ on:
   push:
     branches: [stage37-current-recovery-20260916]
     paths:
-      - 'recovery/STAGE37_CURRENT_SOURCE_20260916_R2.tar.gz.b64.part*'
-      - '.github/workflows/jiuyin-stage37-real-build.yml'
+      - 'recovery/STAGE37_CURRENT_SOURCE_20260916_R2.READY'
   workflow_dispatch:
 
 permissions:

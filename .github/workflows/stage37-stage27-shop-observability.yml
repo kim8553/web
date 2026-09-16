@@ -1,0 +1,48 @@
+name: Stage37 NPC Shop Display Diagnostics
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - '.github/workflows/stage37-stage27-shop-observability.yml'
+      - 'tools/stage37_current_recovery_stage27.sh'
+      - 'recovery/stage27_shop_display_diagnostics.patch'
+      - 'recovery/postbuild_files/cmd__protocol-probe__stage27_shop_observability_test.go'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shop-display-diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact triggering commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up repository-declared Go version
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - name: Reconstruct and verify read-only NPC shop display diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bash tools/stage37_current_recovery_stage27.sh
+      - name: Upload verification evidence (not a full server release)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage27-shop-observability-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            stage27_*.log
+            stage27-current-windows-amd64.exe
+            stage27-current-windows-amd64.sha256
+            stage27-current-windows-amd64.file.txt
+            generated-manifest.sha256

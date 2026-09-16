@@ -1,0 +1,71 @@
+name: Stage37 Direct Editable Source Verification
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'server/**'
+      - '.github/workflows/stage37-direct-source-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-direct-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Verify isolated published Go source and prepare real dependencies
+        shell: bash
+        run: |
+          test -f server/go.mod
+          test -f server/cmd/protocol-probe/shop_catalog.go
+          test -f server/migrations/0012_persist_runtime_bind_status.sql
+          grep -F 'ordinary shop candidate selector=0x46 blocked' server/cmd/protocol-probe/zz_recovered_overlay.go
+          cd server
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/go-sql-driver/mysql
+          go mod edit -modfile=ci.real.mod -dropreplace=golang.org/x/text
+          go mod edit -modfile=ci.real.mod -dropreplace=filippo.io/edwards25519
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/DATA-DOG/go-sqlmock
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/Hiroko103/go-quicklz
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download -modfile=ci.real.mod
+          test -z "$(gofmt -l cmd internal migrations)"
+      - name: Exact offline regressions on direct source
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -modfile=ci.real.mod -count=1 ./internal/exchangeplan ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/exchangeexecute ./internal/shopbuycommit ./internal/shopbuyexecute ./internal/shopbuygate ./internal/shopbuypersist ./internal/shopbuyplan ./internal/shopbuypublish ./internal/shopwiretrace ./migrations
+          go test -modfile=ci.real.mod -race -count=1 ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/shopbuygate ./internal/shopbuypersist
+          go test -modfile=ci.real.mod -c -o ../direct-source-protocol.test ./cmd/protocol-probe
+          go test -modfile=ci.real.mod -race -c -o ../direct-source-protocol-race.test ./cmd/protocol-probe
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go vet -modfile=ci.real.mod ./...
+      - name: Windows diagnostic cross-build using direct source
+        working-directory: server
+        shell: bash
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o ../direct-source-diagnostic-windows-amd64.exe ./cmd/protocol-probe
+          sha256sum ../direct-source-diagnostic-windows-amd64.exe | tee ../direct-source-diagnostic-windows-amd64.sha256
+          file ../direct-source-diagnostic-windows-amd64.exe
+          echo 'protocol_runtime=NOT_RUN_EXACT_CLIENT_RESOURCE_CORPUS_ABSENT'
+          echo 'live_e2e=NOT_RUN'
+      - name: Archive diagnostic build and logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-direct-editable-source-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: warn
+          path: |
+            direct-source-diagnostic-windows-amd64.exe
+            direct-source-diagnostic-windows-amd64.sha256

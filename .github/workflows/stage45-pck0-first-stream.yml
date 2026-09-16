@@ -1,0 +1,20 @@
+name: Stage45 PCK0 first-stream synthetic self-test
+on:
+  push:
+    branches:
+      - stage37-current-recovery-20260916
+    paths:
+      - tools/stage45_pck0_first_stream_probe.py
+      - .github/workflows/stage45-pck0-first-stream.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-read-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python syntax check
+        run: python3 -m py_compile tools/stage45_pck0_first_stream_probe.py
+      - name: Synthetic package self-test (no proprietary input)
+        run: python3 tools/stage45_pck0_first_stream_probe.py --self-test

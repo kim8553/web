@@ -50,7 +50,7 @@ foreach ($line in ($text -split '\r?\n')) {
 $output = Join-Path $OutputDirectory "$Phase.log"
 # The fixed header excludes remote IP/port, login data, raw packets, arbitrary strings,
 # and even the optional decoded shop ID. Only opcode/selector/count/type remain.
-[System.IO.File]::WriteAllLines([System.IO.Path]::GetFullPath($output), $filtered.ToArray(), (New-Object System.Text.UTF8Encoding($false)))
+[System.IO.File]::WriteAllLines([System.IO.Path]::GetFullPath($output), $filtered.ToArray(), ([System.Text.UTF8Encoding]::new($false)))
 Write-Host "Captured $($filtered.Count) sanitized observations -> $output"
 if ($Phase -eq 'purchase' -and $filtered.Count -eq 0) {
     throw 'No SHOP_WIRE_OBSERVE records in purchase window; verify Stage22 diagnostic EXE, its server log path, and the game connection.'

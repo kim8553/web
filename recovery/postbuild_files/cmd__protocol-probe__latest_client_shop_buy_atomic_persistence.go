@@ -2,22 +2,15 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 
 	"github.com/local/9yin-go-server/internal/role"
+	"github.com/local/9yin-go-server/internal/shopbuypersist"
 )
 
-const (
-	shopBuyAtomicDeleteBagSQL = "DELETE FROM role_bag_items WHERE role_id = ?"
-	shopBuyAtomicInsertBagSQL = `
-INSERT INTO role_bag_items(role_id, seq, slot, config_id, item_type, amount, view_id, name, equip_type, art_pack, hardiness, max_hardiness, bind_status)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-	shopBuyAtomicDeleteCurrencySQL = "DELETE FROM role_currency WHERE role_id = ?"
-	shopBuyAtomicInsertCurrencySQL = "INSERT INTO role_currency(role_id, snapshot) VALUES (?, ?)"
-)
-
-// persistShopPurchaseMySQLAtomic is the dormant atomic persistence target for a
+// persistShopPurchaseMySQLAtomic is the dormant main-package adapter for a
 // regular NPC shop purchase. It deliberately accepts only the concrete MySQL
 // stores and requires both stores to share the exact same *sql.DB. JSON fallback
 // and split-DB configurations therefore fail closed instead of pretending two
@@ -44,46 +37,26 @@ func persistShopPurchaseMySQLAtomic(roleID role.RoleID, bagStore *mysqlBagStore,
 	if err != nil {
 		return err
 	}
-
-	ctx := context.Background()
-	tx, err := bagStore.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, shopBuyAtomicDeleteBagSQL, roleID); err != nil {
-		return err
-	}
+	rows := make([]shopbuypersist.BagRow, 0, len(items))
 	for seq, item := range items {
 		slot := item.Slot
 		if slot <= 0 {
 			slot = int32(seq + 1)
 		}
-		if _, err := tx.ExecContext(ctx, shopBuyAtomicInsertBagSQL,
-			roleID,
-			seq,
-			slot,
-			item.ConfigID,
-			item.ItemType,
-			item.Amount,
-			item.ViewID,
-			nullableString(item.Name),
-			nullableString(item.EquipType),
-			nullableInt32(item.ArtPack),
-			nullableInt32(item.Hardiness),
-			nullableInt32(item.MaxHardiness),
-			item.BindStatus,
-		); err != nil {
-			return err
-		}
+		rows = append(rows, shopbuypersist.BagRow{
+			Seq:          seq,
+			Slot:         slot,
+			ConfigID:     item.ConfigID,
+			ItemType:     item.ItemType,
+			Amount:       item.Amount,
+			ViewID:       item.ViewID,
+			Name:         sql.NullString{String: item.Name, Valid: item.Name != ""},
+			EquipType:    sql.NullString{String: item.EquipType, Valid: item.EquipType != ""},
+			ArtPack:      sql.NullInt64{Int64: int64(item.ArtPack), Valid: item.ArtPack != 0},
+			Hardiness:    sql.NullInt64{Int64: int64(item.Hardiness), Valid: item.Hardiness != 0},
+			MaxHardiness: sql.NullInt64{Int64: int64(item.MaxHardiness), Valid: item.MaxHardiness != 0},
+			BindStatus:   item.BindStatus,
+		})
 	}
-
-	if _, err := tx.ExecContext(ctx, shopBuyAtomicDeleteCurrencySQL, roleID); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, shopBuyAtomicInsertCurrencySQL, roleID, encoded); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return shopbuypersist.Persist(context.Background(), bagStore.db, roleID, rows, encoded)
 }

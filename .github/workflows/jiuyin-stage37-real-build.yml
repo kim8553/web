@@ -28,7 +28,8 @@ on:
       - 'recovery/postbuild_files/internal__shopbuyexecute__execute.go'
       - 'recovery/postbuild_files/internal__shopbuyexecute__execute_test.go'
       - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence.go'
-      - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence_test.go'
+      - 'recovery/postbuild_files/internal__shopbuypersist__persist.go'
+      - 'recovery/postbuild_files/internal__shopbuypersist__persist_test.go'
   workflow_dispatch:
 
 permissions:

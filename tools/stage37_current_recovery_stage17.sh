@@ -6,7 +6,9 @@ BUILD="$ROOT/buildtree"
 
 # Stage17 keeps the exact-current ordinary-shop selector blocked. It adds only
 # a dormant MySQL persistence target that can save bag + currency through one
-# transaction on one shared *sql.DB. No production handler wiring is enabled.
+# transaction on one shared *sql.DB. The transaction core lives in an internal
+# package so it can be UNIT/RACE tested without starting protocol-probe package
+# init, which correctly requires exact-current skill resources.
 bash tools/stage37_current_recovery_stage16.sh
 
 grep -F 'current_client_selector_verified=0' "$ROOT/stage16_regular_shop_transaction_status.log"
@@ -26,11 +28,14 @@ json_fallback_atomic_persistence=UNSUPPORTED_FAIL_CLOSED
 split_mysql_db_atomic_persistence=UNSUPPORTED_FAIL_CLOSED
 transaction_order=delete_bag_then_insert_bag_rows_then_delete_currency_then_insert_currency_then_commit
 live_apply_and_client_publish=NOT_WIRED
+targeted_test_package=internal/shopbuypersist
+protocol_probe_runtime_dependency=NOT_SUBSTITUTED
 STATUS
 
 for spec in \
-  '20589be6e41d7f08d293341a752cb8d24dcbc6a5 recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence.go' \
-  'b444ca8e2a36328d284dc8c12a31edb45a8dbeac recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence_test.go'; do
+  'c28360b706f8a821aacb625af06b90ded69fef4c recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence.go' \
+  '0695e5038767dcee8ed46638ade7dbeb44b6ae84 recovery/postbuild_files/internal__shopbuypersist__persist.go' \
+  'c241ad718462755a6ad67afe5a5b79dcdd01d6a5 recovery/postbuild_files/internal__shopbuypersist__persist_test.go'; do
   expected="${spec%% *}"
   path="${spec#* }"
   actual="$(git hash-object "$path")"
@@ -38,16 +43,18 @@ for spec in \
   test "$actual" = "$expected"
 done
 
+mkdir -p "$BUILD/internal/shopbuypersist"
 cp recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence.go "$BUILD/cmd/protocol-probe/latest_client_shop_buy_atomic_persistence.go"
-cp recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence_test.go "$BUILD/cmd/protocol-probe/latest_client_shop_buy_atomic_persistence_test.go"
-gofmt -w "$BUILD/cmd/protocol-probe/latest_client_shop_buy_atomic_persistence.go" "$BUILD/cmd/protocol-probe/latest_client_shop_buy_atomic_persistence_test.go"
+cp recovery/postbuild_files/internal__shopbuypersist__persist.go "$BUILD/internal/shopbuypersist/persist.go"
+cp recovery/postbuild_files/internal__shopbuypersist__persist_test.go "$BUILD/internal/shopbuypersist/persist_test.go"
+gofmt -w "$BUILD/cmd/protocol-probe/latest_client_shop_buy_atomic_persistence.go" "$BUILD/internal/shopbuypersist"
 
 (cd "$BUILD" && find . -type f ! -name 'ci.real.mod' ! -name 'ci.real.sum' ! -name 'protocol-probe' -printf '%P\0' | sort -z | xargs -0 sha256sum > "$ROOT/generated-manifest.txt")
 sha256sum "$ROOT/generated-manifest.txt" > "$ROOT/generated-manifest.sha256"
 source_files=$(find "$BUILD" -type f ! -name 'ci.real.mod' ! -name 'ci.real.sum' ! -name 'protocol-probe' | wc -l | tr -d ' ')
 echo "stage17_source_files=$source_files"
 echo "stage17_manifest_sha256=$(awk '{print $1}' "$ROOT/generated-manifest.sha256")"
-if [ "$source_files" != "218" ]; then
+if [ "$source_files" != "219" ]; then
   echo "unexpected Stage17 source count: $source_files" >&2
   exit 96
 fi
@@ -61,8 +68,8 @@ run_gate() {
   echo $? >"$ROOT/${name}.exit"
 }
 
-run_gate shopbuyatomic go test -modfile=ci.real.mod ./cmd/protocol-probe -run '^TestPersistShopPurchaseMySQLAtomic' -count=1
-run_gate shopbuyatomic_race go test -modfile=ci.real.mod -race ./cmd/protocol-probe -run '^TestPersistShopPurchaseMySQLAtomic' -count=1
+run_gate shopbuyatomic go test -modfile=ci.real.mod ./internal/shopbuypersist -count=1
+run_gate shopbuyatomic_race go test -modfile=ci.real.mod -race ./internal/shopbuypersist -count=1
 run_gate build go build -modfile=ci.real.mod ./cmd/protocol-probe
 run_gate protocol_compile go test -modfile=ci.real.mod -c -o "$ROOT/protocol-probe.test" ./cmd/protocol-probe
 run_gate protocol_race_compile go test -modfile=ci.real.mod -race -c -o "$ROOT/protocol-probe-race.test" ./cmd/protocol-probe

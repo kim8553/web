@@ -1,32 +1,34 @@
-# Stage47 — 동일 fxres.exe 인덱스 읽기 이후 레코드 검증 기계어 조사 (2026-09-17 KST)
+# Stage47 — 동일 fxres.exe의 인덱스 읽기 이후 레코드 검증 기계어 (2026-09-17 KST)
 
-## 기준과 작업 범위
+## 기준·보호 범위
 
-- 시작 GitHub 브랜치 `stage37-current-recovery-20260916` HEAD `8ad31755b6abca9933de52910c5cbba512d99e9f` 확인. `server/`는 `9yin-go-server1.rar` 기반의 누적 Stage37 복구 소스를 그대로 유지. `9yin-go-server.zip`이나 이전 JYZJ 구현으로 대체하지 않음.
-- 입력은 사용자 업로드 `bin64(2)(1)(1).zip`에서 **로컬에만 보관한** `fxres.exe`와 Drive에서 이미 허가받아 확보한 원본 `ini.package` 및 `lua.package`. 원본 바이너리·리소스·추출된 비공개 내용을 GitHub나 CI에 넣지 않음. EXE/DLL 실행·패치 없음.
-- SHA-256 `07ae76288148132995538488f12e2214fbecfdc0f18bdc2dd3189093e3e9fa9c`의 `fxres.exe`가 Stage39/46과 정확히 동일함을 기존 13개 명령 바이트 검사와 전체 해시로 재확인.
+- 시작 브랜치 `stage37-current-recovery-20260916` HEAD: `8ad31755b6abca9933de52910c5cbba512d99e9f`. 누적된 `server/`는 **`9yin-go-server1.rar` 기반**으로 그대로 유지. `9yin-go-server.zip`, 과거 JYZJ 동작과 혼합·롤백하지 않음.
+- 사용자 ZIP `bin64(2)(1)(1).zip`의 `fxres.exe`와 연결된 비공개 Drive 원본 `res/ini.package`, `res/lua.package`를 로컬 읽기 전용으로 사용. EXE/DLL을 실행·수정하지 않았고 게임 바이너리·리소스·복호화 데이터·개인 정보는 GitHub/Actions로 보내지 않음.
+- `fxres.exe` SHA-256 `07ae76288148132995538488f12e2214fbecfdc0f18bdc2dd3189093e3e9fa9c`는 Stage39/46 입력과 **동일**하며 기존 헤더 경로의 13개 명령 바이트도 일치.
 
-## 새로 확인한 동일 바이너리의 **읽기 이후** 경로
+## 새 기계어 근거 — 인덱스 읽기 이후 경로
 
-`objdump -D -M intel`로 실제 `.text` 명령과 `.rdata` 오류 문자열을 확인하고, 새 Stage47 프로브로 `.text` 19개 지점 및 `.rdata` 5개 지점을 파일 전체 SHA와 함께 일치 검사.
+`objdump -D -M intel`로 원본 `.text`를 확인하고 SHA 고정 프로브로 **19개 명령 바이트 지점 + `.rdata` 오류 문자열 5개**를 독립 대조했다.
 
-- `0x14000dc3b`–`0x14000dc48`: 인덱스 영역을 읽는 경로에서 목적 버퍼/파일 컨텍스트를 넘긴 뒤 결과 확인. 앞선 Stage39의 전체 헤더·인덱스 범위 판독을 재사용하며 재해석하지 않음.
-- `0x14000dc99`–`0x14000dca1`: 파일 컨텍스트를 인수로 `0x1402070b6`을 직접 호출. 호출 대상은 비표준 보호 섹션 ``.`s9``에 존재하지만, **이 호출이 복호화인지·인덱스를 변환하는지·어떤 키를 쓰는지는 확인되지 않음.** 대상 주변의 정적 난독화 바이트만으로 알고리즘을 단정할 수 없음.
-- `0x14000dcb3`–`0x14000dcd8`: 인덱스 반복에서 레코드 첫 `u16` 길이를 읽고 시작점+길이가 인덱스 끝을 초과하는지 검사.
-- `0x14000dce4`–`0x14000dd02`: 레코드 길이에서 **28**을 빼고, 오프셋 **27**의 파일명 첫 바이트가 0이 아니며, 레코드의 끝 바이트가 NUL인지 검사. 오프셋 **25**의 `u16`이 `레코드 길이−28` 미만인지 검사. +25 필드의 완전한 의미/패치 변형은 **미확정**. 오류 문자열의 `comment offset error`만으로 그 필드가 보편적으로 댓글 오프셋이라고 확정하지 않음.
-- `0x14000dd0c`–`0x14000dd55`: 레코드 길이만큼 포인터를 전진시키고 엔트리 반복을 계속하는 경로; `0x14000dd35`–`0x14000dd3d`은 보관된 레코드 포인터 +27을 이름 포인터로 사용.
-- 동일 파일의 실제 오류 문자열: `(CPackData::LoadFromFile)read file info size failed`, `file info size error`, `read file info failed`, `file name error`, `comment offset error` (접두부는 동일). 이 문자열은 실제 레코드 검증 경로와 연결됨.
+| 실제 VA | 확인된 기계어 동작 | 해석 한계 |
+| --- | --- | --- |
+| `0x14000dc3b`–`0x14000dc48` | 인덱스 영역 읽기에 버퍼·파일 컨텍스트 전달 후 반환 검사 | 기존 Stage39 헤더 경계 재사용 |
+| `0x14000dc99`–`0x14000dca1` | 파일 컨텍스트를 인수로 보호 섹션 ``.`s9`` 안의 `0x1402070b6` 직접 호출 | **복호화인지 여부·키·변환 방식 전부 미확인** |
+| `0x14000dcb3`–`0x14000dcd8` | 각 레코드의 선두 `u16` 길이와 인덱스 끝 경계 검사 | 원본 변환 전 인덱스에 직접 적용 불가 |
+| `0x14000dce4`–`0x14000dd02` | 레코드 길이−28, 오프셋 +27 이름 첫 바이트 비영(非零), 레코드 마지막 바이트 NUL, +25의 `u16`이 길이−28 미만인지 검사 | +25 필드의 완전한 의미 미확정 |
+| `0x14000dd0c`–`0x14000dd55` | 길이만큼 포인터 이동·반복, 보관된 레코드 포인터+27을 이름 포인터로 사용 | 성공적으로 해독한 실제 레코드 없음 |
 
-**주의:** 검증 경로의 `27`바이트 고정 영역/이름 범위가 알려져도 원본 암호화·변환 전 인덱스에 적용할 수 없다. Stage46에서 평문 파서를 두 원본 패키지에 적용할 수 없다고 확인한 상태를 유지. `ini.package` 선언 수 **18,543**와 `lua.package` 선언 수 **2,286**은 실제 해독·열거 건수가 아니다. 둘 다 **이름 확인 0건, 실제 인덱스 파싱 0건**. `shop.ini`, `[Shop_GB_Yishiting]`, 구매 패킷 및 가격·화폐 계약의 최신 클라이언트 근거는 여전히 미확보.
+검증된 오류 문자열에는 `(CPackData::LoadFromFile)read file info size failed`, `file info size error`, `read file info failed`, `file name error`, `comment offset error`가 있다(공통 접두부 동일). 마지막 오류 메시지만으로 +25 필드의 형식이나 실제 index transform을 단정하지 않는다. **보호 호출의 내부 알고리즘을 알아냈다고 주장하지 않는다.**
 
-## 도구, 독립 검증, 테스트 경계
+원본 `ini.package` SHA-256 `6185812c6153b2a6da56071968dcd1254510a974df06a7e36a0229be2105779a`, 선언된 수 18,543; `lua.package` SHA-256 `283c8c245a3fb86af2a7e8c21c53b3de26c30432341dd590c37554adfce04e97`, 선언된 수 2,286. **두 수 모두 실제 파싱 개수가 아니다. 실제 인덱스 해독 0건, 이름을 확인한 패키지 멤버 0건.** Stage46에서 기존 평문 인덱스 파서가 이 두 원본 파일과 호환되지 않는다고 확인한 상태도 유지.
 
-- 신규 `tools/stage47_fxres_postread_record_audit.py`는 기존 Stage46 검사 도구를 재사용하며 정확한 ZIP·원본 패키지 SHA, ZIP CRC, 13개 기존 헤더 명령, 19개 신규 레코드 명령, 5개 오류 문자열을 검증함. 기계어 지점이 다르면 중단. 실제 패키지 인덱스를 **해독·파싱하거나 파일을 추출하는 기능이 없음**.
-- 로컬 `python -m py_compile`: **PASS**. Stage46 기존 합성 테스트: **PASS**. Stage47 합성 평문 레코드의 정상 **2종**, 잘못된 경계/종료/개수 **9종**, 잘못된 fxres 거부: **PASS**. 모두 합성 자료이며 실제 암호화 인덱스 해독 성공 사례가 아님.
-- 실제 비공개 ZIP + `ini.package` + `lua.package` 입력: **PASS (파일 동일성·명령·오류 문자열·헤더에 한정)**. 공개된 GitHub 프로브 파일의 blob SHA는 로컬 검사 파일의 `git hash-object` SHA `bc0932f9d5b369951ce2dba1237b73fe136ccdf0`과 동일.
-- 별도 GitHub Actions `.github/workflows/stage47-fxres-postread-record.yml`은 **합성 데이터만** 사용하고 게임 자료는 내려받지 않음. 실행 결과는 Actions [35117575955](https://github.com/kim8553/web/actions/runs/35117575955)에서 독립 확인할 것. CI 통과 여부는 실제 원본 리소스 검사와 엄격히 구분.
-- Stage47 Go 테스트/race/vet/Windows 빌드, 서버 기동, 게임 로그인, 상점 열기·구매·가방·MySQL 저장 **미실시/미검증**. `PurchaseReady=false` 유지, `server/` 게임플레이와 GM 아이템 지급 코드 모두 변경하지 않음.
+## 도구·테스트의 구분
 
-## 후속 작업의 정확한 경계
+- [`tools/stage47_fxres_postread_record_audit.py`](../tools/stage47_fxres_postread_record_audit.py)는 Stage46 읽기 전용 검증기를 재사용한다. ZIP CRC·원본 패키지 SHA·기존 기계어 13곳·신규 레코드 기계어 19곳·오류 문자열 5곳을 검증하며, **원본 인덱스를 복호화/파싱하거나 파일을 추출하지 않는다**. 실제 검사에 사용한 로컬 파일과 업로드된 GitHub blob SHA 모두 `bc0932f9d5b369951ce2dba1237b73fe136ccdf0` 일치.
+- 로컬 Python 문법 검사 **PASS**. Stage46 합성 테스트 **PASS**. Stage47 합성 레코드 정상 2종·오류 9종 및 잘못된 EXE 거부 **PASS**. 실제 비공개 사용자 ZIP과 원본 두 패키지 검사는 **해시·ZIP CRC·기계어·문자열·헤더 동일성에 한해 PASS**. 합성 레코드는 현재 패키지에서 나온 것이 아님.
+- [GitHub Actions Stage47 실행 35117575955](https://github.com/kim8553/web/actions/runs/35117575955) (`cacda9f208b4f674580bf575c43cbd7ec7bdc728`): **완료·SUCCESS 확인**. `synthetic-read-only` 작업과 개별 **Verify Python syntax**, **Run synthetic fixtures without private client files** 단계 모두 **SUCCESS**. GitHub CI에는 게임 파일이 없어 원본 인덱스 복호화나 상점 성공의 증거가 아님.
+- Stage47에서 Go 테스트/race/vet/Windows 빌드·서버 부팅·게임 접속·NPC 상점 구매/가방/DB 저장의 **LIVE/E2E 전부 미실시**. `server/` 게임플레이·GM 아이템 지급 수정 없음, `PurchaseReady=false` 그대로 유지.
 
-실제 인덱스 변환을 검증 가능한 동일 버전 기계어 및 호출 흐름/인증된 기존 산출물로 확인한 뒤에만 **원본 패키지의 이름 ↔ 데이터 스트림 매핑**을 얻고 비공개 현재 상점 리소스를 이전 언팩 결과와 대조한다. 보호된 호출을 단순 XOR/정적 키로 추측하지 않는다. 실제 NPC 상점 요청·응답과 LIVE/E2E 증거 없이 서버 구매 로직을 활성화하지 않는다.
+## 다음 증거 경계
+
+동일한 클라이언트의 검증 가능한 기계어·기존 분석 산출물로 실제 인덱스 변환 및 **파일명 ↔ 데이터 스트림** 대응을 확인한 뒤, 원본의 실명 상점 INI/Lua를 비공개로 찾아 기존 언팩 리소스와 해시·섹션을 비교한다. 정확한 상점 ID·일반 구매 요청·화폐·가방 지속성은 별도 LIVE/패킷 근거를 얻기 전까지 확정하지 않으며, 키·XOR·패킷 번호를 추측해서 넣지 않는다.

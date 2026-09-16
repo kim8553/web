@@ -1,10 +1,10 @@
 diff --git a/cmd/protocol-probe/scene_lifecycle.go b/cmd/protocol-probe/scene_lifecycle.go
-index f741406..45d6658 100644
+index f741406..16815a3 100644
 --- a/cmd/protocol-probe/scene_lifecycle.go
 +++ b/cmd/protocol-probe/scene_lifecycle.go
-@@ -520,30 +520,28 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
+@@ -520,30 +520,31 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
  	if exchangeAB {
- 		log.Printf("shop exchange view AB shop=%q eligible=%d displayed=%d missing_data=%d invalid_slot=%d capacity_blocked=%t collision_blocked=%t mutation=unchanged_client_render=unverified", shopID, exchangeStats.Eligible, exchangeStats.Displayed, exchangeStats.MissingExchangeData, exchangeStats.InvalidExchangeSlot, exchangeStats.CapacityBlocked, exchangeStats.CollisionBlocked)
+ 		log.Printf("shop exchange view AB shop=%q eligible=%d displayed=%d missing_data=%d invalid_slot=%d capacity_blocked=%t collision_blocked=%t mutation=unchanged_client_render=unverified", shopID, exchangeStats.Eligible, exchangeStats.Displayed, exchangeStats.MissingExchangeData, exchangeStats.InvalidExchangeSlot, exchangeStats.CollisionBlocked)
  	}
 +	// Encode and validate ALL item frames before creating a client view. An
 +	// invalid later row must never leave a half-populated shop on the wire.
@@ -12,6 +12,9 @@ index f741406..45d6658 100644
  	if err != nil {
  		return fmt.Errorf("encode shop view %q: %w", shopID, err)
  	}
++	if len(displayRows) > 100 {
++		log.Printf("shop display capacity diagnostic shop=%q declared_view_capacity=100 selected_rows=%d client_capacity_semantics=unverified", shopID, len(displayRows))
++	}
 +	itemFrames, err := stage31PrepareShopItemFrames(shopID, displayRows, func(item shopCatalogItem, objectIndex uint16) ([]byte, error) {
 +		return serverViewAdd(61, objectIndex, latestClientShopItemProperties(item))
 +	})
@@ -48,10 +51,10 @@ index f741406..45d6658 100644
  
 diff --git a/cmd/protocol-probe/stage31_shop_frame_preflight.go b/cmd/protocol-probe/stage31_shop_frame_preflight.go
 new file mode 100644
-index 0000000..ae9eb58
+index 0000000..7370558
 --- /dev/null
 +++ b/cmd/protocol-probe/stage31_shop_frame_preflight.go
-@@ -0,0 +1,32 @@
+@@ -0,0 +1,29 @@
 +package main
 +
 +import "fmt"
@@ -59,12 +62,9 @@ index 0000000..ae9eb58
 +// stage31PrepareShopItemFrames validates and encodes the entire, already
 +// selected shop display before the first view frame is written. This does not
 +// change item selection, client properties, currency, inventory or purchases.
-+// The view's capacity is the existing, exact 100-object serverViewSpec.
++// The view declares Capacity=100, but its relationship to authored page indices
++// or the number of add frames is not verified; do not invent a count limit.
 +func stage31PrepareShopItemFrames(shopID string, items []shopCatalogItem, encode func(shopCatalogItem, uint16) ([]byte, error)) ([][]byte, error) {
-+	const viewCapacity = 100
-+	if len(items) > viewCapacity {
-+		return nil, fmt.Errorf("shop %q has %d display rows exceeding current view capacity %d; refusing partial view", shopID, len(items), viewCapacity)
-+	}
 +	seen := make(map[uint16]struct{}, len(items))
 +	frames := make([][]byte, 0, len(items))
 +	for _, item := range items {
@@ -86,10 +86,10 @@ index 0000000..ae9eb58
 +}
 diff --git a/cmd/protocol-probe/stage31_shop_frame_preflight_test.go b/cmd/protocol-probe/stage31_shop_frame_preflight_test.go
 new file mode 100644
-index 0000000..c026487
+index 0000000..77fd929
 --- /dev/null
 +++ b/cmd/protocol-probe/stage31_shop_frame_preflight_test.go
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,67 @@
 +package main
 +
 +import (
@@ -113,15 +113,18 @@ index 0000000..c026487
 +	}
 +}
 +
-+func TestStage31ShopFramePreflightRejectsOverCapacityBeforeEncoding(t *testing.T) {
-+	items := make([]shopCatalogItem, 101)
-+	called := false
-+	_, err := stage31PrepareShopItemFrames("Shop_full", items, func(shopCatalogItem, uint16) ([]byte, error) {
-+		called = true
++func TestStage31ShopFramePreflightDoesNotInventCapacityLimit(t *testing.T) {
++	items := make([]shopCatalogItem, 103)
++	for i := range items {
++		items[i] = shopCatalogItem{configID: "item", page: 0, position: int32(i)}
++	}
++	called := 0
++	frames, err := stage31PrepareShopItemFrames("Shop_authored_103", items, func(shopCatalogItem, uint16) ([]byte, error) {
++		called++
 +		return []byte{1}, nil
 +	})
-+	if err == nil || !strings.Contains(err.Error(), "exceeding current view capacity") || called {
-+		t.Fatalf("capacity error=%v encoded=%t", err, called)
++	if err != nil || len(frames) != len(items) || called != len(items) {
++		t.Fatalf("capacity should not be guessed; frames=%d calls=%d err=%v", len(frames), called, err)
 +	}
 +}
 +

@@ -26,6 +26,8 @@ on:
       - 'tools/stage37_current_recovery_stage20.sh'
       - 'tools/stage37_current_recovery_stage21.sh'
       - 'tools/stage37_current_recovery_stage21_disable_unverified_legacy_shop_buy.py'
+      - 'tools/stage37_current_recovery_stage22.sh'
+      - 'tools/stage37_current_recovery_stage22_wire_trace_patch.py'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
       - 'tools/stage37_stage9_harden_persistence_ready.py'
       - 'recovery/postbuild_files/internal__shopbuygate__decision.go'
@@ -44,6 +46,9 @@ on:
       - 'recovery/postbuild_files/internal__shopbuypublish__publish.go'
       - 'recovery/postbuild_files/internal__shopbuypublish__publish_test.go'
       - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_publish.go'
+      - 'recovery/postbuild_files/internal__shopwiretrace__trace.go'
+      - 'recovery/postbuild_files/internal__shopwiretrace__trace_test.go'
+      - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_wire_trace.go'
   workflow_dispatch:
 
 permissions:
@@ -58,9 +63,9 @@ jobs:
         with:
           go-version: '1.23.2'
           cache: false
-      - name: Reconstruct, disable unsafe candidate route, verify and test Stage21 ordinary NPC shop safety boundary
+      - name: Reconstruct and verify Stage22 bounded read-only ordinary shop wire trace
         shell: bash
-        run: bash tools/stage37_current_recovery_stage21.sh
+        run: bash tools/stage37_current_recovery_stage22.sh
       - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4

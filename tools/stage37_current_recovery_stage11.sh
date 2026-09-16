@@ -10,7 +10,9 @@ EXPECTED_MANIFEST="936a075a8f0baf477e253c789cf8e756436b576c67629b56901826afb04e1
 # into a known value from non-test production code.
 bash tools/stage37_current_recovery_stage10.sh
 
-AUDIT="$ROOT/.stage11_exchangebinding_constructor_audit.go"
+# Go ignores explicit source files whose basenames start with '.' or '_'. Keep
+# the temporary audit source in /tmp with a normal basename.
+AUDIT="$(mktemp /tmp/stage11_exchangebinding_constructor_audit.XXXXXX.go)"
 cat > "$AUDIT" <<'EOF'
 package main
 

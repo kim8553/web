@@ -2,7 +2,7 @@
 set -euo pipefail
 ROOT="$(pwd)"
 
-# Reconstruct Stage23 unmodified, including its 0x46 fail-closed checks.
+# Reconstruct Stage23 exactly, keeping its unverified-purchase fail-closed gates.
 bash tools/stage37_current_recovery_stage23.sh
 SOURCE="$ROOT/buildtree/cmd/protocol-probe/scene_lifecycle.go"
 BASE_SHA=0af96878e7e3aa7c84fdb275d96b62e238e432bc3ff447c2c99944544f0e0666
@@ -15,11 +15,11 @@ grep -Fx 'legacy_candidate_mutation_route=DISABLED_FAIL_CLOSED' "$ROOT/stage22_s
 git apply --directory=buildtree --check recovery/stage27_shop_display_diagnostics.patch
 git apply --directory=buildtree recovery/stage27_shop_display_diagnostics.patch
 printf '%s  %s\n' "$PATCHED_SHA" "$SOURCE" | sha256sum -c -
-cp recovery/postbuild_files/cmd__protocol-probe__stage27_shop_observability_test.go "$ROOT/buildtree/cmd/protocol-probe/stage27_shop_observability_test.go"
-test -z "$(gofmt -l "$SOURCE" "$ROOT/buildtree/cmd/protocol-probe/stage27_shop_observability_test.go")"
+TEST_SOURCE="$ROOT/buildtree/cmd/protocol-probe/stage27_shop_observability_test.go"
+cp recovery/postbuild_files/cmd__protocol-probe__stage27_shop_observability_test.go "$TEST_SOURCE"
+test -z "$(gofmt -l "$SOURCE" "$TEST_SOURCE")"
 
-# The new code observes the already existing ordinary display filter; it must
-# not enable mode-3 exchange item delivery, any buy selector or state mutation.
+# New code observes the ordinary display filter but cannot authorize purchases.
 python3 - <<'PY'
 from pathlib import Path
 s = Path('buildtree/cmd/protocol-probe/scene_lifecycle.go').read_text()
@@ -30,9 +30,19 @@ assert 'shop service selected npc_config=' in s
 print('stage27_shop_observer_source_guard=PASS')
 PY
 
+# Full server package init requires exact-current skill_new.ini, absent in CI.
+# Compile full-package tests without executing init, and run verbatim extracted
+# pure observer tests without substituting old or invented client resources.
+UNIT_DIR="$RUNNER_TEMP/stage27-verbatim-unit"
+python3 tools/stage37_stage27_isolated_test.py "$SOURCE" "$TEST_SOURCE" "$UNIT_DIR"
+(
+  cd "$UNIT_DIR"
+  GO111MODULE=off go test -count=1 -v stage27_isolated.go stage27_isolated_test.go > "$ROOT/stage27_isolated_test.log" 2>&1
+  GO111MODULE=off go test -race -count=1 stage27_isolated.go stage27_isolated_test.go > "$ROOT/stage27_isolated_race.log" 2>&1
+)
 cd "$ROOT/buildtree"
-go test -modfile=ci.real.mod ./cmd/protocol-probe -run '^TestStage27ShopDisplaySummary' -count=1 > "$ROOT/stage27_targeted_test.log" 2>&1
-go test -modfile=ci.real.mod -race ./cmd/protocol-probe -run '^TestStage27ShopDisplaySummary' -count=1 > "$ROOT/stage27_targeted_race.log" 2>&1
+go test -modfile=ci.real.mod -c -o "$ROOT/stage27-protocol-probe.test" ./cmd/protocol-probe > "$ROOT/stage27_protocol_test_compile.log" 2>&1
+go test -race -modfile=ci.real.mod -c -o "$ROOT/stage27-protocol-probe-race.test" ./cmd/protocol-probe > "$ROOT/stage27_protocol_race_compile.log" 2>&1
 go vet -modfile=ci.real.mod ./cmd/protocol-probe > "$ROOT/stage27_vet.log" 2>&1
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o "$ROOT/stage27-current-windows-amd64.exe" ./cmd/protocol-probe > "$ROOT/stage27_windows.log" 2>&1
 sha256sum "$ROOT/stage27-current-windows-amd64.exe" > "$ROOT/stage27-current-windows-amd64.sha256"
@@ -44,8 +54,11 @@ file "$ROOT/stage27-current-windows-amd64.exe" > "$ROOT/stage27-current-windows-
   echo 'exchange_mode_3=SKIPPED_UNCHANGED'
   echo 'purchase_selector=UNVERIFIED_FAIL_CLOSED'
   echo 'selected_role_currency=UNMODIFIED'
-  echo 'targeted_regressions=PASS'
-  echo 'targeted_race=PASS'
+  echo 'verbatim_isolated_regressions=PASS'
+  echo 'verbatim_isolated_race=PASS'
+  echo 'full_protocol_test_compile=PASS_RUNTIME_NOT_RUN'
+  echo 'full_protocol_race_compile=PASS_RUNTIME_NOT_RUN'
+  echo 'full_protocol_runtime=BLOCKED_EXACT_CURRENT_SKILL_RESOURCE_ABSENT'
   echo 'vet=PASS'
   echo 'windows_amd64_build=PASS'
   echo 'client_shop_render=UNVERIFIED'

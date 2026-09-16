@@ -10,7 +10,6 @@ import (
 	"github.com/local/9yin-go-server/internal/role"
 	worldcore "github.com/local/9yin-go-server/internal/world"
 	"log"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -443,16 +442,6 @@ func (s *sceneLifecycle) objectRequest(request clientObjectRequest) (string, err
 	}
 	s.selectedObject = entity.id
 	s.selectedOwner = entity.ownerID
-	// A missing/invalid exact shop section suppresses the shop menu in
-	// playableNPCServices. Log this BEFORE the interaction/menu filter so an
-	// absent shop option is diagnosable without guessing a replacement ShopID.
-	for _, service := range entity.services {
-		if service.mark != markShop {
-			continue
-		}
-		diagnostic := stage32InspectShopMenu(defaultShopINIPath, service.value)
-		log.Printf("%s: NPC shop menu diagnostic object=%d owner=%d scene=%q npc_config=%q shop=%q source=%q interaction=%s catalog_error=%q authored=%d ordinary=%d exchange=%d exchange_with_data=%d other=%d default_shop_render=unverified", s.remote, entity.id, entity.ownerID, s.sceneResource, entity.configID, service.value, service.source, entity.interaction, diagnostic.CatalogError, diagnostic.AuthoredRows, diagnostic.OrdinaryRows, diagnostic.ExchangeRows, diagnostic.ExchangeData, diagnostic.OtherRows)
-	}
 	if entity.interaction != npcInteractionTalk {
 		log.Printf("%s: object request sequence=%d id=%d config=%s script_class=%s interaction=%s; selected without dialogue", s.remote, request.Sequence, entity.id, entity.configID, entity.scriptClass, entity.interaction)
 		return entity.description, nil
@@ -485,76 +474,37 @@ func (s *sceneLifecycle) openDepotLocked() error {
 	}
 	return nil
 }
-
-// stage27ShopDisplayRows describes only what the existing ordinary-shop display
-// loop WILL attempt. It neither authorizes exchange purchases nor changes rows.
-type stage27ShopDisplayRows struct {
-	Ordinary                   int
-	ExchangeSkipped            int
-	ExchangeMissingData        int
-	UnsupportedSkipped         int
-	InvalidOrdinaryCoordinates int
-}
-
-func summarizeStage27ShopDisplayRows(items []shopCatalogItem) stage27ShopDisplayRows {
-	var result stage27ShopDisplayRows
-	for _, item := range items {
-		switch item.priceMode {
-		case 0, 1, 2:
-			result.Ordinary++
-			if _, ok := currentShopViewObjectIndex(item); !ok {
-				result.InvalidOrdinaryCoordinates++
-			}
-		case 3:
-			result.ExchangeSkipped++
-			if item.exchangeData <= 0 {
-				result.ExchangeMissingData++
-			}
-		default:
-			result.UnsupportedSkipped++
-		}
-	}
-	return result
-}
-
 func (s *sceneLifecycle) openShopLocked(shopID string) error {
 	items, shopType, pageCount, err := shopCatalogItems(defaultShopINIPath, shopID)
 	if err != nil {
 		return err
 	}
-	stats := summarizeStage27ShopDisplayRows(items)
-	log.Printf("shop display catalog shop=%q rows=%d ordinary=%d exchange_skipped=%d exchange_missing_data=%d unsupported_skipped=%d invalid_ordinary_coordinates=%d", shopID, len(items), stats.Ordinary, stats.ExchangeSkipped, stats.ExchangeMissingData, stats.UnsupportedSkipped, stats.InvalidOrdinaryCoordinates)
-	// Opt-in diagnostic only; the exact-current purchase mutation gate is unchanged.
-	exchangeAB := os.Getenv("NINEYIN_SHOP_EXCHANGE_VIEW_AB") == "1"
-	displayRows, exchangeStats := stage30ShopExchangeDisplayRows(items, exchangeAB)
-	if exchangeAB {
-		log.Printf("shop exchange view AB shop=%q eligible=%d displayed=%d missing_data=%d invalid_slot=%d capacity_blocked=%t collision_blocked=%t mutation=unchanged_client_render=unverified", shopID, exchangeStats.Eligible, exchangeStats.Displayed, exchangeStats.MissingExchangeData, exchangeStats.InvalidExchangeSlot, exchangeStats.CapacityBlocked, exchangeStats.CollisionBlocked)
-	}
-	// Encode and validate ALL item frames before creating a client view. An
-	// invalid later row must never leave a half-populated shop on the wire.
 	frame, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 100}, latestClientShopViewProperties(shopID, shopType, pageCount))
 	if err != nil {
 		return fmt.Errorf("encode shop view %q: %w", shopID, err)
 	}
-	if len(displayRows) > 100 {
-		log.Printf("shop display capacity diagnostic shop=%q declared_view_capacity=100 selected_rows=%d client_capacity_semantics=unverified", shopID, len(displayRows))
-	}
-	itemFrames, err := stage31PrepareShopItemFrames(shopID, displayRows, func(item shopCatalogItem, objectIndex uint16) ([]byte, error) {
-		return serverViewAdd(61, objectIndex, latestClientShopItemProperties(item))
-	})
-	if err != nil {
-		log.Printf("shop display preflight rejected shop=%q rows=%d reason=%v client_view_created=false", shopID, len(displayRows), err)
-		return err
-	}
 	if err := s.conn.WriteFrame(frame); err != nil {
 		return fmt.Errorf("create shop view %q: %w", shopID, err)
 	}
-	for index, itemFrame := range itemFrames {
-		if err := s.conn.WriteFrame(itemFrame); err != nil {
-			return fmt.Errorf("add shop %q item %q: %w", shopID, displayRows[index].configID, err)
+	for _, item := range items {
+		switch item.priceMode {
+		case 0, 1, 2:
+		default:
+			continue
+		}
+		objectIndex, ok := currentShopViewObjectIndex(item)
+		if !ok {
+			return fmt.Errorf("shop %q item %q has invalid current-client page=%d position=%d", shopID, item.configID, item.page, item.position)
+		}
+		properties := latestClientShopItemProperties(item)
+		itemFrame, encodeErr := serverViewAdd(61, objectIndex, properties)
+		if encodeErr != nil {
+			return fmt.Errorf("encode shop %q item %q: %w", shopID, item.configID, encodeErr)
+		}
+		if writeErr := s.conn.WriteFrame(itemFrame); writeErr != nil {
+			return fmt.Errorf("add shop %q item %q: %w", shopID, item.configID, writeErr)
 		}
 	}
-	log.Printf("shop display frames shop=%q create_view=sent item_add_sent=%d exchange_skipped=%d unsupported_skipped=%d client_render=unverified", shopID, len(itemFrames), stats.ExchangeSkipped-exchangeStats.Displayed, stats.UnsupportedSkipped)
 	return nil
 }
 
@@ -787,7 +737,6 @@ func (s *sceneLifecycle) openSelectedServiceLocked(entity sceneEntity, service n
 		if service.value == "" {
 			return fmt.Errorf("NPC %s shop service has no ShopID", entity.configID)
 		}
-		log.Printf("shop service selected npc_config=%q shop=%q service_source=%q", entity.configID, service.value, service.source)
 		if err := s.openShopLocked(service.value); err != nil {
 			return err
 		}

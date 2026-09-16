@@ -3,15 +3,6 @@ package main
 // latestClientStarterBagView reports only the 16 bag-container views created by
 // starterBagViews().  Skill/inner-power/shop-list views are intentionally not
 // changed by this A/B.
-// latestClientItemObjectView reports views whose object rows use the exact
-// current negotiated item-object subset. VIEWPORT_EQUIP=1 shares the same
-// named runtime item properties (ConfigID/ItemType/ViewID/BindStatus) as bag
-// objects; historical global item IDs are semantic sources only and cannot be
-// sent as current ordinals.
-func latestClientItemObjectView(viewID uint16) bool {
-	return viewID == 1 || latestClientStarterBagView(viewID)
-}
-
 func latestClientStarterBagView(viewID uint16) bool {
 	switch viewID {
 	case 121, 2, 123, 125, 122, 3, 124, 126, 176, 174, 178, 180, 177, 175, 179, 181:
@@ -22,13 +13,12 @@ func latestClientStarterBagView(viewID uint16) bool {
 }
 
 // latestClientBagWireProperties publishes only identities/counts that are
-// explicitly present in the exact current negotiated table Stage37 negotiates:
+// explicitly present in the exact 228-entry table Stage37 negotiates:
 //
 //	ordinal 7   ConfigID string
 //	ordinal 105 ConfigID string (shop/view binding)
 //	ordinal 106 Amount int32
 //	ordinal 110 MaxAmount int32
-//	ordinal 234 BindStatus int32
 //
 // High/global IDs are used only as semantic sources and are never emitted.
 func latestClientBagWireProperties(properties []serverViewProperty) []serverViewProperty {
@@ -42,8 +32,6 @@ func latestClientBagWireProperties(properties []serverViewProperty) []serverView
 	var haveItemType bool
 	var itemViewID int32
 	var haveViewID bool
-	var bindStatus int32
-	var haveBindStatus bool
 
 	for _, property := range properties {
 		switch property.index {
@@ -72,11 +60,6 @@ func latestClientBagWireProperties(properties []serverViewProperty) []serverView
 				itemViewID = *property.int32
 				haveViewID = true
 			}
-		case 234, 0x076A:
-			if property.int32 != nil {
-				bindStatus = *property.int32
-				haveBindStatus = true
-			}
 		}
 		if property.nest != nil && property.nest.subIndex == 0x05A0 && property.nest.text != nil {
 			configID = *property.nest.text
@@ -85,9 +68,9 @@ func latestClientBagWireProperties(properties []serverViewProperty) []serverView
 	}
 
 	// Emit in ascending negotiated ordinal order. Existing 0..227 positions are
-	// unchanged; ViewID and runtime BindStatus are append-only fields. Ident is built-in and
+	// unchanged; ViewID is the only append-only field. Ident is built-in and
 	// derived by FxNet2 from VIEW_ADD.objectIndex.
-	result := make([]serverViewProperty, 0, 7)
+	result := make([]serverViewProperty, 0, 6)
 	if haveConfig {
 		result = append(result, viewString(7, configID), viewString(105, configID))
 	}
@@ -102,9 +85,6 @@ func latestClientBagWireProperties(properties []serverViewProperty) []serverView
 	}
 	if haveViewID {
 		result = append(result, viewInt(228, itemViewID))
-	}
-	if haveBindStatus {
-		result = append(result, viewInt(234, bindStatus))
 	}
 	return result
 }

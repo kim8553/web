@@ -59,8 +59,8 @@ func TestModernVisiblePropertyTableNegotiatesInt32NpcType(t *testing.T) {
 func TestSceneVisiblePropertyTableIncludesMaxVisuals(t *testing.T) {
 	schema := clientdata.VisibleNPCModernV1()
 	msg := visiblePropertyTable(sceneVisiblePropertyFields(schema.Fields))
-	if got := binary.LittleEndian.Uint16(msg[1:]); got != 235 {
-		t.Fatalf("scene visible property count=%d, want 235", got)
+	if got := binary.LittleEndian.Uint16(msg[1:]); got != 234 {
+		t.Fatalf("scene visible property count=%d, want 234", got)
 	}
 	needle := append([]byte("MaxVisuals"), 0, byte(clientdata.WireInt32))
 	if !bytes.Contains(msg, needle) {

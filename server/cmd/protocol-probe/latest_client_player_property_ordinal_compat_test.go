@@ -8,8 +8,8 @@ import (
 )
 
 func TestLatestClientPlayerPropertyOrdinalMapMatchesNegotiatedTable(t *testing.T) {
-	if latestClientPlayerWirePropertyTableCount != 235 {
-		t.Fatalf("negotiated property table count=%d, want 235 after append-only runtime BindStatus", latestClientPlayerWirePropertyTableCount)
+	if latestClientPlayerWirePropertyTableCount != 234 {
+		t.Fatalf("negotiated property table count=%d, want 234 after ViewID plus proven int64 currencies", latestClientPlayerWirePropertyTableCount)
 	}
 	cases := []struct {
 		name string
@@ -33,7 +33,6 @@ func TestLatestClientPlayerPropertyOrdinalMapMatchesNegotiatedTable(t *testing.T
 		{"CapitalType0", clientdata.WireInt64, 231},
 		{"CapitalType3", clientdata.WireInt64, 232},
 		{"ExchangeData", clientdata.WireInt32, 233},
-		{"BindStatus", clientdata.WireInt32, 234},
 	}
 	for _, tc := range cases {
 		got, ok := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: tc.name, typ: tc.typ}]

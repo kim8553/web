@@ -20,8 +20,8 @@ func TestLatestClientCurrentBagContainers(t *testing.T) {
 }
 
 func TestLatestClientCurrentBagRichObjectOrdinalsAreAppendOnly(t *testing.T) {
-	if latestClientPlayerWirePropertyTableCount != 235 {
-		t.Fatalf("property table=%d, want 235", latestClientPlayerWirePropertyTableCount)
+	if latestClientPlayerWirePropertyTableCount != 234 {
+		t.Fatalf("property table=%d, want 234", latestClientPlayerWirePropertyTableCount)
 	}
 	if got := latestClientPlayerWirePropertyOrdinals[latestClientPlayerPropertyKey{name: "ItemType", typ: clientdata.WireInt32}]; got != 205 {
 		t.Fatalf("ItemType/int32 ordinal=%d, want 205", got)
@@ -68,7 +68,6 @@ func TestLatestClientCurrentBagFramesAtomicRichObject(t *testing.T) {
 		viewString(0x0765, "7100568-001-0000000001-0001"), // historical UniqueID source; must stay off wire
 		viewInt(0x0766, 5),
 		viewInt(0x0767, 30),
-		viewInt(0x076A, 1),
 	}
 	frames, err := latestClientCurrentBagFrames(2, 3, 1, props)
 	if err != nil {
@@ -78,11 +77,11 @@ func TestLatestClientCurrentBagFramesAtomicRichObject(t *testing.T) {
 		t.Fatalf("frame count=%d, want 1", len(frames))
 	}
 	f := frames[0]
-	if f[0] != 0x18 || binary.LittleEndian.Uint16(f[1:3]) != 2 || binary.LittleEndian.Uint16(f[3:5]) != 3 || binary.LittleEndian.Uint16(f[5:7]) != 7 {
+	if f[0] != 0x18 || binary.LittleEndian.Uint16(f[1:3]) != 2 || binary.LittleEndian.Uint16(f[3:5]) != 3 || binary.LittleEndian.Uint16(f[5:7]) != 6 {
 		t.Fatalf("rich VIEW_ADD header=%x", f[:7])
 	}
 
-	want := []uint16{7, 105, 106, 110, 205, 228, 234}
+	want := []uint16{7, 105, 106, 110, 205, 228}
 	off := 7
 	for i, index := range want {
 		if off+2 > len(f) {

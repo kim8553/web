@@ -17,7 +17,7 @@ func TestEmbeddedMigrationContainsNormalizedSchemaAndAtomicCutover(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(all) < 2 || all[0].Version != 1 || len(all[0].SQL) < 10 {
+	if len(all) != 1 || all[0].Version != 1 || len(all[0].SQL) < 10 {
 		t.Fatalf("unexpected embedded migrations: %#v", all)
 	}
 	joined := strings.Join(all[0].SQL, "\n")
@@ -28,32 +28,6 @@ func TestEmbeddedMigrationContainsNormalizedSchemaAndAtomicCutover(t *testing.T)
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("migration missing %q", required)
-		}
-	}
-}
-
-func TestEmbeddedMigration12PersistsRuntimeBindStatus(t *testing.T) {
-	all, err := Embedded()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var migration *Migration
-	for i := range all {
-		if all[i].Version == 12 {
-			migration = &all[i]
-			break
-		}
-	}
-	if migration == nil {
-		t.Fatal("missing migration 12")
-	}
-	joined := strings.Join(migration.SQL, "\n")
-	for _, required := range []string{
-		"role_bag_items", "role_equip_items", "bind_status",
-		"TINYINT UNSIGNED NOT NULL DEFAULT 0",
-	} {
-		if !strings.Contains(joined, required) {
-			t.Fatalf("migration 12 missing %q", required)
 		}
 	}
 }

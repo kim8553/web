@@ -105,25 +105,3 @@ func TestCurrentShopConditionDetailsMessage508(t *testing.T) {
 		t.Fatalf("frame prefix=%x", frame)
 	}
 }
-
-func TestCurrentShopExchangeDefinitionAcceptsExactCurrentItemTrailingTerminator(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "exchangeitem.ini")
-	data := "[14087]\nItem=Item_xdm_exchange01,440;item_exc_fc_mml,80;\n"
-	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	got, err := loadShopExchangeDefinition(path, 14087)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Item != "Item_xdm_exchange01,440;item_exc_fc_mml,80;" {
-		t.Fatalf("Item=%q", got.Item)
-	}
-	if _, err := encodeShopExchangeConfig(shopExchangeDefinition{Item: "mat_a,1;;mat_b,1"}, shopExchangeRuntimeBind{}); err == nil {
-		t.Fatal("embedded empty Item pair must remain rejected")
-	}
-	if _, err := encodeShopExchangeConfig(shopExchangeDefinition{Prop: "CapitalType1,1;"}, shopExchangeRuntimeBind{}); err == nil {
-		t.Fatal("Prop trailing terminator is not authored in exact-current corpus and must remain rejected")
-	}
-}

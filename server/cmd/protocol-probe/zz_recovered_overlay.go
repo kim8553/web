@@ -1012,7 +1012,7 @@ func grantEquipView(link sceneMessageConnection, player *playerActor, equipCatal
 		if correct := equipBodySlot(item.EquipType); correct > 0 {
 			slot = correct
 		}
-		bag := bagItem{ConfigID: item.ConfigID, ItemType: item.ItemType, BindStatus: item.BindStatus, Hardiness: item.Hardiness, MaxHardiness: item.MaxHardiness, EquipType: item.EquipType, ArtPack: item.ArtPack}
+		bag := bagItem{ConfigID: item.ConfigID, ItemType: item.ItemType, Hardiness: item.Hardiness, MaxHardiness: item.MaxHardiness, EquipType: item.EquipType, ArtPack: item.ArtPack}
 		if equipCatalog != nil {
 			if cat, ok := equipCatalog.Lookup(item.ConfigID); ok {
 				if bag.ColorLevel == 0 {
@@ -1180,20 +1180,20 @@ func bagItemProps(view uint16, item bagItem) []serverViewProperty {
 		if isWeaponEquip(item.EquipType) {
 			return weaponRowProps(item)
 		}
-		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0786, 1), viewInt(0x0787, 1), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewInt(0x01FD, 0), viewInt(0x01FE, 0), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A0, 0), viewInt(0x07A1, 0), viewInt(0x07A3, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0))
+		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, 0), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0786, 1), viewInt(0x0787, 1), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewInt(0x01FD, 0), viewInt(0x01FE, 0), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A0, 0), viewInt(0x07A1, 0), viewInt(0x07A3, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0))
 	case 123:
-		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack))
+		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack))
 	case 125:
-		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x0768, 1), viewInt(0x076A, item.BindStatus), viewInt(0x0779, item.LogicPack), viewInt(0x07DA, item.FuncPack))
+		return append(common, viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x0768, 1), viewInt(0x076A, 0), viewInt(0x0779, item.LogicPack), viewInt(0x07DA, item.FuncPack))
 	default:
-		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack), viewInt(0x07E7, item.PropModifyPack), viewInt(0x07EE, 1))
+		return append(common, viewInt(0x0762, item.TextureType), viewInt(0x0763, item.ViewID), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, item.Amount), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, 0), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x0787, 1), viewInt(0x07DA, item.FuncPack), viewInt(0x07E7, item.PropModifyPack), viewInt(0x07EE, 1))
 	}
 }
 func equipItemProps(item bagItem) []serverViewProperty {
-	return []serverViewProperty{viewString(0x0007, item.ConfigID), viewInt(0x0761, item.ItemType), viewInt(0x0763, 2), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, 1), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewString(0x0793, ""), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A7, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0), viewString(0x07C0, "")}
+	return []serverViewProperty{viewString(0x0007, item.ConfigID), viewInt(0x0761, item.ItemType), viewInt(0x0763, 2), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, 1), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, 0), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, item.EquipType), viewString(0x0793, ""), viewByte(0x05B9, 0x29), viewInt(0x079D, 0), viewInt(0x079E, 0), viewInt(0x07A7, 0), viewInt(0x07B1, 0), viewByte(0x07B2, 0), viewString(0x07C0, "")}
 }
 func weaponRowProps(item bagItem) []serverViewProperty {
-	return []serverViewProperty{viewNest(0x05A0, item.ConfigID), viewInt(0x0761, item.ItemType), viewInt(0x0763, 2), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, 1), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, item.BindStatus), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0786, 1), viewInt(0x0787, 1), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, "Weapon"), viewInt(0x01FD, item.MaxMeleeDamage), viewInt(0x01FE, item.MinMeleeDamage), viewByte(0x05B9, 0x15), viewInt(0x079D, 1), viewInt(0x079E, 2), viewInt(0x07A0, 0), viewInt(0x07A1, 0), viewInt(0x07A3, 1), viewInt(0x07B1, 4000), viewByte(0x07B2, 1)}
+	return []serverViewProperty{viewNest(0x05A0, item.ConfigID), viewInt(0x0761, item.ItemType), viewInt(0x0763, 2), viewInt(0x0764, item.ColorLevel), viewString(0x0765, bagUniqueID(item)), viewInt(0x0766, 1), viewInt(0x0767, item.MaxAmount), viewInt(0x076A, 1), viewInt(0x076D, 0), viewInt(0x0779, item.LogicPack), viewInt(0x077A, item.ArtPack), viewInt(0x0786, 1), viewInt(0x0787, 1), viewInt(0x0788, 1), viewInt(0x078F, item.Hardiness), viewInt(0x0790, item.MaxHardiness), viewByte(0x0791, 2), viewString(0x0792, "Weapon"), viewInt(0x01FD, item.MaxMeleeDamage), viewInt(0x01FE, item.MinMeleeDamage), viewByte(0x05B9, 0x15), viewInt(0x079D, 1), viewInt(0x079E, 2), viewInt(0x07A0, 0), viewInt(0x07A1, 0), viewInt(0x07A3, 1), viewInt(0x07B1, 4000), viewByte(0x07B2, 1)}
 }
 func (p *playerActor) takeBagItem(view uint16, slot int32) (bagItem, bool) {
 	p.mu.Lock()
@@ -1610,7 +1610,7 @@ func applyUnequip(link sceneMessageConnection, player *playerActor, equipCatalog
 		log.Printf("%s: unequip body slot %d empty", remote, srcPos)
 		return true, nil
 	}
-	back := bagItem{ConfigID: old.ConfigID, ItemType: old.ItemType, Amount: 1, BindStatus: old.BindStatus, ViewID: bagViewToViewID(dstView), EquipType: old.EquipType, ArtPack: old.ArtPack, Hardiness: old.Hardiness, MaxHardiness: old.MaxHardiness}
+	back := bagItem{ConfigID: old.ConfigID, ItemType: old.ItemType, Amount: 1, ViewID: bagViewToViewID(dstView), EquipType: old.EquipType, ArtPack: old.ArtPack, Hardiness: old.Hardiness, MaxHardiness: old.MaxHardiness}
 	slot := dstPos
 	if slot <= 0 {
 		slot = bagSlotFor(player, dstView)
@@ -1747,7 +1747,7 @@ func applyEquip(link sceneMessageConnection, player *playerActor, itemCatalog *i
 	returnFrames := make([][]byte, 0)
 	old, hasOld := player.takeEquipItem(dstPos)
 	if hasOld {
-		back := bagItem{ConfigID: old.ConfigID, ItemType: old.ItemType, Amount: 1, BindStatus: old.BindStatus, ViewID: bagViewToViewID(srcView), EquipType: old.EquipType, ArtPack: old.ArtPack, Hardiness: old.Hardiness, MaxHardiness: old.MaxHardiness}
+		back := bagItem{ConfigID: old.ConfigID, ItemType: old.ItemType, Amount: 1, ViewID: bagViewToViewID(srcView), EquipType: old.EquipType, ArtPack: old.ArtPack, Hardiness: old.Hardiness, MaxHardiness: old.MaxHardiness}
 		if slot := player.addBagItem(back); slot > 0 {
 			back.Slot = int32(slot)
 			frame, err := serverViewAdd(srcView, uint16(slot), bagItemProps(srcView, back))
@@ -1757,7 +1757,7 @@ func applyEquip(link sceneMessageConnection, player *playerActor, itemCatalog *i
 			returnFrames = append(returnFrames, frame)
 		}
 	}
-	eq := wornEquipItem{ConfigID: item.ConfigID, ItemType: item.ItemType, BindStatus: item.BindStatus, Hardiness: item.Hardiness, MaxHardiness: item.MaxHardiness, Slot: dstPos}
+	eq := wornEquipItem{ConfigID: item.ConfigID, ItemType: item.ItemType, Hardiness: item.Hardiness, MaxHardiness: item.MaxHardiness, Slot: dstPos}
 	mountedModel := ""
 	if equipCatalog != nil {
 		if cat, ok := equipCatalog.Lookup(item.ConfigID); ok {
@@ -3362,7 +3362,7 @@ func appendViewProperty(msg *[]byte, property serverViewProperty) error {
 	return fmt.Errorf("property %d has no value", property.index)
 }
 func serverObjectProperty(viewID, objectIndex uint16, properties []serverViewProperty) ([]byte, error) {
-	if latestClientItemObjectView(viewID) {
+	if latestClientStarterBagView(viewID) {
 		properties = latestClientBagWireProperties(properties)
 	} else if latestClientNonBagViewOrdinalFamily(viewID) {
 		var err error
@@ -3453,7 +3453,7 @@ func (store *mysqlBagStore) Load(roleID role.RoleID) ([]bagItem, bool) {
 		return nil, false
 	}
 	rows, err := store.db.QueryContext(context.Background(), `
-SELECT config_id, item_type, amount, view_id, name, equip_type, art_pack, hardiness, max_hardiness, COALESCE(slot, 0), COALESCE(bind_status, 0)
+SELECT config_id, item_type, amount, view_id, name, equip_type, art_pack, hardiness, max_hardiness, COALESCE(slot, 0)
 FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC`, roleID)
 	if err != nil {
 		return nil, false
@@ -3464,7 +3464,7 @@ FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC`, roleID)
 		var item bagItem
 		var name, equipType sql.NullString
 		var artPack, hardiness, maxHardiness, slot sql.NullInt64
-		if err := rows.Scan(&item.ConfigID, &item.ItemType, &item.Amount, &item.ViewID, &name, &equipType, &artPack, &hardiness, &maxHardiness, &slot, &item.BindStatus); err != nil {
+		if err := rows.Scan(&item.ConfigID, &item.ItemType, &item.Amount, &item.ViewID, &name, &equipType, &artPack, &hardiness, &maxHardiness, &slot); err != nil {
 			return nil, false
 		}
 		item.Name = name.String
@@ -3502,8 +3502,8 @@ func (store *mysqlBagStore) Save(roleID role.RoleID, items []bagItem) error {
 			slot = int32(seq + 1)
 		}
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO role_bag_items(role_id, seq, slot, config_id, item_type, amount, view_id, name, equip_type, art_pack, hardiness, max_hardiness, bind_status)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, roleID, seq, slot, item.ConfigID, item.ItemType, item.Amount, item.ViewID, nullableString(item.Name), nullableString(item.EquipType), nullableInt32(item.ArtPack), nullableInt32(item.Hardiness), nullableInt32(item.MaxHardiness), item.BindStatus); err != nil {
+INSERT INTO role_bag_items(role_id, seq, slot, config_id, item_type, amount, view_id, name, equip_type, art_pack, hardiness, max_hardiness)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, roleID, seq, slot, item.ConfigID, item.ItemType, item.Amount, item.ViewID, nullableString(item.Name), nullableString(item.EquipType), nullableInt32(item.ArtPack), nullableInt32(item.Hardiness), nullableInt32(item.MaxHardiness)); err != nil {
 			return err
 		}
 	}
@@ -3514,7 +3514,7 @@ func (store *mysqlEquipStore) Load(roleID role.RoleID) ([]wornEquipItem, bool) {
 		return nil, false
 	}
 	rows, err := store.db.QueryContext(context.Background(), `
-SELECT config_id, item_type, equip_type, hardiness, max_hardiness, slot, art_pack, COALESCE(bind_status, 0)
+SELECT config_id, item_type, equip_type, hardiness, max_hardiness, slot, art_pack
 FROM role_equip_items WHERE role_id = ? ORDER BY seq ASC`, roleID)
 	if err != nil {
 		return nil, false
@@ -3524,7 +3524,7 @@ FROM role_equip_items WHERE role_id = ? ORDER BY seq ASC`, roleID)
 	for rows.Next() {
 		var item wornEquipItem
 		var artPack sql.NullInt64
-		if err := rows.Scan(&item.ConfigID, &item.ItemType, &item.EquipType, &item.Hardiness, &item.MaxHardiness, &item.Slot, &artPack, &item.BindStatus); err != nil {
+		if err := rows.Scan(&item.ConfigID, &item.ItemType, &item.EquipType, &item.Hardiness, &item.MaxHardiness, &item.Slot, &artPack); err != nil {
 			return nil, false
 		}
 		item.ArtPack = int32(artPack.Int64)
@@ -3553,8 +3553,8 @@ func (store *mysqlEquipStore) Save(roleID role.RoleID, items []wornEquipItem) er
 	}
 	for seq, item := range items {
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO role_equip_items(role_id, seq, config_id, item_type, equip_type, hardiness, max_hardiness, slot, art_pack, bind_status)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, roleID, seq, item.ConfigID, item.ItemType, item.EquipType, item.Hardiness, item.MaxHardiness, item.Slot, nullableInt32(item.ArtPack), item.BindStatus); err != nil {
+INSERT INTO role_equip_items(role_id, seq, config_id, item_type, equip_type, hardiness, max_hardiness, slot, art_pack)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, roleID, seq, item.ConfigID, item.ItemType, item.EquipType, item.Hardiness, item.MaxHardiness, item.Slot, nullableInt32(item.ArtPack)); err != nil {
 			return err
 		}
 	}
@@ -4213,7 +4213,6 @@ type bagItem struct {
 	ConfigID       string `json:"config_id"`
 	ItemType       int32  `json:"item_type"`
 	Amount         int32  `json:"amount"`
-	BindStatus     int32  `json:"bind_status,omitempty"`
 	ViewID         int32  `json:"view_id"`
 	Slot           int32  `json:"slot,omitempty"`
 	Name           string `json:"name,omitempty"`
@@ -4236,7 +4235,6 @@ type bagItem struct {
 type wornEquipItem struct {
 	ConfigID     string `json:"config_id"`
 	ItemType     int32  `json:"item_type"`
-	BindStatus   int32  `json:"bind_status,omitempty"`
 	EquipType    string `json:"equip_type"`
 	Hardiness    int32  `json:"hardiness"`
 	MaxHardiness int32  `json:"max_hardiness"`
@@ -4704,11 +4702,7 @@ func (p *playerActor) arrangeBagView(view uint16) (bagArrangeResult, bool) {
 			if rest <= 0 {
 				break
 			}
-			// Runtime BindStatus is item-instance state and must survive any
-			// container merge. Bound and unbound instances of the same ConfigID
-			// are distinct stacks; merging them would silently discard binding
-			// semantics and contradict bind-status-aware material consumption.
-			if merged[i].ConfigID != item.ConfigID || merged[i].BindStatus != item.BindStatus || merged[i].Amount >= cap {
+			if merged[i].ConfigID != item.ConfigID || merged[i].Amount >= cap {
 				continue
 			}
 			room := cap - merged[i].Amount
@@ -6474,19 +6468,95 @@ func serverEntityMove(entries []entityMove) []byte {
 	return msg
 }
 func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemCatalog *itemCatalog, bagStore bagStoreIface, currencyStore currencyStoreIface, roleID role.RoleID, custom clientCustomMessage, remote string) (bool, error) {
-	// Stage21 fail-closed safety barrier. The recovered compatibility handler
-	// used candidate selector 0x46/70, but exact-current ordinary-shop wire
-	// authority is still not present in the canonical repository. The previous
-	// body mutated live currency/bag, published frames before persistence, and
-	// saved bag/currency independently. Never mutate on an unverified selector.
-	if len(custom.Values) < 1 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != 0x46 {
+	if len(custom.Values) < 5 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != 0x46 {
 		return false, nil
 	}
-	log.Printf("%s: ordinary shop candidate selector=0x46 blocked: exact-current wire authority unavailable; legacy mutation route disabled", remote)
-	// Return false so this candidate does not claim authoritative handling; the
-	// caller currently ignores the boolean and may continue normal dispatch.
-	return false, nil
+	if player == nil {
+		log.Printf("%s: reject shop buy before player spawn", remote)
+		return true, nil
+	}
+	if custom.Values[1].Type != 6 && custom.Values[1].Type != 7 {
+		log.Printf("%s: shop buy: shopid must be a string", remote)
+		return true, nil
+	}
+	shopID := custom.Values[1].Text
+	if custom.Values[2].Type != 2 || custom.Values[3].Type != 2 || custom.Values[4].Type != 2 {
+		log.Printf("%s: shop buy %s: page/pos/amount must be int32", remote, shopID)
+		return true, nil
+	}
+	page := custom.Values[2].Int32
+	pos := custom.Values[3].Int32
+	amount := custom.Values[4].Int32
+	if page < 0 || pos <= 0 || amount < 1 || amount > 99 {
+		log.Printf("%s: shop buy %s malformed current-client page=%d pos=%d amount=%d", remote, shopID, page, pos, amount)
+		return true, nil
+	}
+	items, _, _, err := shopCatalogItems(defaultShopINIPath, shopID)
+	if err != nil {
+		log.Printf("%s: shop buy %s: %v", remote, shopID, err)
+		return true, nil
+	}
+	listing := currentShopListing(items, page, pos)
+	if listing == nil {
+		log.Printf("%s: shop buy %s no listing at page=%d pos=%d", remote, shopID, page, pos)
+		return true, nil
+	}
+	item := *listing
+	if item.priceMode < 0 || item.priceMode > 2 {
+		log.Printf("%s: shop buy %s item %s unsupported capital type %d", remote, shopID, item.configID, item.priceMode)
+		return true, nil
+	}
+	total := int64(item.price) * int64(amount)
+	switch item.priceMode {
+	case 0:
+		_, gold, _, _ := player.currencySnapshot()
+		if int64(gold) < total {
+			log.Printf("%s: shop buy %s item %s needs gold %d, has %d", remote, shopID, item.configID, total, gold)
+			return true, nil
+		}
+		player.addGold(-int32(total))
+	case 1:
+		silver, _, _, _ := player.currencySnapshot()
+		if int64(silver) < total {
+			log.Printf("%s: shop buy %s item %s needs silver %d, has %d", remote, shopID, item.configID, total, silver)
+			return true, nil
+		}
+		player.addSilver(-int32(total))
+	case 2:
+		_, _, silverCard, _ := player.currencySnapshot()
+		if int64(silverCard) < total {
+			log.Printf("%s: shop buy %s item %s needs silverCard %d, has %d", remote, shopID, item.configID, total, silverCard)
+			return true, nil
+		}
+		player.addSilverCard(-int32(total))
+	}
+	currencyFrame, err := player.currenciesUpdate()
+	if err != nil {
+		return true, err
+	}
+	reward := bagItem{ConfigID: item.configID, Amount: amount}
+	reward = enrichBagItem(reward, itemCatalog, nil)
+	slot := player.addBagItem(reward)
+	view := bagViewForViewID(reward.ViewID)
+	itemFrame, err := serverViewAdd(view, uint16(slot), bagItemProps(view, reward))
+	if err != nil {
+		return true, err
+	}
+	frames := [][]byte{currencyFrame, itemFrame}
+	if err := writeFrames(link, frames...); err != nil {
+		return true, err
+	}
+	persistBagEquip(bagStore, nil, roleID, player)
+	if currencyStore != nil {
+		silver, gold, silverCard, silverTicket := player.currencySnapshot()
+		if err := currencyStore.Save(roleID, currencySnapshot{Silver: silver, Gold: gold, SilverCard: silverCard, SilverTicket: silverTicket}); err != nil {
+			log.Printf("%s: persist currency after shop buy: %v", remote, err)
+		}
+	}
+	log.Printf("%s: shop buy %s item %s x%d capital=%d price=%d -> bag view=%d slot=%d", remote, shopID, item.configID, amount, item.priceMode, item.price, view, slot)
+	return true, nil
 }
+
 func shopCatalogItems(path, shopID string) ([]shopCatalogItem, int32, int32, error) {
 	// The current client derives its buy-back UI page locally for ordinary
 	// shops. Return only authored shop.ini rows; do not append synthetic

@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-
-	"github.com/local/9yin-go-server/internal/exchangebinding"
 )
 
 // Exact current lua64 contract recovered from custom_sender.lua and
@@ -95,15 +93,13 @@ func parseShopExchangeBuyRequest(custom clientCustomMessage) (shopExchangeBuyReq
 // complete. The exact current InitCurExchangeData 11-field grammar is now
 // implemented separately. This handler still blocks before S2C 557 because
 // ShowBind and ExchangeBind are runtime response values not authored by current
-// ExchangeItem.ini. Exact-current Lua+text prove ExchangeBind is the first-result
-// material-derived bind preview (1=bound, 0=unbound). The form response remains
-// blocked because the independent ShowBind server rule is not yet proven.
-func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, itemCatalog *itemCatalog, persistenceReady bool, custom clientCustomMessage, remote string) (bool, error) {
+// ExchangeItem.ini, and their server-authoritative derivation is not yet proven.
+func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, custom clientCustomMessage, remote string) (bool, error) {
 	if request, matched, err := parseShopExchangeFormRequest(custom); matched {
 		if err != nil {
 			return true, err
 		}
-		log.Printf("%s: current shop exchange form request view=%d bind=%d shop=%s page=%d pos=%d blocked: ShowBind server rule unresolved (ExchangeBind first-result material preview proven)",
+		log.Printf("%s: current shop exchange form request view=%d bind=%d shop=%s page=%d pos=%d blocked: ShowBind/ExchangeBind server rule unresolved",
 			remote, request.ViewIdent, request.BindIndex, request.ShopID, request.Page, request.Position)
 		return true, nil
 	}
@@ -150,33 +146,8 @@ func handleShopExchangeContract(link sceneMessageConnection, player *playerActor
 		if err != nil {
 			return true, err
 		}
-		if player == nil {
-			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: no active player",
-				remote, request.ShopID, request.Page, request.Position, request.Count)
-			return true, nil
-		}
-		authority, loadErr := loadDefaultCurrentShopConditionAuthority()
-		if loadErr != nil {
-			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: exact-current authority unavailable: %v",
-				remote, request.ShopID, request.Page, request.Position, request.Count, loadErr)
-			return true, nil
-		}
-		preflight, preflightErr := runShopExchangeReadOnlyPreflight(defaultShopINIPath, defaultExchangeItemINIPath, authority, player, itemCatalog, request)
-		if preflightErr != nil {
-			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: preflight error: %v",
-				remote, request.ShopID, request.Page, request.Position, request.Count, preflightErr)
-			return true, nil
-		}
-		// Dry-run only: exact-current final persisted BindStatus is still unresolved,
-		// therefore the zero-value binding decision must keep this gate closed.
-		// No mutation or persistence helper is invoked from this handler.
-		var bindingDecision exchangebinding.Decision
-		mutationGate := currentShopExchangeMutationGate(preflight, bindingDecision, persistenceReady)
-		log.Printf("%s: current shop exchange mutation gate allowed=%t blocks=%v persistence_ready=%t",
-			remote, mutationGate.Allowed(), mutationGate.Blocks(), persistenceReady)
-		log.Printf("%s: current shop exchange buy preflight shop=%s page=%d pos=%d count=%d exchange_data=%d output=%s x%d conditions_supported=%t conditions_satisfied=%t properties_supported=%t properties_satisfied=%t materials_satisfied=%t capacity_supported=%t capacity_satisfied=%t exchange_bind_preview=%d blocked: final persisted BindStatus/atomic mutation unresolved",
-			remote, request.ShopID, request.Page, request.Position, request.Count, preflight.Listing.exchangeData, preflight.Listing.configID, preflight.OutputAmount,
-			preflight.ConditionSupported, preflight.ConditionSatisfied, preflight.PropertySupported, preflight.PropertySatisfied, preflight.MaterialPlan.Satisfied, preflight.CapacitySupported, preflight.CapacitySatisfied, preflight.ExchangeBindPreview)
+		log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: exchange cost/condition commit path unresolved",
+			remote, request.ShopID, request.Page, request.Position, request.Count)
 		return true, nil
 	}
 	return false, nil

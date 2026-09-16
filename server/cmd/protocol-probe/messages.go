@@ -327,7 +327,7 @@ func serverCreateViewWithProperties(spec serverViewSpec, properties []serverView
 	return msg, nil
 }
 func serverViewAdd(viewID, objectIndex uint16, properties []serverViewProperty) ([]byte, error) {
-	if latestClientItemObjectView(viewID) {
+	if latestClientStarterBagView(viewID) {
 		properties = latestClientBagWireProperties(properties)
 	} else if latestClientNonBagViewOrdinalFamily(viewID) {
 		var err error

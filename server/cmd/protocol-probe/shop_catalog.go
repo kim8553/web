@@ -133,12 +133,8 @@ func loadShopCatalogSection(path, shopID string) ([]shopCatalogItem, int32, int3
 	if len(items) == 0 {
 		return nil, 0, 0, fmt.Errorf("shop catalog %s section %q has no items", path, shopID)
 	}
-	// PageInfo can underdeclare an authored numeric page (the exact RAR has
-	// Shop_special_001: PageInfo=Page1 but an item at page key 1). The
-	// current client's PageCount must include every authored item page;
-	// never synthesize products or alter their page/position coordinates.
-	if authoredPageCount := maxPageKey + 1; authoredPageCount > pageCount {
-		pageCount = authoredPageCount
+	if pageCount == 0 {
+		pageCount = maxPageKey + 1
 	}
 	return items, shopType, pageCount, nil
 }

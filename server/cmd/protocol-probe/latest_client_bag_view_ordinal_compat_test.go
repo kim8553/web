@@ -23,22 +23,21 @@ func TestLatestClientBagWirePropertiesUsesRichCurrentObjectContract(t *testing.T
 		viewString(0x0765, "7100568-001-0000000001-0001"),
 		viewInt(0x0766, 5),
 		viewInt(0x0767, 30),
-		viewInt(0x076A, 1), // semantic source only; must normalize to current ordinal 234
 		viewInt(0x0779, 6), // unsupported historical field must stay off wire
 	}
 	got := latestClientBagWireProperties(props)
-	if len(got) != 7 {
-		t.Fatalf("bag wire property count=%d, want 7", len(got))
+	if len(got) != 6 {
+		t.Fatalf("bag wire property count=%d, want 6", len(got))
 	}
-	want := []uint16{7, 105, 106, 110, 205, 228, 234}
+	want := []uint16{7, 105, 106, 110, 205, 228}
 	for i, index := range want {
 		if got[i].index != index {
 			t.Fatalf("property[%d].index=%d, want %d", i, got[i].index, index)
 		}
 	}
 	for _, property := range got {
-		if property.index == 0x076A {
-			t.Fatal("historical raw BindStatus property 0x076A must never be emitted on current wire")
+		if property.index == 229 {
+			t.Fatal("Ident ordinal 229 must not be emitted")
 		}
 		if int(property.index) >= latestClientPlayerWirePropertyTableCount {
 			t.Fatalf("emitted out-of-range property %d >= %d", property.index, latestClientPlayerWirePropertyTableCount)

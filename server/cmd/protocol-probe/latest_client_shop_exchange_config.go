@@ -76,10 +76,10 @@ func validateShopExchangeDefinition(definition shopExchangeDefinition) error {
 			return fmt.Errorf("%s contains unsupported top-level delimiter", name)
 		}
 	}
-	if err := validateExchangePairList(definition.Item, 32, "Item", true); err != nil {
+	if err := validateExchangePairList(definition.Item, 32, "Item"); err != nil {
 		return err
 	}
-	if err := validateExchangePairList(definition.Prop, 64, "Prop", false); err != nil {
+	if err := validateExchangePairList(definition.Prop, 64, "Prop"); err != nil {
 		return err
 	}
 	for name, value := range map[string]string{
@@ -94,19 +94,11 @@ func validateShopExchangeDefinition(definition shopExchangeDefinition) error {
 	return nil
 }
 
-func validateExchangePairList(value string, bits int, name string, allowTrailingTerminator bool) error {
+func validateExchangePairList(value string, bits int, name string) error {
 	if value == "" {
 		return nil
 	}
-	entries := strings.Split(value, ";")
-	for i, entry := range entries {
-		entry = strings.TrimSpace(entry)
-		if entry == "" && allowTrailingTerminator && i == len(entries)-1 {
-			continue
-		}
-		if entry == "" {
-			return fmt.Errorf("%s contains empty pair entry", name)
-		}
+	for _, entry := range strings.Split(value, ";") {
 		parts := strings.Split(entry, ",")
 		if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
 			return fmt.Errorf("%s entry %q does not match current name,value grammar", name, entry)

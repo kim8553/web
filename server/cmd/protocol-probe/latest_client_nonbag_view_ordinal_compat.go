@@ -16,7 +16,7 @@ func latestClientNonBagViewOrdinalFamily(viewID uint16) bool {
 }
 
 // latestClientNonBagViewProperties maps only name/type pairs already present in
-// the current negotiated table. The three legacy View43 metadata IDs
+// the current 229-entry negotiated table. The three legacy View43 metadata IDs
 // below are deliberately omitted: current FxGameLogic references
 // NeiGongLevel/WuXing/BufferID through resource/config paths, while no matching
 // negotiated fields exist. Adding new ordinals for them would be speculative.

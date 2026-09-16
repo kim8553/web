@@ -1164,9 +1164,16 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 				return
 			}
 			log.Printf("%s: sent PlayerEntry opcode=0x0B object=%#x scene=%s resource=%s", conn.RemoteAddr(), playerObjectID, activeRole.Location.Scene.Config, activeRole.Location.Scene.Resource)
-			if remappedPosition, remapped := stage29LegacyBorn02Position(activeRole.Location.Scene, activeRole.Location.Position); remapped {
+			legacyBorn02 := activeRole.Location.Scene.Resource == "born02" &&
+				activeRole.Location.Position.X > 693.907 && activeRole.Location.Position.X < 693.909 &&
+				activeRole.Location.Position.Y > 24.693 && activeRole.Location.Position.Y < 24.695 &&
+				activeRole.Location.Position.Z > 404.349 && activeRole.Location.Position.Z < 404.351
+			if legacyBorn02 {
 				old := activeRole.Location.Position
-				activeRole.Location.Position = remappedPosition
+				activeRole.Location.Position.X = 905.069
+				activeRole.Location.Position.Y = 10.810
+				activeRole.Location.Position.Z = 196.980
+				activeRole.Location.Position.Orient = 1.610
 				log.Printf("%s: latest-client LEGACY-BORN02-REMAP initial spawn old=(%.3f,%.3f,%.3f,%.3f) new=(%.3f,%.3f,%.3f,%.3f) persistence=unchanged", conn.RemoteAddr(), old.X, old.Y, old.Z, old.Orient, activeRole.Location.Position.X, activeRole.Location.Position.Y, activeRole.Location.Position.Z, activeRole.Location.Position.Orient)
 			}
 			log.Printf("%s: latest-client player spawn diagnostic scene=%s resource=%s x=%.3f y=%.3f z=%.3f orient=%.3f", conn.RemoteAddr(), activeRole.Location.Scene.Config, activeRole.Location.Scene.Resource, activeRole.Location.Position.X, activeRole.Location.Position.Y, activeRole.Location.Position.Z, activeRole.Location.Position.Orient)
@@ -1284,8 +1291,14 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 			// whether initial player-location delivery has the same timing contract.
 			if runtime != nil && !runtime.awaitingStableReentryReady && !explicitSceneReady {
 				position := runtime.activeRole.Location.Position
-				if remappedPosition, remapped := stage29LegacyBorn02Position(runtime.activeRole.Location.Scene, position); remapped {
-					position = remappedPosition
+				if runtime.activeRole.Location.Scene.Resource == "born02" &&
+					position.X > 693.907 && position.X < 693.909 &&
+					position.Y > 24.693 && position.Y < 24.695 &&
+					position.Z > 404.349 && position.Z < 404.351 {
+					position.X = 905.069
+					position.Y = 10.810
+					position.Z = 196.980
+					position.Orient = 1.610
 					log.Printf("%s: latest-client LEGACY-BORN02-REMAP ClientReady replay new=(%.3f,%.3f,%.3f,%.3f) runtime-persistence=unchanged", conn.RemoteAddr(), position.X, position.Y, position.Z, position.Orient)
 				}
 				if err := link.WriteFrame(serverLocation(playerObjectID, playerOwnerID, worldTransform(position))); err != nil {
@@ -1587,10 +1600,13 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 			}
 			if custom, ok, _ := parseClientActivityCustomMessage(plain); ok && len(custom.Values) > 0 && custom.Values[0].Type == 2 {
 				id := custom.Values[0].Int32
-				traceShopWireCustom(custom, conn.RemoteAddr().String())
 				allowed := id == 200 || id == 201 || id == 240 || id == 211 || id == 215 || id == 216 || id == 217 || id == 218 || id == 54 || id == 1006 || id == 431 || id == 195 || id == 30 || id == 31 || id == 34 || id == 36 || id == 107 || id == 161 || id == 150 || id == 70
 				if allowed {
-					// Stage22: observation already emitted once before activity dispatch.
+					arguments := make([]string, 0, len(custom.Values)-1)
+					for _, value := range custom.Values[1:] {
+						arguments = append(arguments, value.String())
+					}
+					log.Printf("%s: client activity CustomSend opcode=0x0A msg_id=%d args=[%s]", conn.RemoteAddr(), id, strings.Join(arguments, ", "))
 					switch id {
 					case 211:
 						if _, handleErr := handleSkillCustom(link, player, world, custom, conn.RemoteAddr().String()); handleErr != nil {
@@ -1706,7 +1722,11 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 			if custom, ok, _ := parseClientActivityCustomMessage(plain); ok && len(custom.Values) > 0 && custom.Values[0].Type == 2 {
 				id := custom.Values[0].Int32
 				if id != 924 && id != 15 && id != 9 {
-					// Stage22: observation already emitted once before activity dispatch.
+					arguments := make([]string, 0, len(custom.Values)-1)
+					for _, value := range custom.Values[1:] {
+						arguments = append(arguments, value.String())
+					}
+					log.Printf("%s: unhandled client activity CustomSend opcode=0x0A msg_id=%d args=[%s]", conn.RemoteAddr(), id, strings.Join(arguments, ", "))
 				}
 			}
 		} else if plain[0] == 0x07 {
@@ -1773,7 +1793,11 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 				log.Printf("%s: C2S custom first value must be int message ID, got %s", conn.RemoteAddr(), custom.Values[0])
 				continue
 			}
-			traceShopWireCustom(custom, conn.RemoteAddr().String())
+			arguments := make([]string, 0, len(custom.Values)-1)
+			for _, value := range custom.Values[1:] {
+				arguments = append(arguments, value.String())
+			}
+			log.Printf("%s: client CustomSend opcode=0x%02X msg_id=%d args=[%s]", conn.RemoteAddr(), custom.Opcode, custom.Values[0].Int32, strings.Join(arguments, ", "))
 			switch custom.Values[0].Int32 {
 			case 30:
 				if _, handleErr := handleMoveItemCustom(link, player, itemCatalog, equipCatalog, bagStore, equipStore, selectedRoleID(selected), custom, conn.RemoteAddr().String()); handleErr != nil {
@@ -1800,7 +1824,7 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 					log.Printf("%s: handle block state: %v", conn.RemoteAddr(), handleErr)
 				}
 			case 64, 69, 79:
-				if _, handleErr := handleShopExchangeContract(link, player, itemCatalog, currentShopExchangePersistenceReady(selectedRoleID(selected), bagStore), custom, conn.RemoteAddr().String()); handleErr != nil {
+				if _, handleErr := handleShopExchangeContract(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
 					log.Printf("%s: handle current shop exchange contract: %v", conn.RemoteAddr(), handleErr)
 				}
 			case 70:
@@ -2141,10 +2165,6 @@ func sceneVisiblePropertyFields(npcFields []clientdata.FieldSpec) []clientdata.F
 		// property getter (the result is tested in EAX and passed as int32).
 		// Append only so every previously negotiated ordinal remains stable.
 		clientdata.FieldSpec{Index: 0x0772, Name: "ExchangeData", Type: clientdata.WireInt32},
-		// Runtime item-instance BindStatus is append-only after ExchangeData. The
-		// FieldSpec Index records its historical semantic source ID; opcode 0x09
-		// negotiates by slice order, so the current wire ordinal is 234.
-		clientdata.FieldSpec{Index: 0x076A, Name: "BindStatus", Type: clientdata.WireInt32},
 	)
 	return fields
 }

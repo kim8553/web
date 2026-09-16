@@ -1,0 +1,30 @@
+name: Stage43 Skill Resource Intake Preflight
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'tools/stage43_skill_new_preflight.py'
+      - 'tools/test_stage43_skill_new_preflight.py'
+      - '.github/workflows/stage43-skill-new-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-resource-independent-skill-intake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile read-only intake script
+        run: python3 -m py_compile tools/stage43_skill_new_preflight.py tools/test_stage43_skill_new_preflight.py
+      - name: Run synthetic skill_new.ini fixtures (no game assets)
+        run: python3 -m unittest discover -s tools -p 'test_stage43_skill_new_preflight.py' -v
+      - name: State scope
+        run: |
+          echo 'uploaded_skill_new_ini=NOT_PUBLISHED'
+          echo 'server_resource_corpus=NOT_AVAILABLE_IN_CI'
+          echo 'combat_runtime=NOT_RUN'
+          echo 'live_e2e=NOT_RUN'

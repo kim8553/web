@@ -1,0 +1,28 @@
+name: Stage46 Private BIN64 Index Gate (synthetic only)
+
+on:
+  push:
+    branches:
+      - stage37-current-recovery-20260916
+    paths:
+      - tools/stage46_current_bin64_index_gate.py
+      - .github/workflows/stage46-private-bin64-index-gate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-read-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout recovery branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify syntax
+        run: python -m py_compile tools/stage46_current_bin64_index_gate.py
+      - name: Run synthetic fixture tests only
+        run: python tools/stage46_current_bin64_index_gate.py --self-test

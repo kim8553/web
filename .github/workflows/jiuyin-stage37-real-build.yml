@@ -21,6 +21,7 @@ on:
       - 'tools/stage37_current_recovery_stage15.sh'
       - 'tools/stage37_current_recovery_stage16.sh'
       - 'tools/stage37_current_recovery_stage17.sh'
+      - 'tools/stage37_current_recovery_stage18.sh'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
       - 'tools/stage37_stage9_harden_persistence_ready.py'
       - 'recovery/postbuild_files/internal__shopbuygate__decision.go'
@@ -46,9 +47,9 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct, verify, and test Stage17 regular NPC shop atomic persistence target
+      - name: Reconstruct, verify, and audit Stage18 regular NPC shop live-state helpers
         shell: bash
-        run: bash tools/stage37_current_recovery_stage17.sh
+        run: bash tools/stage37_current_recovery_stage18.sh
 
       - name: Upload verification evidence
         if: always()

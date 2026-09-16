@@ -10,7 +10,12 @@ grep -Fx 'current_client_selector_verified=0' "$ROOT/stage22_shop_wire_trace_sta
 grep -Fx 'safe_production_handler_wiring=OFF' "$ROOT/stage22_shop_wire_trace_status.log"
 grep -Fx 'legacy_candidate_mutation_route=DISABLED_FAIL_CLOSED' "$ROOT/stage22_shop_wire_trace_status.log"
 
-test "$(awk '{print $1}' "$ROOT/generated-manifest.sha256")" = 'bc2aeaf77ce9d9b198d725356b976599063b12c3324fc548e41298c8c7e46d4a'
+# Exact Stage22 manifest observed in the successful Stage22 Actions artifact.
+expected_manifest='bc2aeaf77ce9d9b198d725356b976599063b12c3324fc548e41298c8c7e46d9a'
+actual_manifest="$(awk '{print $1}' "$ROOT/generated-manifest.sha256")"
+echo "stage23_expected_stage22_manifest_sha256=$expected_manifest"
+echo "stage23_actual_stage22_manifest_sha256=$actual_manifest"
+test "$actual_manifest" = "$expected_manifest"
 python3 -m unittest discover -s tests -p 'test_stage37_shop_wire_diff.py' -v > "$ROOT/stage23_shop_wire_diff_test.log" 2>&1
 echo 0 > "$ROOT/stage23_shop_wire_diff_test.exit"
 

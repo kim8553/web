@@ -2,7 +2,7 @@
 
 ## Authority, access and scope
 
-- Parent baseline: `dd7f69401b8beeffaec5a4634d8c88d4f3078abe` on `stage37-current-recovery-20260916`; retain the cumulative `server/` tree based on `9yin-go-server1.rar`. No code rollback.
+- Starting baseline: `dd7f69401b8beeffaec5a4634d8c88d4f3078abe` on `stage37-current-recovery-20260916`; retain the cumulative `server/` tree based on `9yin-go-server1.rar`. No code rollback.
 - The *private* Drive `res/ini.package` and `res/lua.package` were fetched into a temporary local execution environment. Both full-file SHA-256 digests match Stage44. Their bytes and extracted content are NOT in this repository, this report, or public Actions artifacts.
 - The primary header interpretation is limited to the existing **Stage39** `fxres.exe` machine-code fingerprint (`recovery/STAGE39_FXRES_PCK0_HEADER_CODE_AUDIT_20260916.md`, `tools/stage39_pck0_header_code_probe.py`); the new probe does not extend that fingerprint to index decoding.
 - Direct Drive fetch of the discovered `bin64/fxres.exe` was rejected by Drive with HTTP 403, `cannotDownloadAbusiveFile`. Its *existence* was verified; a fresh copy was not obtained or newly disassembled. Do not bypass the provider block, guess decryption or request repeat uploads before checking existing authorized evidence.
@@ -28,12 +28,13 @@ A bounded zlib decoder reached EOF with a valid checksum for **only the first st
 
 - Committed tool: `tools/stage45_pck0_first_stream_probe.py`. Bounded first stream to 8 MiB compressed/4 MiB decompressed and input package to 128 MiB. It fails closed for unexpected primary headers, out-of-range index, truncated or corrupt zlib stream, compressed-limit overflow and decompression-limit overflow. Reports offsets, lengths, hashes and prefix class only; writes no extracted files.
 - Local Python syntax check: **PASS**. Synthetic fixture self-test: **PASS**, including valid INI/Lua prefixes and negative header, count, boundary, truncation, zlib checksum, decompression bomb and compressed-cap tests. Read-only execution on both private original packages: **PASS for the stated anonymous first-stream observations only**.
-- Stage44 Actions succeeded previously, but that does not constitute a Stage45 CI result. New Stage45 Actions, Go test, race, vet, Windows amd64 build, server boot, game login, NPC shop LIVE/E2E: **NOT RUN / NOT VERIFIED** here. No server gameplay code was changed.
+- New Stage45 Actions run [35115638900](https://github.com/kim8553/web/actions/runs/35115638900), HEAD `b912f51a7473eed5679607572d65afb04dd6aa4a`: **SUCCESS**. Verified job `synthetic-read-only`, Python syntax step and synthetic fixture self-test step both **SUCCESS**; uses no proprietary package input. Stage44 Actions success is separate historical evidence.
+- Go test, race, vet, Windows amd64 build, server boot, game login, NPC shop LIVE/E2E: **NOT RUN / NOT VERIFIED** for Stage45. No server gameplay code was changed.
 
 ## NPC shop source-level boundary
 
-- `server/cmd/protocol-probe/shop_catalog.go` opens the configured `resources/modern/share/trade/shop.ini` and matches the **exact** `[shopID]` section; it rejects absent/empty catalogs. Stage44 determined the Drive unpacked `shop.ini` is byte-identical to the legacy RAR file and lacks exact `[Shop_GB_Yishiting]`. Similar suffixes must not substitute.
-- `server/cmd/protocol-probe/npc_service_audit.go` explicitly distinguishes `catalog_ready` from purchase `ready`, with `shopreadiness.FromCatalogError`; catalog presence alone does not authorize purchasing.
+- `server/cmd/protocol-probe/shop_catalog.go` opens configured `resources/modern/share/trade/shop.ini` and matches the **exact** `[shopID]` section; it rejects absent/empty catalogs. Stage44 determined Drive's unpacked `shop.ini` is byte-identical to the legacy RAR file and lacks exact `[Shop_GB_Yishiting]`. Similar suffixes must not substitute.
+- `server/cmd/protocol-probe/npc_service_audit.go` explicitly distinguishes `catalog_ready` from purchase `ready`. `server/internal/shopreadiness/status.go` leaves `PurchaseReady=false` **even when the exact catalog exists**; catalog presence alone does not authorize purchasing.
 - `server/cmd/protocol-probe/latest_client_shop_exchange_gate.go` checks independent condition, property, materials, capacity, binding and persistence evidence. `latest_client_shop_wire_trace.go` is bounded *observation only*, does not establish an ordinary shop selector, mutate state or send replies.
 - The current package's named shop resource, exact NPC shop ID and ordinary buy packet/currency contract remain **UNKNOWN**; no current-package-vs-unpacked shop SHA comparison is possible yet. Preserve fail-closed `ready=false`. **No GM web item-grant source or tests were touched.**
 

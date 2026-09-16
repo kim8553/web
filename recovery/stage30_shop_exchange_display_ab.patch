@@ -1,0 +1,168 @@
+diff --git a/cmd/protocol-probe/scene_lifecycle.go b/cmd/protocol-probe/scene_lifecycle.go
+index 3191e73..f741406 100644
+--- a/cmd/protocol-probe/scene_lifecycle.go
++++ b/cmd/protocol-probe/scene_lifecycle.go
+@@ -10,6 +10,7 @@ import (
+ 	"github.com/local/9yin-go-server/internal/role"
+ 	worldcore "github.com/local/9yin-go-server/internal/world"
+ 	"log"
++	"os"
+ 	"sort"
+ 	"strings"
+ 	"sync"
+@@ -513,6 +514,12 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
+ 	}
+ 	stats := summarizeStage27ShopDisplayRows(items)
+ 	log.Printf("shop display catalog shop=%q rows=%d ordinary=%d exchange_skipped=%d exchange_missing_data=%d unsupported_skipped=%d invalid_ordinary_coordinates=%d", shopID, len(items), stats.Ordinary, stats.ExchangeSkipped, stats.ExchangeMissingData, stats.UnsupportedSkipped, stats.InvalidOrdinaryCoordinates)
++	// Opt-in diagnostic only; the exact-current purchase mutation gate is unchanged.
++	exchangeAB := os.Getenv("NINEYIN_SHOP_EXCHANGE_VIEW_AB") == "1"
++	displayRows, exchangeStats := stage30ShopExchangeDisplayRows(items, exchangeAB)
++	if exchangeAB {
++		log.Printf("shop exchange view AB shop=%q eligible=%d displayed=%d missing_data=%d invalid_slot=%d capacity_blocked=%t collision_blocked=%t mutation=unchanged_client_render=unverified", shopID, exchangeStats.Eligible, exchangeStats.Displayed, exchangeStats.MissingExchangeData, exchangeStats.InvalidExchangeSlot, exchangeStats.CapacityBlocked, exchangeStats.CollisionBlocked)
++	}
+ 	frame, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 100}, latestClientShopViewProperties(shopID, shopType, pageCount))
+ 	if err != nil {
+ 		return fmt.Errorf("encode shop view %q: %w", shopID, err)
+@@ -521,12 +528,7 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
+ 		return fmt.Errorf("create shop view %q: %w", shopID, err)
+ 	}
+ 	sentItemAdds := 0
+-	for _, item := range items {
+-		switch item.priceMode {
+-		case 0, 1, 2:
+-		default:
+-			continue
+-		}
++	for _, item := range displayRows {
+ 		objectIndex, ok := currentShopViewObjectIndex(item)
+ 		if !ok {
+ 			return fmt.Errorf("shop %q item %q has invalid current-client page=%d position=%d", shopID, item.configID, item.page, item.position)
+diff --git a/cmd/protocol-probe/stage30_shop_exchange_display_ab.go b/cmd/protocol-probe/stage30_shop_exchange_display_ab.go
+new file mode 100644
+index 0000000..9a83e57
+--- /dev/null
++++ b/cmd/protocol-probe/stage30_shop_exchange_display_ab.go
+@@ -0,0 +1,75 @@
++package main
++
++// stage30ShopExchangeDisplayAB is read-only: it changes which already-authored
++// item rows are sent in a diagnostic View61. It never authorizes or executes a
++// purchase. The default path preserves Stage27's ordinary-only listing.
++type stage30ShopExchangeDisplayStats struct {
++	Eligible            int
++	MissingExchangeData int
++	InvalidExchangeSlot int
++	Displayed           int
++	CapacityBlocked     bool
++	CollisionBlocked    bool
++}
++
++// stage30ShopExchangeDisplayRows uses only the existing current-client
++// ExchangeData/int32 ordinal and objectIndex mapping. The opt-in A/B path
++// declines the entire exchange extension when the authored rows cannot be
++// represented unambiguously in the existing 100-capacity shop view.
++func stage30ShopExchangeDisplayRows(items []shopCatalogItem, enabled bool) ([]shopCatalogItem, stage30ShopExchangeDisplayStats) {
++	ordinary := make([]shopCatalogItem, 0, len(items))
++	var stats stage30ShopExchangeDisplayStats
++	for _, item := range items {
++		switch item.priceMode {
++		case 0, 1, 2:
++			ordinary = append(ordinary, item)
++		case 3:
++			if item.exchangeData <= 0 {
++				stats.MissingExchangeData++
++			} else if _, ok := currentShopViewObjectIndex(item); !ok {
++				stats.InvalidExchangeSlot++
++			} else {
++				stats.Eligible++
++			}
++		}
++	}
++	if !enabled || stats.Eligible == 0 {
++		return ordinary, stats
++	}
++	if len(ordinary)+stats.Eligible > 100 {
++		stats.CapacityBlocked = true
++		return ordinary, stats
++	}
++	all := make([]shopCatalogItem, 0, len(ordinary)+stats.Eligible)
++	seen := make(map[uint16]struct{}, len(ordinary)+stats.Eligible)
++	for _, item := range items {
++		include := false
++		switch item.priceMode {
++		case 0, 1, 2:
++			include = true
++		case 3:
++			if item.exchangeData > 0 {
++				_, include = currentShopViewObjectIndex(item)
++			}
++		}
++		if !include {
++			continue
++		}
++		index, ok := currentShopViewObjectIndex(item)
++		if !ok { // ordinary invalid coordinates remain subject to Stage27's error.
++			stats.InvalidExchangeSlot++
++			stats.CollisionBlocked = true
++			return ordinary, stats
++		}
++		if _, exists := seen[index]; exists {
++			stats.CollisionBlocked = true
++			return ordinary, stats
++		}
++		seen[index] = struct{}{}
++		all = append(all, item)
++		if item.priceMode == 3 {
++			stats.Displayed++
++		}
++	}
++	return all, stats
++}
+diff --git a/cmd/protocol-probe/stage30_shop_exchange_display_ab_test.go b/cmd/protocol-probe/stage30_shop_exchange_display_ab_test.go
+new file mode 100644
+index 0000000..0a4bacc
+--- /dev/null
++++ b/cmd/protocol-probe/stage30_shop_exchange_display_ab_test.go
+@@ -0,0 +1,42 @@
++package main
++
++import "testing"
++
++func TestStage30ExchangeABOffPreservesStage27OrdinaryOnly(t *testing.T) {
++	items := []shopCatalogItem{{configID: "first", page: 0, position: 0, priceMode: 1}, {configID: "exchange", page: 0, position: 1, priceMode: 3, exchangeData: 13097}, {configID: "last", page: 0, position: 2, priceMode: 2}}
++	got, stats := stage30ShopExchangeDisplayRows(items, false)
++	if len(got) != 2 || got[0].configID != "first" || got[1].configID != "last" || stats.Displayed != 0 || stats.Eligible != 1 {
++		t.Fatalf("disabled rows=%+v stats=%+v", got, stats)
++	}
++}
++func TestStage30ExchangeABIncludesOnlyAuthoredValidDistinctRows(t *testing.T) {
++	items := []shopCatalogItem{{configID: "first", page: 0, position: 0, priceMode: 1}, {configID: "exchange", page: 1, position: 0, priceMode: 3, exchangeData: 13097}, {configID: "missing", page: 1, position: 1, priceMode: 3, exchangeData: 0}, {configID: "other", page: 1, position: 2, priceMode: 3, exchangeData: 13098}}
++	got, stats := stage30ShopExchangeDisplayRows(items, true)
++	if len(got) != 3 || got[0].configID != "first" || got[1].configID != "exchange" || got[2].configID != "other" || stats.Displayed != 2 || stats.MissingExchangeData != 1 || stats.CapacityBlocked || stats.CollisionBlocked {
++		t.Fatalf("enabled rows=%+v stats=%+v", got, stats)
++	}
++}
++func TestStage30ExchangeABRejectsCollisionWithoutDroppingOrdinary(t *testing.T) {
++	items := []shopCatalogItem{{configID: "ordinary", page: 0, position: 0, priceMode: 2}, {configID: "duplicate", page: 0, position: 0, priceMode: 3, exchangeData: 13097}}
++	got, stats := stage30ShopExchangeDisplayRows(items, true)
++	if len(got) != 1 || got[0].configID != "ordinary" || !stats.CollisionBlocked || stats.Displayed != 0 {
++		t.Fatalf("collision rows=%+v stats=%+v", got, stats)
++	}
++}
++func TestStage30ExchangeABRejectsOverCapacityWithoutDroppingOrdinary(t *testing.T) {
++	items := []shopCatalogItem{{configID: "ordinary", page: 0, position: 0, priceMode: 1}}
++	for i := int32(1); i <= 100; i++ {
++		items = append(items, shopCatalogItem{configID: "exchange", page: 0, position: i, priceMode: 3, exchangeData: 13097})
++	}
++	got, stats := stage30ShopExchangeDisplayRows(items, true)
++	if len(got) != 1 || got[0].configID != "ordinary" || !stats.CapacityBlocked || stats.Displayed != 0 {
++		t.Fatalf("capacity rows=%d stats=%+v", len(got), stats)
++	}
++}
++func TestStage30ExchangeABRejectsInvalidExchangeCoordinate(t *testing.T) {
++	items := []shopCatalogItem{{configID: "ordinary", page: 0, position: 0, priceMode: 1}, {configID: "invalid", page: 0, position: 500, priceMode: 3, exchangeData: 13097}}
++	got, stats := stage30ShopExchangeDisplayRows(items, true)
++	if len(got) != 1 || got[0].configID != "ordinary" || stats.InvalidExchangeSlot != 1 || stats.Displayed != 0 {
++		t.Fatalf("invalid rows=%+v stats=%+v", got, stats)
++	}
++}

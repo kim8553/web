@@ -24,6 +24,8 @@ on:
       - 'tools/stage37_current_recovery_stage18.sh'
       - 'tools/stage37_current_recovery_stage19.sh'
       - 'tools/stage37_current_recovery_stage20.sh'
+      - 'tools/stage37_current_recovery_stage21.sh'
+      - 'tools/stage37_current_recovery_stage21_disable_unverified_legacy_shop_buy.py'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
       - 'tools/stage37_stage9_harden_persistence_ready.py'
       - 'recovery/postbuild_files/internal__shopbuygate__decision.go'
@@ -52,16 +54,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23.2'
           cache: false
-
-      - name: Reconstruct, verify, and test Stage20 regular NPC shop post-commit client publish boundary
+      - name: Reconstruct, disable unsafe candidate route, verify and test Stage21 ordinary NPC shop safety boundary
         shell: bash
-        run: bash tools/stage37_current_recovery_stage20.sh
-
+        run: bash tools/stage37_current_recovery_stage21.sh
       - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -28,6 +28,11 @@ on:
       - 'tools/stage37_current_recovery_stage21_disable_unverified_legacy_shop_buy.py'
       - 'tools/stage37_current_recovery_stage22.sh'
       - 'tools/stage37_current_recovery_stage22_wire_trace_patch.py'
+      - 'tools/stage37_current_recovery_stage23.sh'
+      - 'tools/stage37_capture_shop_wire.ps1'
+      - 'tools/stage37_shop_wire_diff.py'
+      - 'tests/test_stage37_shop_wire_diff.py'
+      - 'recovery/STAGE23_SHOP_WIRE_CAPTURE_KO.md'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
       - 'tools/stage37_stage9_harden_persistence_ready.py'
       - 'recovery/postbuild_files/internal__shopbuygate__decision.go'
@@ -63,9 +68,9 @@ jobs:
         with:
           go-version: '1.23.2'
           cache: false
-      - name: Reconstruct and verify Stage22 bounded read-only ordinary shop wire trace
+      - name: Reconstruct and verify Stage23 read-only ordinary shop capture and offline diff
         shell: bash
-        run: bash tools/stage37_current_recovery_stage22.sh
+        run: bash tools/stage37_current_recovery_stage23.sh
       - name: Upload verification evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -1,0 +1,156 @@
+diff --git a/cmd/protocol-probe/scene_lifecycle.go b/cmd/protocol-probe/scene_lifecycle.go
+index f741406..45d6658 100644
+--- a/cmd/protocol-probe/scene_lifecycle.go
++++ b/cmd/protocol-probe/scene_lifecycle.go
+@@ -520,30 +520,28 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
+ 	if exchangeAB {
+ 		log.Printf("shop exchange view AB shop=%q eligible=%d displayed=%d missing_data=%d invalid_slot=%d capacity_blocked=%t collision_blocked=%t mutation=unchanged_client_render=unverified", shopID, exchangeStats.Eligible, exchangeStats.Displayed, exchangeStats.MissingExchangeData, exchangeStats.InvalidExchangeSlot, exchangeStats.CapacityBlocked, exchangeStats.CollisionBlocked)
+ 	}
++	// Encode and validate ALL item frames before creating a client view. An
++	// invalid later row must never leave a half-populated shop on the wire.
+ 	frame, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 100}, latestClientShopViewProperties(shopID, shopType, pageCount))
+ 	if err != nil {
+ 		return fmt.Errorf("encode shop view %q: %w", shopID, err)
+ 	}
++	itemFrames, err := stage31PrepareShopItemFrames(shopID, displayRows, func(item shopCatalogItem, objectIndex uint16) ([]byte, error) {
++		return serverViewAdd(61, objectIndex, latestClientShopItemProperties(item))
++	})
++	if err != nil {
++		log.Printf("shop display preflight rejected shop=%q rows=%d reason=%v client_view_created=false", shopID, len(displayRows), err)
++		return err
++	}
+ 	if err := s.conn.WriteFrame(frame); err != nil {
+ 		return fmt.Errorf("create shop view %q: %w", shopID, err)
+ 	}
+-	sentItemAdds := 0
+-	for _, item := range displayRows {
+-		objectIndex, ok := currentShopViewObjectIndex(item)
+-		if !ok {
+-			return fmt.Errorf("shop %q item %q has invalid current-client page=%d position=%d", shopID, item.configID, item.page, item.position)
+-		}
+-		properties := latestClientShopItemProperties(item)
+-		itemFrame, encodeErr := serverViewAdd(61, objectIndex, properties)
+-		if encodeErr != nil {
+-			return fmt.Errorf("encode shop %q item %q: %w", shopID, item.configID, encodeErr)
+-		}
+-		if writeErr := s.conn.WriteFrame(itemFrame); writeErr != nil {
+-			return fmt.Errorf("add shop %q item %q: %w", shopID, item.configID, writeErr)
++	for index, itemFrame := range itemFrames {
++		if err := s.conn.WriteFrame(itemFrame); err != nil {
++			return fmt.Errorf("add shop %q item %q: %w", shopID, displayRows[index].configID, err)
+ 		}
+-		sentItemAdds++
+ 	}
+-	log.Printf("shop display frames shop=%q create_view=sent item_add_sent=%d exchange_skipped=%d unsupported_skipped=%d client_render=unverified", shopID, sentItemAdds, stats.ExchangeSkipped, stats.UnsupportedSkipped)
++	log.Printf("shop display frames shop=%q create_view=sent item_add_sent=%d exchange_skipped=%d unsupported_skipped=%d client_render=unverified", shopID, len(itemFrames), stats.ExchangeSkipped-exchangeStats.Displayed, stats.UnsupportedSkipped)
+ 	return nil
+ }
+ 
+diff --git a/cmd/protocol-probe/stage31_shop_frame_preflight.go b/cmd/protocol-probe/stage31_shop_frame_preflight.go
+new file mode 100644
+index 0000000..ae9eb58
+--- /dev/null
++++ b/cmd/protocol-probe/stage31_shop_frame_preflight.go
+@@ -0,0 +1,32 @@
++package main
++
++import "fmt"
++
++// stage31PrepareShopItemFrames validates and encodes the entire, already
++// selected shop display before the first view frame is written. This does not
++// change item selection, client properties, currency, inventory or purchases.
++// The view's capacity is the existing, exact 100-object serverViewSpec.
++func stage31PrepareShopItemFrames(shopID string, items []shopCatalogItem, encode func(shopCatalogItem, uint16) ([]byte, error)) ([][]byte, error) {
++	const viewCapacity = 100
++	if len(items) > viewCapacity {
++		return nil, fmt.Errorf("shop %q has %d display rows exceeding current view capacity %d; refusing partial view", shopID, len(items), viewCapacity)
++	}
++	seen := make(map[uint16]struct{}, len(items))
++	frames := make([][]byte, 0, len(items))
++	for _, item := range items {
++		index, ok := currentShopViewObjectIndex(item)
++		if !ok {
++			return nil, fmt.Errorf("shop %q item %q has invalid current-client page=%d position=%d; refusing partial view", shopID, item.configID, item.page, item.position)
++		}
++		if _, duplicate := seen[index]; duplicate {
++			return nil, fmt.Errorf("shop %q has duplicate current-client object index=%d item=%q; refusing partial view", shopID, index, item.configID)
++		}
++		seen[index] = struct{}{}
++		frame, err := encode(item, index)
++		if err != nil {
++			return nil, fmt.Errorf("encode shop %q item %q: %w", shopID, item.configID, err)
++		}
++		frames = append(frames, frame)
++	}
++	return frames, nil
++}
+diff --git a/cmd/protocol-probe/stage31_shop_frame_preflight_test.go b/cmd/protocol-probe/stage31_shop_frame_preflight_test.go
+new file mode 100644
+index 0000000..c026487
+--- /dev/null
++++ b/cmd/protocol-probe/stage31_shop_frame_preflight_test.go
+@@ -0,0 +1,64 @@
++package main
++
++import (
++	"errors"
++	"strings"
++	"testing"
++)
++
++func TestStage31ShopFramePreflightValidRowsKeepOrder(t *testing.T) {
++	items := []shopCatalogItem{
++		{configID: "ordinary", page: 0, position: 0, priceMode: 1},
++		{configID: "exchange", page: 1, position: 0, priceMode: 3, exchangeData: 13097},
++	}
++	var indexes []uint16
++	frames, err := stage31PrepareShopItemFrames("Shop_fixture", items, func(item shopCatalogItem, index uint16) ([]byte, error) {
++		indexes = append(indexes, index)
++		return []byte(item.configID), nil
++	})
++	if err != nil || len(frames) != 2 || string(frames[0]) != "ordinary" || string(frames[1]) != "exchange" || len(indexes) != 2 || indexes[0] != 1 || indexes[1] != 501 {
++		t.Fatalf("frames=%q indices=%v error=%v", frames, indexes, err)
++	}
++}
++
++func TestStage31ShopFramePreflightRejectsOverCapacityBeforeEncoding(t *testing.T) {
++	items := make([]shopCatalogItem, 101)
++	called := false
++	_, err := stage31PrepareShopItemFrames("Shop_full", items, func(shopCatalogItem, uint16) ([]byte, error) {
++		called = true
++		return []byte{1}, nil
++	})
++	if err == nil || !strings.Contains(err.Error(), "exceeding current view capacity") || called {
++		t.Fatalf("capacity error=%v encoded=%t", err, called)
++	}
++}
++
++func TestStage31ShopFramePreflightRejectsDuplicateIndex(t *testing.T) {
++	items := []shopCatalogItem{{configID: "one", page: 0, position: 0}, {configID: "two", page: 0, position: 0}}
++	frames, err := stage31PrepareShopItemFrames("Shop_collision", items, func(item shopCatalogItem, index uint16) ([]byte, error) { return []byte(item.configID), nil })
++	if err == nil || !strings.Contains(err.Error(), "duplicate") || frames != nil {
++		t.Fatalf("collision frames=%v err=%v", frames, err)
++	}
++}
++
++func TestStage31ShopFramePreflightRejectsInvalidIndex(t *testing.T) {
++	items := []shopCatalogItem{{configID: "one", page: 0, position: 0}, {configID: "bad", page: 0, position: 500}}
++	frames, err := stage31PrepareShopItemFrames("Shop_invalid", items, func(item shopCatalogItem, index uint16) ([]byte, error) { return []byte(item.configID), nil })
++	if err == nil || !strings.Contains(err.Error(), "invalid current-client") || frames != nil {
++		t.Fatalf("invalid frames=%v err=%v", frames, err)
++	}
++}
++
++func TestStage31ShopFramePreflightRejectsEncodingFailureWithoutFrames(t *testing.T) {
++	items := []shopCatalogItem{{configID: "one", page: 0, position: 0}, {configID: "bad", page: 0, position: 1}}
++	sentinel := errors.New("encoder refused")
++	frames, err := stage31PrepareShopItemFrames("Shop_error", items, func(item shopCatalogItem, index uint16) ([]byte, error) {
++		if item.configID == "bad" {
++			return nil, sentinel
++		}
++		return []byte{1}, nil
++	})
++	if !errors.Is(err, sentinel) || frames != nil {
++		t.Fatalf("encoder frames=%v err=%v", frames, err)
++	}
++}

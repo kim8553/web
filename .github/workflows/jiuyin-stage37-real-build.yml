@@ -17,6 +17,7 @@ on:
       - 'tools/stage37_current_recovery_stage10.sh'
       - 'tools/stage37_current_recovery_stage11.sh'
       - 'tools/stage37_current_recovery_stage12.sh'
+      - 'tools/stage37_current_recovery_stage14.sh'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
       - 'tools/stage37_stage9_harden_persistence_ready.py'
   workflow_dispatch:
@@ -35,9 +36,9 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct, verify, audit binding safety and current regular NPC shop path
+      - name: Reconstruct, verify, audit current regular NPC shop bag/currency topology
         shell: bash
-        run: bash tools/stage37_current_recovery_stage12.sh
+        run: bash tools/stage37_current_recovery_stage14.sh
 
       - name: Upload verification evidence
         if: always()

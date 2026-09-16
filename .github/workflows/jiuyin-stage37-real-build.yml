@@ -8,6 +8,7 @@ on:
       - 'tools/stage37_current_recovery_build.sh'
       - 'tools/stage37_current_recovery_stage2.sh'
       - 'tools/stage37_current_recovery_stage3.sh'
+      - 'tools/stage37_current_recovery_stage4.sh'
   workflow_dispatch:
 
 permissions:
@@ -24,9 +25,9 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct, verify, stage, test and build current source
+      - name: Reconstruct, verify, persist-first stage, test and build current source
         shell: bash
-        run: bash tools/stage37_current_recovery_stage3.sh
+        run: bash tools/stage37_current_recovery_stage4.sh
 
       - name: Upload verification evidence
         if: always()

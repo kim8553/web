@@ -1,0 +1,75 @@
+--- a/cmd/protocol-probe/scene_lifecycle.go
++++ b/cmd/protocol-probe/scene_lifecycle.go
+@@ -474,11 +474,45 @@
+ 	}
+ 	return nil
+ }
++
++// stage27ShopDisplayRows describes only what the existing ordinary-shop display
++// loop WILL attempt. It neither authorizes exchange purchases nor changes rows.
++type stage27ShopDisplayRows struct {
++	Ordinary                   int
++	ExchangeSkipped            int
++	ExchangeMissingData        int
++	UnsupportedSkipped         int
++	InvalidOrdinaryCoordinates int
++}
++
++func summarizeStage27ShopDisplayRows(items []shopCatalogItem) stage27ShopDisplayRows {
++	var result stage27ShopDisplayRows
++	for _, item := range items {
++		switch item.priceMode {
++		case 0, 1, 2:
++			result.Ordinary++
++			if _, ok := currentShopViewObjectIndex(item); !ok {
++				result.InvalidOrdinaryCoordinates++
++			}
++		case 3:
++			result.ExchangeSkipped++
++			if item.exchangeData <= 0 {
++				result.ExchangeMissingData++
++			}
++		default:
++			result.UnsupportedSkipped++
++		}
++	}
++	return result
++}
++
+ func (s *sceneLifecycle) openShopLocked(shopID string) error {
+ 	items, shopType, pageCount, err := shopCatalogItems(defaultShopINIPath, shopID)
+ 	if err != nil {
+ 		return err
+ 	}
++	stats := summarizeStage27ShopDisplayRows(items)
++	log.Printf("shop display catalog shop=%q rows=%d ordinary=%d exchange_skipped=%d exchange_missing_data=%d unsupported_skipped=%d invalid_ordinary_coordinates=%d", shopID, len(items), stats.Ordinary, stats.ExchangeSkipped, stats.ExchangeMissingData, stats.UnsupportedSkipped, stats.InvalidOrdinaryCoordinates)
+ 	frame, err := serverCreateViewWithProperties(serverViewSpec{ID: 61, Capacity: 100}, latestClientShopViewProperties(shopID, shopType, pageCount))
+ 	if err != nil {
+ 		return fmt.Errorf("encode shop view %q: %w", shopID, err)
+@@ -486,6 +520,7 @@
+ 	if err := s.conn.WriteFrame(frame); err != nil {
+ 		return fmt.Errorf("create shop view %q: %w", shopID, err)
+ 	}
++	sentItemAdds := 0
+ 	for _, item := range items {
+ 		switch item.priceMode {
+ 		case 0, 1, 2:
+@@ -504,7 +539,9 @@
+ 		if writeErr := s.conn.WriteFrame(itemFrame); writeErr != nil {
+ 			return fmt.Errorf("add shop %q item %q: %w", shopID, item.configID, writeErr)
+ 		}
+-	}
++		sentItemAdds++
++	}
++	log.Printf("shop display frames shop=%q create_view=sent item_add_sent=%d exchange_skipped=%d unsupported_skipped=%d client_render=unverified", shopID, sentItemAdds, stats.ExchangeSkipped, stats.UnsupportedSkipped)
+ 	return nil
+ }
+ 
+@@ -737,6 +774,7 @@
+ 		if service.value == "" {
+ 			return fmt.Errorf("NPC %s shop service has no ShopID", entity.configID)
+ 		}
++		log.Printf("shop service selected npc_config=%q shop=%q service_source=%q", entity.configID, service.value, service.source)
+ 		if err := s.openShopLocked(service.value); err != nil {
+ 			return err
+ 		}

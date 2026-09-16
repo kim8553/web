@@ -38,8 +38,8 @@ jobs:
           test "$(find buildtree -type f ! -name ci.real.mod ! -name ci.real.sum ! -name protocol-probe | wc -l | tr -d ' ')" = 231
           output="$RUNNER_TEMP/stage37-reconstructed-source"
           mkdir -p "$output" "$RUNNER_TEMP/stage37-source-verify"
-          # Exact file paths: do not match and delete the cmd/protocol-probe DIRECTORY.
-          tar -C buildtree --exclude='./ci.real.mod' --exclude='./ci.real.sum' --exclude='./cmd/protocol-probe/protocol-probe' -czf "$output/stage23-source.tar.gz" .
+          # Exclude exact generated binaries and temporary module files, never the cmd/protocol-probe source directory.
+          tar -C buildtree --exclude='./ci.real.mod' --exclude='./ci.real.sum' --exclude='./protocol-probe' --exclude='./cmd/protocol-probe/protocol-probe' -czf "$output/stage23-source.tar.gz" .
           tar -xzf "$output/stage23-source.tar.gz" -C "$RUNNER_TEMP/stage37-source-verify"
           test "$(find "$RUNNER_TEMP/stage37-source-verify" -type f | wc -l | tr -d ' ')" = 231
           (cd "$RUNNER_TEMP/stage37-source-verify" && sha256sum -c "$GITHUB_WORKSPACE/generated-manifest.txt" > "$output/extracted-manifest-verification.log")

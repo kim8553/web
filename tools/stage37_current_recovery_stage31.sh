@@ -9,12 +9,12 @@ PROBE="$ROOT/buildtree/cmd/protocol-probe"
 BASE_SHA=240cc47d133cbd1fc77a502d3da4d0386aedc1088ea125c2f3895f346ecfc380
 printf '%s  %s\n' "$BASE_SHA" "$PROBE/scene_lifecycle.go" | sha256sum -c -
 printf '%s  %s\n' 'b6008176c804472e8e1b076195342fd4360e182efda55477efb587906c80d132' "$PROBE/latest_client_shop_view_contract.go" | sha256sum -c -
-printf '%s  %s\n' '7a406c6d9ac78999a7a31b5a79a489196c1bc3a63c4e5640e5e42b9c3220bbe0' recovery/stage31_shop_frame_preflight.patch | sha256sum -c -
+printf '%s  %s\n' 'c58c6ba0a878b3c8250d31da8227f65db3cd7e0a15f8222e28ed4a4348c8af42' recovery/stage31_shop_frame_preflight.patch | sha256sum -c -
 git apply --directory=buildtree --check recovery/stage31_shop_frame_preflight.patch
 git apply --directory=buildtree recovery/stage31_shop_frame_preflight.patch
-printf '%s  %s\n' '37140cd2ea22f6d5c2b670818abd01a0716328815c15748970f02b30670435aa' "$PROBE/scene_lifecycle.go" | sha256sum -c -
-printf '%s  %s\n' 'babc4d4d86ae1d451418e088cf0ce8ccabb39c1940c78051c6e5a2a0584d21d4' "$PROBE/stage31_shop_frame_preflight.go" | sha256sum -c -
-printf '%s  %s\n' 'da1f538cee814eedcc34c76c523c664737b87379024f8fee2c2cc5323a60c44d' "$PROBE/stage31_shop_frame_preflight_test.go" | sha256sum -c -
+printf '%s  %s\n' 'a0b2a4a0b9cffac0b18fc98a8cb5eaceae83d9edf260eb166468b99892546d70' "$PROBE/scene_lifecycle.go" | sha256sum -c -
+printf '%s  %s\n' '1721c3a709ad6db7120670f26fe0caef240d7c91f9c4403b3c4e0acafacb7bad' "$PROBE/stage31_shop_frame_preflight.go" | sha256sum -c -
+printf '%s  %s\n' 'a4a8dc7914079a9ef77b7aa973102ab6fb539690bc485966cfb0d6feaadfc4cf' "$PROBE/stage31_shop_frame_preflight_test.go" | sha256sum -c -
 test -z "$(gofmt -l "$PROBE/scene_lifecycle.go" "$PROBE/stage31_shop_frame_preflight.go" "$PROBE/stage31_shop_frame_preflight_test.go")"
 
 python3 - <<'PY'
@@ -28,8 +28,10 @@ assert 'for index, itemFrame := range itemFrames {' in shop
 assert 'shop service selected npc_config=' in s
 assert 'func playableNPCServices(' in s
 assert 'client_render=unverified' in shop
+assert 'client_capacity_semantics=unverified' in shop
 assert 'os.Getenv("NINEYIN_SHOP_EXCHANGE_VIEW_AB") == "1"' in shop
 assert (p/'main.go').read_text().count('stage29LegacyBorn02Position(') == 2
+assert 'const viewCapacity' not in (p/'stage31_shop_frame_preflight.go').read_text()
 print('stage31_shop_preflight_source_guard=PASS')
 PY
 
@@ -76,6 +78,7 @@ file "$ROOT/stage31-current-windows-amd64.exe" > "$ROOT/stage31-current-windows-
  echo 'source_basis=VERIFIED_9yin-go-server1.rar_STAGE30_PRESERVED'
  echo 'shop_frames=VALIDATED_AND_ENCODED_BEFORE_VIEW_WRITE'
  echo 'ordinary_shop_default=UNCHANGED_EXCEPT_PREVENT_PARTIAL_VIEWS'
+ echo 'authored_shops_over_100=NO_UNVERIFIED_CAPACITY_LIMIT'
  echo 'exchange_display=STAGE30_OPT_IN_UNCHANGED'
  echo 'shop_purchase_currency_bag_DB=UNCHANGED_FAIL_CLOSED'
  echo 'map_lua_stage29=UNCHANGED'

@@ -32,7 +32,8 @@ mv "$ROOT/ci.real.mod.stage4" "$BUILD/ci.real.mod"
 mv "$ROOT/ci.real.sum.stage4" "$BUILD/ci.real.sum"
 
 # Re-run every production gate against the final 203-file tree. The commit
-# helper remains dormant; this verifies compile/race/vet/build safety only.
+# helper remains dormant. Its resource-independent tests are executed directly
+# (normal and race) even when the full exact-current resource corpus is absent.
 cd "$BUILD"
 set +e
 run_gate() {
@@ -46,6 +47,8 @@ run_gate migrations go test -modfile=ci.real.mod ./migrations -count=1
 run_gate build go build -modfile=ci.real.mod ./cmd/protocol-probe
 run_gate protocol_compile go test -modfile=ci.real.mod -c -o "$ROOT/protocol-probe.test" ./cmd/protocol-probe
 run_gate protocol_race_compile go test -modfile=ci.real.mod -race -c -o "$ROOT/protocol-probe-race.test" ./cmd/protocol-probe
+run_gate protocol_commit_targeted go test -modfile=ci.real.mod ./cmd/protocol-probe -run '^TestCommitShopExchangeReplacementPersistenceFirst' -count=1
+run_gate protocol_commit_targeted_race go test -modfile=ci.real.mod -race ./cmd/protocol-probe -run '^TestCommitShopExchangeReplacementPersistenceFirst' -count=1
 mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
 go test -modfile=ci.real.mod "${pkgs[@]}" -count=1 > "$ROOT/nonprotocol.log" 2>&1
 echo $? > "$ROOT/nonprotocol.exit"
@@ -69,7 +72,7 @@ else
 fi
 
 failed=0
-for x in planner migrations build protocol_compile protocol_race_compile nonprotocol race vet windows; do
+for x in planner migrations build protocol_compile protocol_race_compile protocol_commit_targeted protocol_commit_targeted_race nonprotocol race vet windows; do
   code=$(cat "$ROOT/$x.exit")
   echo "$x=$code"
   if [ "$code" -ne 0 ]; then failed=1; fi

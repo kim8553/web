@@ -1,0 +1,41 @@
+name: Stage37 Exact Source Transport
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths: ['.github/workflows/stage37-exact-source-transport.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-source-transport:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact triggering commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Export exact tracked tree and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+          mkdir -p "$RUNNER_TEMP/stage37-exact-transport"
+          git rev-parse HEAD > "$RUNNER_TEMP/stage37-exact-transport/COMMIT.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/stage37-exact-transport/TREE.txt"
+          git archive --format=tar HEAD | gzip -n -9 > "$RUNNER_TEMP/stage37-exact-transport/repository.tar.gz"
+          tar -tzf "$RUNNER_TEMP/stage37-exact-transport/repository.tar.gz" > "$RUNNER_TEMP/stage37-exact-transport/FILES.txt"
+          (cd "$RUNNER_TEMP/stage37-exact-transport" && sha256sum repository.tar.gz > repository.sha256)
+          printf 'TRANSPORT_ONLY=YES\nSOURCE_COMMIT=%s\nSOURCE_TREE=%s\n' "$(cat "$RUNNER_TEMP/stage37-exact-transport/COMMIT.txt")" "$(cat "$RUNNER_TEMP/stage37-exact-transport/TREE.txt")"
+      - name: Upload exact repository source archive (internal transport only)
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-exact-source-transport-${{ github.sha }}
+          retention-days: 1
+          if-no-files-found: error
+          path: ${{ runner.temp }}/stage37-exact-transport/

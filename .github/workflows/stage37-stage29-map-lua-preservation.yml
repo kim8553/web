@@ -1,0 +1,44 @@
+name: Stage37 Stage29 Map Lua Preservation
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'recovery/stage29_legacy_born02_preservation.patch'
+      - 'tools/stage37_current_recovery_stage29.sh'
+      - '.github/workflows/stage37-stage29-map-lua-preservation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-map-lua:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reconstruct verified RAR-descendant Stage27 and preserve known LIVE fixes
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage29.sh
+      - name: Upload map-Lua preservation build and audits
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage29-map-lua-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            stage29_status.log
+            stage29_unit.log
+            stage29_unit_race.log
+            stage29_compile.log
+            stage29_race_compile.log
+            stage29_vet.log
+            stage29_windows.log
+            stage29-current-windows-amd64.exe
+            stage29-current-windows-amd64.sha256
+            stage29-current-windows-amd64.file.txt

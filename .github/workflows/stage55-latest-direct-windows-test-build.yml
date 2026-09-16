@@ -1,0 +1,117 @@
+name: Stage55 Latest Direct Source Windows Test Build
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - '.github/workflows/stage55-latest-direct-windows-test-build.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-current-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Fix exact current source identity; do not reconstruct older Stage34 buildtree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f server/go.mod
+          test -f server/cmd/protocol-probe/shop_catalog.go
+          test -f server/internal/shopreadiness/status.go
+          test -f server/migrations/0012_persist_runtime_bind_status.sql
+          test -f server/启动本地九阴服务.bat
+          test -f server/loopback-lister.ps1
+          test -z "$(git status --porcelain -- server)"
+          echo "repository_HEAD=$(git rev-parse HEAD)" | tee build_identity.txt
+          echo "direct_server_last_commit=$(git rev-list -1 HEAD -- server)" | tee -a build_identity.txt
+          git ls-files -z server | xargs -0 sha256sum | LC_ALL=C sort > direct_server_source_sha256.txt
+          echo "tracked_server_files=$(git ls-files server | wc -l)" | tee -a build_identity.txt
+          sha256sum direct_server_source_sha256.txt | tee -a build_identity.txt
+          echo 'source_input=ONLY_CHECKED_OUT_SERVER_DIRECTORY' | tee -a build_identity.txt
+          echo 'old_stage34_buildtree=NOT_USED' | tee -a build_identity.txt
+      - name: Resolve real Go module dependencies without changing tracked source
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/go-sql-driver/mysql
+          go mod edit -modfile=ci.real.mod -dropreplace=golang.org/x/text
+          go mod edit -modfile=ci.real.mod -dropreplace=filippo.io/edwards25519
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/DATA-DOG/go-sqlmock
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/Hiroko103/go-quicklz
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download -modfile=ci.real.mod github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          grep -F 'github.com/Hiroko103/go-quicklz v0.0.0-20190115215310-59904abc50d0 h1:' ci.real.sum
+          go mod download -modfile=ci.real.mod
+          test -z "$(gofmt -l cmd internal migrations)"
+      - name: Real offline tests, race checks, compile protocol, vet
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -modfile=ci.real.mod -count=1 ./internal/exchangeplan ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/exchangeexecute ./internal/shopbuycommit ./internal/shopbuyexecute ./internal/shopbuygate ./internal/shopbuypersist ./internal/shopbuyplan ./internal/shopbuypublish ./internal/shopwiretrace ./internal/shopreadiness ./migrations
+          go test -modfile=ci.real.mod -race -count=1 ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/shopbuygate ./internal/shopbuypersist ./internal/shopreadiness
+          go test -modfile=ci.real.mod -c -o ../stage55-protocol.test ./cmd/protocol-probe
+          go test -modfile=ci.real.mod -race -c -o ../stage55-protocol-race.test ./cmd/protocol-probe
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go vet -modfile=ci.real.mod ./...
+          echo 'offline_test_race_vet=PASS' >> ../build_identity.txt
+          echo 'exact_resource_protocol_runtime=NOT_RUN' >> ../build_identity.txt
+          echo 'windows_client_live_e2e=NOT_RUN' >> ../build_identity.txt
+      - name: Cross-compile current direct Go source for Windows x64
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../release
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o ../release/9yin-game-native-menu.exe ./cmd/protocol-probe
+          test -s ../release/9yin-game-native-menu.exe
+          file ../release/9yin-game-native-menu.exe | tee ../release/WINDOWS_FILE_TYPE.txt
+          file ../release/9yin-game-native-menu.exe | grep -E 'PE32\+ executable.*x86-64'
+          sha256sum ../release/9yin-game-native-menu.exe | tee ../release/EXE_SHA256.txt
+          go version -m ../release/9yin-game-native-menu.exe | tee ../release/GO_BUILD_INFO.txt
+          test -z "$(git diff --name-only -- server)"
+          echo 'windows_amd64_compile=PASS' >> ../build_identity.txt
+      - name: Assemble non-destructive Windows test kit; never bundle private resources or role data
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp server/启动本地九阴服务.bat release/
+          cp server/loopback-lister.ps1 release/
+          mkdir -p release/migrations
+          cp server/migrations/*.sql release/migrations/
+          cp build_identity.txt direct_server_source_sha256.txt release/
+          cat > release/README_TEST_KO.txt <<'EOF'
+          최신 직접 소스 Windows 서버 테스트 후보
+          이 패키지의 EXE는 이 CI 실행 커밋의 server/ 직접 소스를 새로 빌드한 파일입니다. Stage34 구형 EXE를 복사한 것이 아닙니다.
+          build_identity.txt에 전체 GitHub 커밋 및 실제 server/ 마지막 변경 커밋을 기록했습니다.
+          EXE_SHA256.txt에 Windows EXE SHA-256이 있습니다.
+          본 패키지는 개인정보 보호를 위해 게임 리소스, MySQL DB, data/roles.json, data/faculty.json, 비공개 클라이언트를 포함하지 않습니다.
+          리소스가 없는 상태에서는 실행/로그인 성공을 보장하지 않습니다. 서버 전용 새 폴더에 추출하여 기존 설치본을 덮어쓰지 마세요.
+          원래 PC에 있는 같은 버전의 resources/modern/share, data/roles.json 등을 새 폴더에 안전하게 복사/연결해야 제공된 실행 배치파일이 동작합니다.
+          게임 접속과 아이템 지급/구매는 실제 Windows 클라이언트에서 검증하지 않았습니다. 상점 구매는 미확인 규격으로 제한되어 있을 수 있습니다.
+          EOF
+          find release -type f -print0 | sort -z | xargs -0 sha256sum > release_manifest_sha256.txt
+          echo "release_files=$(find release -type f | wc -l)" | tee -a build_identity.txt
+          echo 'artifact_kind=NEW_WINDOWS_BUILD_FROM_DIRECT_SERVER_SOURCE_NOT_LIVE_VERIFIED' | tee -a build_identity.txt
+      - name: Upload exact built Windows server and runtime scripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage55-current-direct-source-windows-${{ github.sha }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            release/
+            build_identity.txt
+            release_manifest_sha256.txt
+            direct_server_source_sha256.txt

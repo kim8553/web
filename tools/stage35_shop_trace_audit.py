@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read-only Stage27-34 NPC shop log audit. Never infers client rendering or purchase success.
 
-Input logs stay local; JSON output contains aggregate shop IDs and counts, no raw lines,
-remote addresses, account identifiers, NPC object IDs, or player data.
+Input logs stay local. JSON output contains shop and NPC configuration IDs,
+aggregate counts and bounded reason categories, not raw lines or raw error strings.
+Treat output as private if configuration IDs are sensitive in your environment.
 """
 import argparse
 import json
@@ -51,7 +52,7 @@ def read_logs(paths):
                     row['npc_configs'].add(attrs['npc_config'])
                 if kind == 'menu':
                     if attrs.get('catalog_error'):
-                        row['catalog_errors'].add(attrs['catalog_error'])
+                        row['catalog_errors'].add('missing_exact_section' if 'no section' in attrs['catalog_error'].lower() else 'other_catalog_error')
                     for key, dest in (('ordinary', 'ordinary_counts'), ('exchange', 'exchange_counts')):
                         try:
                             row[dest].add(int(attrs[key]))
@@ -63,7 +64,7 @@ def read_logs(paths):
                     except (ValueError, KeyError):
                         pass
                 if kind == 'preflight_rejected' and attrs.get('reason'):
-                    row['preflight_reasons'].add(attrs['reason'])
+                    row['preflight_reasons'].add(next((kind for needle, kind in (('duplicate', 'duplicate_object_index'), ('invalid current-client', 'invalid_coordinates'), ('encode', 'encoding_rejected')) if needle in attrs['reason'].lower()), 'other_preflight_rejection'))
     result = []
     for shop, row in sorted(shops.items()):
         ev = dict(sorted(row['events'].items()))

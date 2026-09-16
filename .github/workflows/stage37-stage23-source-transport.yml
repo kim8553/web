@@ -1,0 +1,51 @@
+name: Stage37 Reconstructed Source Transport
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths: ['.github/workflows/stage37-stage23-source-transport.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verified-source-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out exact triggering commit
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up repository-declared Go version
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - name: Reconstruct Stage23 using existing verification gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bash tools/stage37_current_recovery_stage23.sh
+      - name: Export verified source tree only, not complete game package
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=bc2aeaf77ce9d9b198d725356b976599063b12c3324fc548e41298c8c7e46d9a
+          test "$(awk '{print $1}' generated-manifest.sha256)" = "$expected"
+          test "$(find buildtree -type f ! -name ci.real.mod ! -name ci.real.sum ! -name protocol-probe | wc -l | tr -d ' ')" = 231
+          mkdir -p "$RUNNER_TEMP/stage37-reconstructed-source"
+          tar -C buildtree --exclude=ci.real.mod --exclude=ci.real.sum --exclude=protocol-probe -czf "$RUNNER_TEMP/stage37-reconstructed-source/stage23-source.tar.gz" .
+          cp generated-manifest.txt generated-manifest.sha256 "$RUNNER_TEMP/stage37-reconstructed-source/"
+          git rev-parse HEAD > "$RUNNER_TEMP/stage37-reconstructed-source/COMMIT.txt"
+          (cd "$RUNNER_TEMP/stage37-reconstructed-source" && sha256sum stage23-source.tar.gz > stage23-source.sha256)
+          echo 'STAGE23_SOURCE_TRANSPORT=VERIFIED; WINDOWS_BUILD=EXISTING_STAGE23_GATE; LIVE_E2E=NOT_RUN'
+      - name: Upload source transport (not a server release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage23-source-transport-${{ github.sha }}
+          retention-days: 1
+          if-no-files-found: error
+          path: ${{ runner.temp }}/stage37-reconstructed-source/

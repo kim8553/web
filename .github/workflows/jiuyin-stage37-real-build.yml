@@ -31,6 +31,9 @@ on:
       - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence.go'
       - 'recovery/postbuild_files/internal__shopbuypersist__persist.go'
       - 'recovery/postbuild_files/internal__shopbuypersist__persist_test.go'
+      - 'recovery/postbuild_files/internal__shopbuyplan__plan.go'
+      - 'recovery/postbuild_files/internal__shopbuyplan__plan_test.go'
+      - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_stage.go'
   workflow_dispatch:
 
 permissions:
@@ -47,7 +50,7 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct, verify, and audit Stage18 regular NPC shop live-state helpers
+      - name: Reconstruct, verify, and test Stage18 regular NPC shop pure purchase staging
         shell: bash
         run: bash tools/stage37_current_recovery_stage18.sh
 

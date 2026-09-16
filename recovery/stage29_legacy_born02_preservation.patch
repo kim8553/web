@@ -1,0 +1,108 @@
+diff --git a/cmd/protocol-probe/main.go b/cmd/protocol-probe/main.go
+--- a/cmd/protocol-probe/main.go
++++ b/cmd/protocol-probe/main.go
+@@ -1164,16 +1164,9 @@
+ 				return
+ 			}
+ 			log.Printf("%s: sent PlayerEntry opcode=0x0B object=%#x scene=%s resource=%s", conn.RemoteAddr(), playerObjectID, activeRole.Location.Scene.Config, activeRole.Location.Scene.Resource)
+-			legacyBorn02 := activeRole.Location.Scene.Resource == "born02" &&
+-				activeRole.Location.Position.X > 693.907 && activeRole.Location.Position.X < 693.909 &&
+-				activeRole.Location.Position.Y > 24.693 && activeRole.Location.Position.Y < 24.695 &&
+-				activeRole.Location.Position.Z > 404.349 && activeRole.Location.Position.Z < 404.351
+-			if legacyBorn02 {
++			if remappedPosition, remapped := stage29LegacyBorn02Position(activeRole.Location.Scene, activeRole.Location.Position); remapped {
+ 				old := activeRole.Location.Position
+-				activeRole.Location.Position.X = 905.069
+-				activeRole.Location.Position.Y = 10.810
+-				activeRole.Location.Position.Z = 196.980
+-				activeRole.Location.Position.Orient = 1.610
++				activeRole.Location.Position = remappedPosition
+ 				log.Printf("%s: latest-client LEGACY-BORN02-REMAP initial spawn old=(%.3f,%.3f,%.3f,%.3f) new=(%.3f,%.3f,%.3f,%.3f) persistence=unchanged", conn.RemoteAddr(), old.X, old.Y, old.Z, old.Orient, activeRole.Location.Position.X, activeRole.Location.Position.Y, activeRole.Location.Position.Z, activeRole.Location.Position.Orient)
+ 			}
+ 			log.Printf("%s: latest-client player spawn diagnostic scene=%s resource=%s x=%.3f y=%.3f z=%.3f orient=%.3f", conn.RemoteAddr(), activeRole.Location.Scene.Config, activeRole.Location.Scene.Resource, activeRole.Location.Position.X, activeRole.Location.Position.Y, activeRole.Location.Position.Z, activeRole.Location.Position.Orient)
+@@ -1291,14 +1284,8 @@
+ 			// whether initial player-location delivery has the same timing contract.
+ 			if runtime != nil && !runtime.awaitingStableReentryReady && !explicitSceneReady {
+ 				position := runtime.activeRole.Location.Position
+-				if runtime.activeRole.Location.Scene.Resource == "born02" &&
+-					position.X > 693.907 && position.X < 693.909 &&
+-					position.Y > 24.693 && position.Y < 24.695 &&
+-					position.Z > 404.349 && position.Z < 404.351 {
+-					position.X = 905.069
+-					position.Y = 10.810
+-					position.Z = 196.980
+-					position.Orient = 1.610
++				if remappedPosition, remapped := stage29LegacyBorn02Position(runtime.activeRole.Location.Scene, position); remapped {
++					position = remappedPosition
+ 					log.Printf("%s: latest-client LEGACY-BORN02-REMAP ClientReady replay new=(%.3f,%.3f,%.3f,%.3f) runtime-persistence=unchanged", conn.RemoteAddr(), position.X, position.Y, position.Z, position.Orient)
+ 				}
+ 				if err := link.WriteFrame(serverLocation(playerObjectID, playerOwnerID, worldTransform(position))); err != nil {
+diff --git a/cmd/protocol-probe/stage29_legacy_born02_position.go b/cmd/protocol-probe/stage29_legacy_born02_position.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/protocol-probe/stage29_legacy_born02_position.go
+@@ -0,0 +1,20 @@
++package main
++
++import "github.com/local/9yin-go-server/internal/role"
++
++// stage29LegacyBorn02Position preserves the 2026-09-13 LIVE position discriminator.
++// Only the exact legacy born02 coordinate window is remapped; every other scene
++// and coordinate is passed through. This is not a guessed universal spawn point.
++func stage29LegacyBorn02Position(scene role.Scene, position role.Position) (role.Position, bool) {
++	if scene.Resource != "born02" ||
++		position.X <= 693.907 || position.X >= 693.909 ||
++		position.Y <= 24.693 || position.Y >= 24.695 ||
++		position.Z <= 404.349 || position.Z >= 404.351 {
++		return position, false
++	}
++	position.X = 905.069
++	position.Y = 10.810
++	position.Z = 196.980
++	position.Orient = 1.610
++	return position, true
++}
+diff --git a/cmd/protocol-probe/stage29_legacy_born02_position_test.go b/cmd/protocol-probe/stage29_legacy_born02_position_test.go
+new file mode 100644
+--- /dev/null
++++ b/cmd/protocol-probe/stage29_legacy_born02_position_test.go
+@@ -0,0 +1,39 @@
++package main
++
++import (
++	"github.com/local/9yin-go-server/internal/role"
++	"testing"
++)
++
++func TestStage29LegacyBorn02OnlyExactLiveCoordinate(t *testing.T) {
++	source := role.Position{X: 693.908, Y: 24.694, Z: 404.350, Orient: 3.611}
++	got, changed := stage29LegacyBorn02Position(role.Scene{Resource: "born02"}, source)
++	if !changed || got != (role.Position{X: 905.069, Y: 10.810, Z: 196.980, Orient: 1.610}) {
++		t.Fatalf("LIVE-recovered born02 position changed=%t got=%+v", changed, got)
++	}
++	if source.X != 693.908 || source.Orient != 3.611 {
++		t.Fatal("input position was mutated")
++	}
++	if again, changed := stage29LegacyBorn02Position(role.Scene{Resource: "born02"}, got); changed || again != got {
++		t.Fatalf("remap not idempotent: changed=%t got=%+v", changed, again)
++	}
++}
++
++func TestStage29LegacyBorn02LeavesOtherScenesAndCoordinatesUntouched(t *testing.T) {
++	source := role.Position{X: 693.908, Y: 24.694, Z: 404.350, Orient: 3.611}
++	cases := []struct {
++		scene    string
++		position role.Position
++	}{
++		{"city05", source},
++		{"born03", source},
++		{"born02", role.Position{X: 693.920, Y: source.Y, Z: source.Z, Orient: source.Orient}},
++		{"born02", role.Position{X: source.X, Y: source.Y, Z: 404.400, Orient: source.Orient}},
++	}
++	for _, tc := range cases {
++		got, changed := stage29LegacyBorn02Position(role.Scene{Resource: tc.scene}, tc.position)
++		if changed || got != tc.position {
++			t.Fatalf("unproven coordinate changed scene=%s changed=%t got=%+v", tc.scene, changed, got)
++		}
++	}
++}

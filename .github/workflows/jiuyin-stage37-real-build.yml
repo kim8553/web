@@ -19,8 +19,13 @@ on:
       - 'tools/stage37_current_recovery_stage12.sh'
       - 'tools/stage37_current_recovery_stage14.sh'
       - 'tools/stage37_current_recovery_stage15.sh'
+      - 'tools/stage37_current_recovery_stage16.sh'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
       - 'tools/stage37_stage9_harden_persistence_ready.py'
+      - 'recovery/postbuild_files/internal__shopbuygate__decision.go'
+      - 'recovery/postbuild_files/internal__shopbuygate__decision_test.go'
+      - 'recovery/postbuild_files/internal__shopbuyexecute__execute.go'
+      - 'recovery/postbuild_files/internal__shopbuyexecute__execute_test.go'
   workflow_dispatch:
 
 permissions:
@@ -37,9 +42,9 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct, verify, audit current regular NPC shop exact-current wire evidence
+      - name: Reconstruct, verify, and test Stage16 regular NPC shop transaction safety gate
         shell: bash
-        run: bash tools/stage37_current_recovery_stage15.sh
+        run: bash tools/stage37_current_recovery_stage16.sh
 
       - name: Upload verification evidence
         if: always()

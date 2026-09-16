@@ -29,20 +29,25 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           bash tools/stage37_current_recovery_stage23.sh
-      - name: Export verified source tree only, not complete game package
+      - name: Export and re-extract exact source (not a server package)
         shell: bash
         run: |
           set -euo pipefail
           expected=bc2aeaf77ce9d9b198d725356b976599063b12c3324fc548e41298c8c7e46d9a
           test "$(awk '{print $1}' generated-manifest.sha256)" = "$expected"
           test "$(find buildtree -type f ! -name ci.real.mod ! -name ci.real.sum ! -name protocol-probe | wc -l | tr -d ' ')" = 231
-          mkdir -p "$RUNNER_TEMP/stage37-reconstructed-source"
-          tar -C buildtree --exclude=ci.real.mod --exclude=ci.real.sum --exclude=protocol-probe -czf "$RUNNER_TEMP/stage37-reconstructed-source/stage23-source.tar.gz" .
-          cp generated-manifest.txt generated-manifest.sha256 "$RUNNER_TEMP/stage37-reconstructed-source/"
-          git rev-parse HEAD > "$RUNNER_TEMP/stage37-reconstructed-source/COMMIT.txt"
-          (cd "$RUNNER_TEMP/stage37-reconstructed-source" && sha256sum stage23-source.tar.gz > stage23-source.sha256)
-          echo 'STAGE23_SOURCE_TRANSPORT=VERIFIED; WINDOWS_BUILD=EXISTING_STAGE23_GATE; LIVE_E2E=NOT_RUN'
-      - name: Upload source transport (not a server release)
+          output="$RUNNER_TEMP/stage37-reconstructed-source"
+          mkdir -p "$output" "$RUNNER_TEMP/stage37-source-verify"
+          # Exact file paths: do not match and delete the cmd/protocol-probe DIRECTORY.
+          tar -C buildtree --exclude='./ci.real.mod' --exclude='./ci.real.sum' --exclude='./cmd/protocol-probe/protocol-probe' -czf "$output/stage23-source.tar.gz" .
+          tar -xzf "$output/stage23-source.tar.gz" -C "$RUNNER_TEMP/stage37-source-verify"
+          test "$(find "$RUNNER_TEMP/stage37-source-verify" -type f | wc -l | tr -d ' ')" = 231
+          (cd "$RUNNER_TEMP/stage37-source-verify" && sha256sum -c "$GITHUB_WORKSPACE/generated-manifest.txt" > "$output/extracted-manifest-verification.log")
+          cp generated-manifest.txt generated-manifest.sha256 "$output/"
+          git rev-parse HEAD > "$output/COMMIT.txt"
+          (cd "$output" && sha256sum stage23-source.tar.gz > stage23-source.sha256)
+          echo 'EXTRACTED_SOURCE_FILES=231; MANIFEST_CHECK=PASS; WINDOWS_BUILD=EXISTING_STAGE23_GATE; LIVE_E2E=NOT_RUN'
+      - name: Upload verified source transport (not a server release)
         uses: actions/upload-artifact@v4
         with:
           name: stage37-stage23-source-transport-${{ github.sha }}

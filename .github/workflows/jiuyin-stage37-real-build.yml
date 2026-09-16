@@ -13,7 +13,9 @@ on:
       - 'tools/stage37_current_recovery_stage6.sh'
       - 'tools/stage37_current_recovery_stage7.sh'
       - 'tools/stage37_current_recovery_stage8.sh'
+      - 'tools/stage37_current_recovery_stage9.sh'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
+      - 'tools/stage37_stage9_harden_persistence_ready.py'
   workflow_dispatch:
 
 permissions:
@@ -30,9 +32,9 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct, verify, 0x4F dry-run gate wiring and build current source
+      - name: Reconstruct, verify, typed-nil persistence gate and build current source
         shell: bash
-        run: bash tools/stage37_current_recovery_stage8.sh
+        run: bash tools/stage37_current_recovery_stage9.sh
 
       - name: Upload verification evidence
         if: always()

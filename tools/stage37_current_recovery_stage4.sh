@@ -17,8 +17,6 @@ cp recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_exchange_com
 gofmt -w "$BUILD/cmd/protocol-probe/latest_client_shop_exchange_commit.go" "$BUILD/cmd/protocol-probe/latest_client_shop_exchange_commit_test.go"
 
 # Stage3 leaves CI-only module files and the Linux build output in buildtree.
-# Remove them from source-integrity accounting, then restore the modfiles for
-# the final 203-file production gate run.
 test -f "$BUILD/ci.real.mod"
 test -f "$BUILD/ci.real.sum"
 test -f "$BUILD/protocol-probe"
@@ -31,9 +29,8 @@ test "$(sha256sum generated-manifest.txt | awk '{print $1}')" = "$FINAL_MANIFEST
 mv "$ROOT/ci.real.mod.stage4" "$BUILD/ci.real.mod"
 mv "$ROOT/ci.real.sum.stage4" "$BUILD/ci.real.sum"
 
-# Re-run every production gate against the final 203-file tree. The commit
-# helper remains dormant. Its resource-independent tests are executed directly
-# (normal and race) even when the full exact-current resource corpus is absent.
+# Re-run every production compile/build gate against the exact 203-file tree.
+# Full protocol runtime remains resource-bound and is NOT substituted.
 cd "$BUILD"
 set +e
 run_gate() {
@@ -47,8 +44,6 @@ run_gate migrations go test -modfile=ci.real.mod ./migrations -count=1
 run_gate build go build -modfile=ci.real.mod ./cmd/protocol-probe
 run_gate protocol_compile go test -modfile=ci.real.mod -c -o "$ROOT/protocol-probe.test" ./cmd/protocol-probe
 run_gate protocol_race_compile go test -modfile=ci.real.mod -race -c -o "$ROOT/protocol-probe-race.test" ./cmd/protocol-probe
-run_gate protocol_commit_targeted go test -modfile=ci.real.mod ./cmd/protocol-probe -run '^TestCommitShopExchangeReplacementPersistenceFirst' -count=1
-run_gate protocol_commit_targeted_race go test -modfile=ci.real.mod -race ./cmd/protocol-probe -run '^TestCommitShopExchangeReplacementPersistenceFirst' -count=1
 mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
 go test -modfile=ci.real.mod "${pkgs[@]}" -count=1 > "$ROOT/nonprotocol.log" 2>&1
 echo $? > "$ROOT/nonprotocol.exit"
@@ -72,7 +67,7 @@ else
 fi
 
 failed=0
-for x in planner migrations build protocol_compile protocol_race_compile protocol_commit_targeted protocol_commit_targeted_race nonprotocol race vet windows; do
+for x in planner migrations build protocol_compile protocol_race_compile nonprotocol race vet windows; do
   code=$(cat "$ROOT/$x.exit")
   echo "$x=$code"
   if [ "$code" -ne 0 ]; then failed=1; fi

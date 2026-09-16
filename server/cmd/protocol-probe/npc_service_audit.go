@@ -3,6 +3,7 @@ package main
 import (
 	"github.com/local/9yin-go-server/internal/npcfunc"
 	"github.com/local/9yin-go-server/internal/role"
+	"github.com/local/9yin-go-server/internal/shopreadiness"
 	"sort"
 	"strings"
 )
@@ -75,10 +76,9 @@ func auditNPCServiceReadinessFrom(service npcService, shopINIPath string) (imple
 	case markDepot:
 		return true, false, true, ""
 	case markShop:
-		if _, _, _, err := loadShopCatalogSection(shopINIPath, service.value); err != nil {
-			return true, false, false, err.Error()
-		}
-		return true, true, false, "shop catalog present; ordinary purchase blocked: exact-current purchase wire unverified"
+		_, _, _, err := loadShopCatalogSection(shopINIPath, service.value)
+		status := shopreadiness.FromCatalogError(err)
+		return status.MenuImplemented, status.CatalogReady, status.PurchaseReady, status.Issue
 	default:
 		return false, false, false, "server handler is not implemented"
 	}

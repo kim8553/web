@@ -28,6 +28,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.5'
+          cache: false
       - name: Resolve real modules in CI-only modfile
         working-directory: server
         shell: bash
@@ -39,6 +40,7 @@ jobs:
             go mod edit -modfile=ci.real.mod -dropreplace="$path"
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
           go mod download -modfile=ci.real.mod
           test -z "$(gofmt -l cmd internal migrations)"
       - name: Run non-protocol tests, vet and protocol compile

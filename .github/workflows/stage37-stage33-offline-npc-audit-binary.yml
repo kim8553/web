@@ -1,0 +1,39 @@
+name: Stage37 Stage33 Offline NPC Audit Binary
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'tools/stage37_current_recovery_stage33.sh'
+      - '.github/workflows/stage37-stage33-offline-npc-audit-binary.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-offline-auditor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reconstruct verified Stage32 and build Linux resource auditor
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage33.sh
+      - name: Upload Linux audit binary and logs (no client resources)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage33-linux-offline-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            stage33-linux-audit-probe
+            stage33-linux-audit-probe.sha256
+            stage33-linux-audit-probe.file.txt
+            stage33_linux_build.log
+            stage33_linux_buildinfo.txt
+            stage33_status.log

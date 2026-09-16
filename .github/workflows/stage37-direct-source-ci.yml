@@ -49,6 +49,10 @@ jobs:
           go test -modfile=ci.real.mod -race -count=1 ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/shopbuygate ./internal/shopbuypersist
           go test -modfile=ci.real.mod -c -o ../direct-source-protocol.test ./cmd/protocol-probe
           go test -modfile=ci.real.mod -race -c -o ../direct-source-protocol-race.test ./cmd/protocol-probe
+          # Run only fixture-based NPC shop audit tests; full protocol tests need
+          # the exact current client resource corpus and are not claimed here.
+          go test -modfile=ci.real.mod -run '^Test(NPCShopAuditExactCatalogNeverAuthorizesPurchase|NPCShopCatalogReadyJSONOnlyForShop|BuildNPCServiceAuditSeparatesConfiguredFromImplemented)$' -count=1 ./cmd/protocol-probe
+          echo 'shop_offline_audit_tests=PASS'
           mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
           go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
           go vet -modfile=ci.real.mod ./...
@@ -59,7 +63,7 @@ jobs:
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o ../direct-source-diagnostic-windows-amd64.exe ./cmd/protocol-probe
           sha256sum ../direct-source-diagnostic-windows-amd64.exe | tee ../direct-source-diagnostic-windows-amd64.sha256
           file ../direct-source-diagnostic-windows-amd64.exe
-          echo 'protocol_runtime=NOT_RUN_EXACT_CLIENT_RESOURCE_CORPUS_ABSENT'
+          echo 'protocol_resource_dependent_runtime=NOT_RUN_EXACT_CLIENT_RESOURCE_CORPUS_ABSENT'
           echo 'live_e2e=NOT_RUN'
       - name: Archive diagnostic build and logs
         if: always()

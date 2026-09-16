@@ -1,0 +1,298 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+var (
+	modernNeiGongStaticPath  = filepath.Join(defaultModernShareRoot, "skill", "neigong", "neigong_static.ini")
+	modernNeiGongVarPropPath = filepath.Join(defaultModernShareRoot, "skill", "neigong", "neigong_varprop.ini")
+	modernBuffNewPath        = filepath.Join(defaultModernShareRoot, "skill", "buff_new.ini")
+	modernPropPackPath       = filepath.Join(defaultModernShareRoot, "modifypack", "proppack.ini")
+	modernSkillPackPath      = filepath.Join(defaultModernShareRoot, "modifypack", "skillpack.ini")
+	modernWuxueWuxingPath    = filepath.Join(defaultModernShareRoot, "faculty", "wuxuebaseinfo.ini")
+)
+
+type modernNeiGongModifier struct {
+	Target string
+	Name   string
+	Value  float64
+	Mode   int32
+}
+type modernNeiGongVarProp struct {
+	level        int32
+	neiGongLevel int32
+	buffID       string
+	buffLevel    int32
+	direct       map[string]int32
+	propPacks    []int32
+	skillPacks   []int32
+}
+type modernNeiGongRange struct {
+	min int32
+	max int32
+}
+type modernNeiGongEffect struct {
+	staticData     uint32
+	buffID         string
+	buffLevel      int32
+	attribute      string
+	neiGongLevel   int32
+	stats          map[string]int32
+	propPacks      []int32
+	skillPacks     []int32
+	skillModifiers map[string][]modernNeiGongModifier
+}
+type modernNeiGongCatalog struct {
+	ranges     map[int32]modernNeiGongRange
+	varProps   map[int32]modernNeiGongVarProp
+	buffStatic map[string]uint32
+	staticAttr map[int32]string
+	propPacks  map[int32][]modernNeiGongModifier
+	skillPacks map[int32][]modernNeiGongModifier
+}
+
+var (
+	modernNeiGongCatalogOnce sync.Once
+	modernNeiGongCatalogData *modernNeiGongCatalog
+	modernNeiGongCatalogErr  error
+)
+
+func loadModernNeiGongCatalog() (*modernNeiGongCatalog, error) {
+	modernNeiGongCatalogOnce.Do(func() {
+		catalog := &modernNeiGongCatalog{ranges: make(map[int32]modernNeiGongRange), varProps: make(map[int32]modernNeiGongVarProp), buffStatic: make(map[string]uint32), staticAttr: make(map[int32]string), propPacks: make(map[int32][]modernNeiGongModifier), skillPacks: make(map[int32][]modernNeiGongModifier)}
+		if err := catalog.load(); err != nil {
+			modernNeiGongCatalogErr = err
+			return
+		}
+		modernNeiGongCatalogData = catalog
+	})
+	return modernNeiGongCatalogData, modernNeiGongCatalogErr
+}
+func (c *modernNeiGongCatalog) load() error {
+	if err := parseModernINI(modernNeiGongStaticPath, func(section, key, value string) error {
+		parsedID, err := strconv.ParseInt(section, 10, 32)
+		if err != nil {
+			return nil
+		}
+		id := int32(parsedID)
+		rangeValue := c.ranges[id]
+		switch key {
+		case "MaxVarPropNo":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong static [%s] %s=%q: %w", section, key, value, err)
+			}
+			rangeValue.max = parsed
+		case "MinVarPropNo":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong static [%s] %s=%q: %w", section, key, value, err)
+			}
+			rangeValue.min = parsed
+		}
+		c.ranges[id] = rangeValue
+		if key == "BelongType" {
+			c.staticAttr[id] = strings.TrimSpace(value)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := parseModernINI(modernNeiGongVarPropPath, func(section, key, value string) error {
+		parsedID, err := strconv.ParseInt(section, 10, 32)
+		if err != nil {
+			return nil
+		}
+		id := int32(parsedID)
+		record := c.varProps[id]
+		if record.direct == nil {
+			record.direct = make(map[string]int32)
+		}
+		switch key {
+		case "Level":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong varprop [%s] %s=%q: %w", section, key, value, err)
+			}
+			record.level = parsed
+		case "StrAdd", "StaAdd", "SpiAdd", "IngAdd", "DexAdd":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong varprop [%s] %s=%q: %w", section, key, value, err)
+			}
+			record.direct[key] = parsed
+		case "BufferID":
+			record.buffID = strings.TrimSpace(value)
+		case "BufferLevel":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong varprop [%s] %s=%q: %w", section, key, value, err)
+			}
+			record.buffLevel = parsed
+		case "NeiGongLevel":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong varprop [%s] %s=%q: %w", section, key, value, err)
+			}
+			record.neiGongLevel = parsed
+		case "@SkillModifyPackRec":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong varprop [%s] %s=%q: %w", section, key, value, err)
+			}
+			record.skillPacks = append(record.skillPacks, parsed)
+		case "@PropModifyPackRec":
+			parsed, err := parseModernInt32(value)
+			if err != nil {
+				return fmt.Errorf("neigong varprop [%s] %s=%q: %w", section, key, value, err)
+			}
+			record.propPacks = append(record.propPacks, parsed)
+		}
+		c.varProps[id] = record
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := parseModernINI(modernBuffNewPath, func(section, key, value string) error {
+		if key != "StaticData" {
+			return nil
+		}
+		parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32)
+		if err != nil {
+			return fmt.Errorf("buff [%s] StaticData=%q: %w", section, value, err)
+		}
+		c.buffStatic[section] = uint32(parsed)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := loadModernModifierPacks(modernPropPackPath, c.propPacks); err != nil {
+		return err
+	}
+	return loadModernModifierPacks(modernSkillPackPath, c.skillPacks)
+}
+func (c *modernNeiGongCatalog) effect(staticData int32, level int32) (modernNeiGongEffect, error) {
+	rangeValue, ok := c.ranges[staticData]
+	if !ok || rangeValue.min <= 0 || rangeValue.max < rangeValue.min {
+		return modernNeiGongEffect{}, fmt.Errorf("missing modern neigong StaticData=%d range", staticData)
+	}
+	var record modernNeiGongVarProp
+	found := false
+	for id := rangeValue.min; id <= rangeValue.max; id++ {
+		candidate, ok := c.varProps[id]
+		if ok && candidate.level == level {
+			record = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return modernNeiGongEffect{}, fmt.Errorf("StaticData=%d has no varprop at level=%d", staticData, level)
+	}
+	effect := modernNeiGongEffect{buffID: record.buffID, buffLevel: record.buffLevel, attribute: c.staticAttr[staticData], neiGongLevel: record.neiGongLevel, stats: make(map[string]int32, len(record.direct)), propPacks: append([]int32(nil), record.propPacks...), skillPacks: append([]int32(nil), record.skillPacks...), skillModifiers: make(map[string][]modernNeiGongModifier)}
+	for name, value := range record.direct {
+		effect.stats[name] += value
+	}
+	if record.buffID != "" {
+		effect.staticData = c.buffStatic[record.buffID]
+		if effect.staticData == 0 {
+			return modernNeiGongEffect{}, fmt.Errorf("BufferID=%q has no StaticData in buff_new.ini", record.buffID)
+		}
+	}
+	for _, packID := range effect.propPacks {
+		for _, modifier := range c.propPacks[packID] {
+			if modifier.Target != "" || modifier.Mode != 0 {
+				continue
+			}
+			effect.stats[modifier.Name] += int32(modifier.Value)
+		}
+	}
+	for _, packID := range effect.skillPacks {
+		for _, modifier := range c.skillPacks[packID] {
+			if modifier.Target == "" {
+				continue
+			}
+			effect.skillModifiers[modifier.Target] = append(effect.skillModifiers[modifier.Target], modifier)
+		}
+	}
+	return effect, nil
+}
+func parseModernINI(path string, consume func(section, key, value string) error) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 2*1024*1024)
+	section := ""
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || line[0] == ';' || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if len(line) >= 2 && line[0] == '[' && line[len(line)-1] == ']' {
+			section = strings.TrimSpace(line[1 : len(line)-1])
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok || section == "" {
+			continue
+		}
+		if err := consume(section, strings.TrimSpace(key), strings.TrimSpace(value)); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+func loadModernModifierPacks(path string, destination map[int32][]modernNeiGongModifier) error {
+	return parseModernINI(path, func(section, key, value string) error {
+		if key != "r" {
+			return nil
+		}
+		id, err := parseModernInt32(section)
+		if err != nil {
+			return nil
+		}
+		modifier, ok := parseModernModifier(value)
+		if !ok {
+			return nil
+		}
+		destination[id] = append(destination[id], modifier)
+		return nil
+	})
+}
+func parseModernModifier(value string) (modernNeiGongModifier, bool) {
+	parts := strings.Split(value, ",")
+	for len(parts) > 0 && strings.TrimSpace(parts[len(parts)-1]) == "" {
+		parts = parts[:len(parts)-1]
+	}
+	if len(parts) < 3 {
+		return modernNeiGongModifier{}, false
+	}
+	amount, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+	if err == nil {
+		mode, _ := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 32)
+		return modernNeiGongModifier{Name: strings.TrimSpace(parts[0]), Value: amount, Mode: int32(mode)}, true
+	}
+	if len(parts) < 4 {
+		return modernNeiGongModifier{}, false
+	}
+	amount, err = strconv.ParseFloat(strings.TrimSpace(parts[2]), 64)
+	if err != nil {
+		return modernNeiGongModifier{}, false
+	}
+	mode, _ := strconv.ParseInt(strings.TrimSpace(parts[3]), 10, 32)
+	return modernNeiGongModifier{Target: strings.TrimSpace(parts[0]), Name: strings.TrimSpace(parts[1]), Value: amount, Mode: int32(mode)}, true
+}
+func parseModernInt32(value string) (int32, error) {
+	parsed, err := strconv.ParseInt(strings.TrimSpace(value), 10, 32)
+	return int32(parsed), err
+}

@@ -1,0 +1,13 @@
+/artifacts/
+/build/
+/data/
+/logs/
+/resources/
+*.exe
+*.exe~
+*.log
+*.obj
+*.idb
+*.i64
+*.pdb
+*.dmp

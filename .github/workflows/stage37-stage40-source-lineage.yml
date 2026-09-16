@@ -1,0 +1,87 @@
+name: Stage37 Stage40 Source Lineage Audit
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - '.github/workflows/stage37-stage40-source-lineage.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  compare-source-lineages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Download verified 210-file reference manifest
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: '10425965179'
+          run-id: '35041631604'
+          repository: kim8553/web
+          github-token: ${{ github.token }}
+          path: baseline210
+      - name: Reconstruct and verify Stage34 diagnostic source without publishing it
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage34.sh
+      - name: Compare actual reconstructed source bytes with reference manifest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib, json, sys
+          root = Path('buildtree')
+          source = Path('baseline210/generated-manifest.txt')
+          if hashlib.sha256(source.read_bytes()).hexdigest() != '99f1b40a4a042e51f8e4c36255710094910aa05ce80853920be26f39c3d3e2dd':
+              raise SystemExit('reference 210 manifest digest mismatch')
+          excluded = {'ci.real.mod', 'ci.real.sum', 'protocol-probe'}
+          current = {}
+          for entry in root.rglob('*'):
+              if not entry.is_file() or entry.is_symlink() or entry.name in excluded:
+                  continue
+              relative = entry.relative_to(root).as_posix()
+              if relative.startswith('.git/') or relative in current:
+                  raise SystemExit('invalid reconstructed source path')
+              current[relative] = hashlib.sha256(entry.read_bytes()).hexdigest()
+          baseline = {}
+          for line in source.read_text(encoding='utf-8').splitlines():
+              digest, relative = line.split('  ', 1)
+              if relative in baseline or relative.startswith('/') or '..' in Path(relative).parts:
+                  raise SystemExit('invalid reference path')
+              baseline[relative] = digest
+          shared = baseline.keys() & current.keys()
+          result = {
+              'reference_commit': '4b7c975d40cf6223807c0a5eeb71d1eefdb646bf',
+              'reference_files': len(baseline),
+              'reconstructed_files': len(current),
+              'unchanged': sum(baseline[p] == current[p] for p in shared),
+              'changed': sorted(p for p in shared if baseline[p] != current[p]),
+              'missing_from_stage34': sorted(baseline.keys() - current.keys()),
+              'added_by_stage34': sorted(current.keys() - baseline.keys()),
+              'merge_complete': False,
+              'live_e2e': 'NOT_RUN',
+          }
+          Path('stage40_source_lineage.json').write_text(json.dumps(result, indent=2, ensure_ascii=False) + '\n')
+          Path('stage40_source_manifest.txt').write_text(''.join(f'{current[p]}  {p}\n' for p in sorted(current)))
+          print(json.dumps(result, indent=2, ensure_ascii=False))
+          if result['missing_from_stage34']:
+              raise SystemExit('Stage34 is not a lossless successor of the 210-file source')
+          PY
+      - name: Upload audit evidence only; never promote diagnostic server to production
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage40-source-lineage-${{ github.sha }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            stage40_source_lineage.json
+            stage40_source_manifest.txt
+            stage34_status.log

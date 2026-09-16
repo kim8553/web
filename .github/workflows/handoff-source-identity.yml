@@ -78,13 +78,27 @@ jobs:
           go test -modfile=ci.real.mod -c -o /tmp/handoff-protocol.test ./cmd/protocol-probe
           go vet -modfile=ci.real.mod ./...
           echo 'TESTS_AND_VET=PASS PROTOCOL_COMPILE=PASS PROTOCOL_FULL_RUNTIME=NOT_RUN'
-      - name: Run exact-current shop request parser runtime tests
+      - name: Check private exact-current protocol fixtures (never upload)
         working-directory: server
         shell: bash
         run: |
           set -euo pipefail
-          go test -modfile=ci.real.mod -count=1 -v -run '^(TestCurrentShopExchangeFormRequestContract|TestCurrentShopExchangeBuyRequestContract|TestCurrentShopExchangeBuyDoesNotAcceptExchangeDataOnWire|TestCurrentShopConditionDetailsRequestContract)$' ./cmd/protocol-probe
-          echo 'SHOP_REQUEST_PARSER_RUNTIME=PASS RESOURCE_DEPENDENT_RUNTIME=NOT_RUN'
+          required=(resources/modern/share/skill/skill_new.ini resources/modern/share/skill/skill_static.ini resources/modern/share/skill/skill_normal_varprop.ini resources/modern/share/skill/skill_lock_varprop.ini resources/modern/share/skill/skill_consume.ini resources/modern/share/skill/damage_calculate.ini resources/modern/share/skill/attack_hitshape.ini resources/modern/share/skill/attack_targetshape.ini resources/modern/share/skill/buff_new.ini resources/modern/share/skill/buff_static.ini resources/modern/share/skill/buff_varprop.ini resources/modern/ini/action/zhaoshi_player.ini resources/modern/ini/action/zhaoshi_player_2.ini resources/modern/ini/action/zhaoshi_player_dodge.ini resources/modern/ini/action/zhaoshi_player_parry.ini resources/modern/ini/action/zhaoshi_clone.ini)
+          missing=0
+          for path in "${required[@]}"; do
+            if [[ ! -s "$path" ]]; then
+              printf 'PRIVATE_FIXTURE_MISSING=%s\n' "$path"
+              missing=1
+            fi
+          done
+          if [[ "$missing" -ne 0 ]]; then
+            echo 'SHOP_REQUEST_PARSER_RUNTIME=NOT_RUN (private exact-current fixtures absent in public CI)'
+            echo 'PROTOCOL_FULL_RUNTIME=NOT_RUN (private exact-current fixtures absent in public CI)'
+            exit 0
+          fi
+          echo 'Required protocol fixture files exist; check their provenance before running resource-dependent tests.'
+          echo 'SHOP_REQUEST_PARSER_RUNTIME=NOT_RUN (CI has no authenticated resource fingerprint manifest)'
+          echo 'PROTOCOL_FULL_RUNTIME=NOT_RUN (CI has no authenticated resource fingerprint manifest)'
       - name: Windows amd64 cross-build (not LIVE)
         working-directory: server
         shell: bash

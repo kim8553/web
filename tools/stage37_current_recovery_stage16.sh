@@ -24,12 +24,19 @@ required_order=wire_gate_require_then_pure_stage_then_atomic_bag_currency_persis
 publish_failure_boundary=durable_state_already_committed_requires_resync_not_db_rollback
 STATUS
 
+# These four files are committed immutable Stage16 inputs. Verify their exact
+# Git blob identities from the canonical commit rather than maintaining a
+# second manually copied SHA256 list that can diverge on whitespace alone.
 for spec in \
-  'b6eed4cf4947f63be38b2c1344f0040757082a49d1e37aeb03270a2666f47bcd recovery/postbuild_files/internal__shopbuygate__decision.go' \
-  '093f40d6df86b03aecad79b17b89ae390399fd88cf144d8567b02d4ae83c72c4 recovery/postbuild_files/internal__shopbuygate__decision_test.go' \
-  'b620b0269ff8e60a783cc34c7488cc04917e8a78ff1a39b79a4cfdc05e4ee8bb recovery/postbuild_files/internal__shopbuyexecute__execute.go' \
-  'a46ea75030ef418e4ab126e1a6bb4fd4f4e87e41d28ccccdffe895cf481731b2 recovery/postbuild_files/internal__shopbuyexecute__execute_test.go'; do
-  echo "$spec" | sha256sum -c -
+  '4cc5c8eaee4dd38d433740d13ab154697dc5b823 recovery/postbuild_files/internal__shopbuygate__decision.go' \
+  '48b03db972d7369ee72ba4e81cc76336358a2f4d recovery/postbuild_files/internal__shopbuygate__decision_test.go' \
+  '09b2032b580d3bc6ca17a316e979e55b4bf3d15e recovery/postbuild_files/internal__shopbuyexecute__execute.go' \
+  '3dd7f1eb0f5d13f4fcefe1224adf905442937f59 recovery/postbuild_files/internal__shopbuyexecute__execute_test.go'; do
+  expected="${spec%% *}"
+  path="${spec#* }"
+  actual="$(git hash-object "$path")"
+  echo "stage16_input_blob path=$path expected=$expected actual=$actual"
+  test "$actual" = "$expected"
 done
 
 mkdir -p "$BUILD/internal/shopbuygate" "$BUILD/internal/shopbuyexecute"

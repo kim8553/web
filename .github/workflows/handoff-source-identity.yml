@@ -1,0 +1,62 @@
+name: Assistant handoff exact-source verification
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: ['server/**', '.github/workflows/handoff-source-identity.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Sep-15 exact source tree (fail closed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=70ca6d915dc120f8e39327cadcae37e835c30443
+          actual=$(git rev-parse HEAD:server)
+          count=$(git ls-files server | wc -l)
+          echo "expected_server_git_tree=$expected"
+          echo "actual_server_git_tree=$actual"
+          echo "tracked_server_files=$count"
+          test "$actual" = "$expected"
+          test "$count" -eq 186
+          echo 'EXACT_HANDOFF_SOURCE=PASS'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Resolve real modules in CI-only modfile
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download -modfile=ci.real.mod
+          test -z "$(gofmt -l cmd internal migrations)"
+      - name: Run non-protocol tests, vet and protocol compile
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go test -modfile=ci.real.mod -c -o /tmp/handoff-protocol.test ./cmd/protocol-probe
+          go vet -modfile=ci.real.mod ./...
+          echo 'TESTS_AND_VET=PASS PROTOCOL_COMPILE=PASS PROTOCOL_RUNTIME=NOT_RUN'
+      - name: Windows amd64 cross-build (not LIVE)
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o /tmp/handoff-server.exe ./cmd/protocol-probe
+          file /tmp/handoff-server.exe | grep -E 'PE32\+ executable.*x86-64'
+          sha256sum /tmp/handoff-server.exe
+          echo 'WINDOWS_BUILD=PASS LIVE_E2E=NOT_RUN'

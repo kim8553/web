@@ -1,0 +1,29 @@
+name: Stage51 Lua Chunk Recovery (synthetic only)
+on:
+  push:
+    branches:
+      - stage37-current-recovery-20260916
+    paths:
+      - tools/stage51_lua_named_chunk_recovery.py
+      - .github/workflows/stage51-lua-chunk-recovery.yml
+  workflow_dispatch:
+jobs:
+  synthetic-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Python syntax without private inputs
+        run: python -m py_compile tools/stage51_lua_named_chunk_recovery.py
+      - name: Synthetic Lua 5.1 boundary and traversal checks only
+        run: python tools/stage51_lua_named_chunk_recovery.py --self-test
+      - name: Prove no private archive or game executable is required in CI
+        shell: bash
+        run: |
+          test ! -e fxgame.exe
+          test ! -e STAGE48_ANONYMOUS_STREAMS_PRIVATE_20260917.zip
+          test ! -e STAGE51_LUA_CHUNK_BYTECODE_PRIVATE_20260917.zip

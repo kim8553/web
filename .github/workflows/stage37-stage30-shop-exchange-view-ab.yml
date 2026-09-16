@@ -1,0 +1,44 @@
+name: Stage37 Stage30 Shop Exchange View AB
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'recovery/stage30_shop_exchange_display_ab.patch'
+      - 'tools/stage37_current_recovery_stage30.sh'
+      - '.github/workflows/stage37-stage30-shop-exchange-view-ab.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-shop-view:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reconstruct Stage29 and verify Stage30 exchange display A/B
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage30.sh
+      - name: Upload diagnostic build and audit logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage30-shop-view-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            stage30_status.log
+            stage30_unit.log
+            stage30_unit_race.log
+            stage30_compile.log
+            stage30_race_compile.log
+            stage30_vet.log
+            stage30_windows.log
+            stage30-current-windows-amd64.exe
+            stage30-current-windows-amd64.sha256
+            stage30-current-windows-amd64.file.txt

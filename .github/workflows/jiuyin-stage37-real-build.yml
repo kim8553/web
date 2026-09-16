@@ -23,6 +23,7 @@ on:
       - 'tools/stage37_current_recovery_stage17.sh'
       - 'tools/stage37_current_recovery_stage18.sh'
       - 'tools/stage37_current_recovery_stage19.sh'
+      - 'tools/stage37_current_recovery_stage20.sh'
       - 'tools/stage37_stage8_wire_exchange_gate.py'
       - 'tools/stage37_stage9_harden_persistence_ready.py'
       - 'recovery/postbuild_files/internal__shopbuygate__decision.go'
@@ -38,6 +39,9 @@ on:
       - 'recovery/postbuild_files/internal__shopbuycommit__commit.go'
       - 'recovery/postbuild_files/internal__shopbuycommit__commit_test.go'
       - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_commit.go'
+      - 'recovery/postbuild_files/internal__shopbuypublish__publish.go'
+      - 'recovery/postbuild_files/internal__shopbuypublish__publish_test.go'
+      - 'recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_publish.go'
   workflow_dispatch:
 
 permissions:
@@ -54,9 +58,9 @@ jobs:
           go-version: '1.23.2'
           cache: false
 
-      - name: Reconstruct, verify, and test Stage19 regular NPC shop durable/live commit boundary
+      - name: Reconstruct, verify, and test Stage20 regular NPC shop post-commit client publish boundary
         shell: bash
-        run: bash tools/stage37_current_recovery_stage19.sh
+        run: bash tools/stage37_current_recovery_stage20.sh
 
       - name: Upload verification evidence
         if: always()

@@ -12,19 +12,26 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      - name: Verify Sep-15 exact source tree (fail closed)
+        with:
+          fetch-depth: 0
+      - name: Verify immutable source baseline and audited additions (fail closed)
         shell: bash
         run: |
           set -euo pipefail
-          expected=70ca6d915dc120f8e39327cadcae37e835c30443
-          actual=$(git rev-parse HEAD:server)
-          count=$(git ls-files server | wc -l)
-          echo "expected_server_git_tree=$expected"
-          echo "actual_server_git_tree=$actual"
-          echo "tracked_server_files=$count"
-          test "$actual" = "$expected"
-          test "$count" -eq 186
-          echo 'EXACT_HANDOFF_SOURCE=PASS'
+          baseline=3fabb1f0d875141f3441b6bb583298e2bbd75d33
+          expected_baseline_tree=70ca6d915dc120f8e39327cadcae37e835c30443
+          baseline_tree=$(git rev-parse "$baseline:server")
+          baseline_count=$(git ls-tree -r --name-only "$baseline" server | wc -l)
+          current_tree=$(git rev-parse HEAD:server)
+          current_count=$(git ls-files server | wc -l)
+          printf 'baseline_server_git_tree=%s\ncurrent_server_git_tree=%s\nbaseline_tracked_files=%s\ncurrent_tracked_files=%s\n' "$baseline_tree" "$current_tree" "$baseline_count" "$current_count"
+          test "$baseline_tree" = "$expected_baseline_tree"
+          test "$baseline_count" -eq 186
+          test "$current_count" -eq 188
+          git diff --name-status "$baseline" HEAD -- server > "$RUNNER_TEMP/audited-source-diff.txt"
+          printf 'A\tserver/cmd/protocol-probe/latest_client_shop_exchange_failclosed_test.go\nA\tserver/docs/CURRENT_SHOP_EXCHANGE_BIND_AUDIT_20260917.md\n' > "$RUNNER_TEMP/expected-source-diff.txt"
+          diff -u "$RUNNER_TEMP/expected-source-diff.txt" "$RUNNER_TEMP/audited-source-diff.txt"
+          echo 'EXACT_HANDOFF_BASELINE=PASS AUDITED_ADDITIONS=PASS'
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26.5'
@@ -43,18 +50,19 @@ jobs:
           go mod tidy -modfile=ci.real.mod
           go mod download -modfile=ci.real.mod
           test -z "$(gofmt -l cmd internal migrations)"
-      - name: Export exact tracked source and public Go module download cache
+      - name: Export audited tracked source and public Go module download cache
         shell: bash
         run: |
           set -euo pipefail
-          expected=70ca6d915dc120f8e39327cadcae37e835c30443
-          test "$(git rev-parse HEAD:server)" = "$expected"
+          baseline=3fabb1f0d875141f3441b6bb583298e2bbd75d33
+          test "$(git rev-parse "$baseline:server")" = '70ca6d915dc120f8e39327cadcae37e835c30443'
+          test "$(git ls-files server | wc -l)" -eq 188
           git archive --format=tar HEAD server | gzip -n > "$RUNNER_TEMP/stage37-exact-server.tar.gz"
           test -d "$(go env GOMODCACHE)/cache/download"
           tar -czf "$RUNNER_TEMP/stage37-go-module-cache.tar.gz" -C "$(go env GOMODCACHE)" cache/download
           cp server/ci.real.mod "$RUNNER_TEMP/ci.real.mod"
           cp server/ci.real.sum "$RUNNER_TEMP/ci.real.sum"
-          printf 'expected_server_git_tree=%s\nworkflow_commit=%s\nsource_scope=tracked_server_only\nmodule_scope=public_go_download_cache\n' "$expected" "$(git rev-parse HEAD)" > "$RUNNER_TEMP/PROVENANCE.txt"
+          printf 'baseline_server_git_tree=%s\ncurrent_server_git_tree=%s\nworkflow_commit=%s\nsource_scope=tracked_server_only\nmodule_scope=public_go_download_cache\n' '70ca6d915dc120f8e39327cadcae37e835c30443' "$(git rev-parse HEAD:server)" "$(git rev-parse HEAD)" > "$RUNNER_TEMP/PROVENANCE.txt"
           (cd "$RUNNER_TEMP" && sha256sum stage37-exact-server.tar.gz stage37-go-module-cache.tar.gz ci.real.mod ci.real.sum PROVENANCE.txt > MANIFEST.sha256)
       - uses: actions/upload-artifact@v4
         with:

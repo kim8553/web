@@ -1,0 +1,40 @@
+name: Stage37 Shop Display Offline Audit
+
+on:
+  push:
+    branches:
+      - stage37-current-recovery-20260916
+    paths:
+      - tools/stage37_shop_display_audit.py
+      - tests/test_stage37_shop_display_audit.py
+      - .github/workflows/stage37-shop-display-audit.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-model-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact triggering commit
+        uses: actions/checkout@v4
+      - name: Static syntax check
+        run: python3 -m py_compile tools/stage37_shop_display_audit.py tests/test_stage37_shop_display_audit.py
+      - name: Offline synthetic shop fixtures only (no client or database)
+        run: python3 -m unittest discover -s tests -p 'test_stage37_shop_display_audit.py' -v
+      - name: Verify no live success is implied
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('audit', Path('tools/stage37_shop_display_audit.py'))
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          status = module.scan(b'[shop]\n0=item,1,3,0,0,0,0,100\n')
+          assert status['scope'] == 'OFFLINE_READ_ONLY_STAGE23_SOURCE_MODEL_NOT_LIVE'
+          assert status['selector_verified'] is False
+          assert status['live_e2e_verified'] is False
+          print('offline_only=PASS; windows_build=NOT_RUN; live_e2e=NOT_RUN')
+          PY

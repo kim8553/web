@@ -36,6 +36,8 @@ jobs:
           go mod edit -modfile=ci.real.mod -dropreplace=github.com/DATA-DOG/go-sqlmock
           go mod edit -modfile=ci.real.mod -dropreplace=github.com/Hiroko103/go-quicklz
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download -modfile=ci.real.mod github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          grep -F 'github.com/Hiroko103/go-quicklz v0.0.0-20190115215310-59904abc50d0 h1:' ci.real.sum
           go mod download -modfile=ci.real.mod
           test -z "$(gofmt -l cmd internal migrations)"
       - name: Exact offline regressions on direct source

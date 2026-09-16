@@ -1,0 +1,29 @@
+name: Stage47 Fxres Postread Record (synthetic only)
+
+on:
+  push:
+    branches:
+      - stage37-current-recovery-20260916
+    paths:
+      - tools/stage47_fxres_postread_record_audit.py
+      - tools/stage46_current_bin64_index_gate.py
+      - .github/workflows/stage47-fxres-postread-record.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-read-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout recovery branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify Python syntax
+        run: python -m py_compile tools/stage46_current_bin64_index_gate.py tools/stage47_fxres_postread_record_audit.py
+      - name: Run synthetic fixtures without private client files
+        run: python tools/stage47_fxres_postread_record_audit.py --self-test

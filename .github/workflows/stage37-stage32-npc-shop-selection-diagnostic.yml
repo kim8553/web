@@ -1,0 +1,44 @@
+name: Stage37 Stage32 NPC Shop Selection Diagnostic
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'recovery/stage32_npc_shop_selection_diagnostic.patch'
+      - 'tools/stage37_current_recovery_stage32.sh'
+      - '.github/workflows/stage37-stage32-npc-shop-selection-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-npc-shop-selection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reconstruct Stage31 and verify read-only exact NPC shop diagnostics
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage32.sh
+      - name: Upload source guards, isolated tests and Windows build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage32-npc-shop-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            stage32_status.log
+            stage32_unit.log
+            stage32_unit_race.log
+            stage32_compile.log
+            stage32_race_compile.log
+            stage32_vet.log
+            stage32_windows.log
+            stage32-current-windows-amd64.exe
+            stage32-current-windows-amd64.sha256
+            stage32-current-windows-amd64.file.txt

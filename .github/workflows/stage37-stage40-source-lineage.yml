@@ -36,9 +36,13 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import hashlib, json, sys
+          import hashlib, json
           root = Path('buildtree')
-          source = Path('baseline210/generated-manifest.txt')
+          # download-artifact@v4 nests the files under the artifact name when
+          # merge-multiple is false; the previous attempt used the parent path.
+          source = Path('baseline210/stage37-current-recovery-verification/generated-manifest.txt')
+          if not source.is_file():
+              raise SystemExit('reference manifest absent at exact artifact path')
           if hashlib.sha256(source.read_bytes()).hexdigest() != '99f1b40a4a042e51f8e4c36255710094910aa05ce80853920be26f39c3d3e2dd':
               raise SystemExit('reference 210 manifest digest mismatch')
           excluded = {'ci.real.mod', 'ci.real.sum', 'protocol-probe'}

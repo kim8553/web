@@ -4,7 +4,7 @@ index f741406..16815a3 100644
 +++ b/cmd/protocol-probe/scene_lifecycle.go
 @@ -520,30 +520,31 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
  	if exchangeAB {
- 		log.Printf("shop exchange view AB shop=%q eligible=%d displayed=%d missing_data=%d invalid_slot=%d capacity_blocked=%t collision_blocked=%t mutation=unchanged_client_render=unverified", shopID, exchangeStats.Eligible, exchangeStats.Displayed, exchangeStats.MissingExchangeData, exchangeStats.InvalidExchangeSlot, exchangeStats.CollisionBlocked)
+ 		log.Printf("shop exchange view AB shop=%q eligible=%d displayed=%d missing_data=%d invalid_slot=%d capacity_blocked=%t collision_blocked=%t mutation=unchanged_client_render=unverified", shopID, exchangeStats.Eligible, exchangeStats.Displayed, exchangeStats.MissingExchangeData, exchangeStats.InvalidExchangeSlot, exchangeStats.CapacityBlocked, exchangeStats.CollisionBlocked)
  	}
 +	// Encode and validate ALL item frames before creating a client view. An
 +	// invalid later row must never leave a half-populated shop on the wire.

@@ -26,13 +26,14 @@ type npcServiceAuditPosition struct {
 	Z float32 `json:"z"`
 }
 type npcServiceAuditService struct {
-	Mark        uint16 `json:"mark"`
-	Label       string `json:"label"`
-	Value       string `json:"value,omitempty"`
-	Source      string `json:"source"`
-	Implemented bool   `json:"implemented"`
-	Ready       bool   `json:"ready"`
-	Issue       string `json:"issue,omitempty"`
+	Mark         uint16 `json:"mark"`
+	Label        string `json:"label"`
+	Value        string `json:"value,omitempty"`
+	Source       string `json:"source"`
+	Implemented  bool   `json:"implemented"`
+	CatalogReady *bool  `json:"catalog_ready,omitempty"` // Only emitted for shops; not purchase readiness.
+	Ready        bool   `json:"ready"`
+	Issue        string `json:"issue,omitempty"`
 }
 
 func buildNPCServiceAudit(scene role.Scene, stats npcCatalogStats, catalog []npcSpawn, funcs *npcfunc.Registry) npcServiceAuditReport {
@@ -40,8 +41,12 @@ func buildNPCServiceAudit(scene role.Scene, stats npcCatalogStats, catalog []npc
 	for _, npc := range catalog {
 		entry := npcServiceAuditNPC{ConfigID: npc.resolved.ConfigID, InstanceKey: npc.resolved.InstanceKey, ScriptClass: npc.resolved.ScriptClass, Position: npcServiceAuditPosition{X: npc.x, Y: npc.y, Z: npc.z}}
 		for _, service := range modernNPCServices(npc) {
-			implemented, ready, issue := auditNPCServiceReadiness(service)
-			entry.Services = append(entry.Services, npcServiceAuditService{Mark: service.mark, Label: service.label, Value: service.value, Source: service.source, Implemented: implemented, Ready: ready, Issue: issue})
+			implemented, catalogAvailable, ready, issue := auditNPCServiceReadiness(service)
+			var catalogReady *bool
+			if service.mark == markShop {
+				catalogReady = &catalogAvailable
+			}
+			entry.Services = append(entry.Services, npcServiceAuditService{Mark: service.mark, Label: service.label, Value: service.value, Source: service.source, Implemented: implemented, CatalogReady: catalogReady, Ready: ready, Issue: issue})
 		}
 		for _, binding := range funcs.FuncsForNPC(npc.resolved.ConfigID) {
 			entry.NpcFuncIDs = append(entry.NpcFuncIDs, binding.FuncID)
@@ -57,17 +62,25 @@ func buildNPCServiceAudit(scene role.Scene, stats npcCatalogStats, catalog []npc
 	})
 	return report
 }
-func auditNPCServiceReadiness(service npcService) (implemented, ready bool, issue string) {
+
+func auditNPCServiceReadiness(service npcService) (implemented, catalogAvailable, ready bool, issue string) {
+	return auditNPCServiceReadinessFrom(service, defaultShopINIPath)
+}
+
+// auditNPCServiceReadinessFrom is read-only. An exact shop.ini section proves
+// only that the catalog can be loaded; it does not prove client rendering or
+// authorize the ordinary shop purchase selector, currency debit, or bag grant.
+func auditNPCServiceReadinessFrom(service npcService, shopINIPath string) (implemented, catalogAvailable, ready bool, issue string) {
 	switch service.mark {
 	case markDepot:
-		return true, true, ""
+		return true, false, true, ""
 	case markShop:
-		if _, _, _, err := loadShopCatalogSection(defaultShopINIPath, service.value); err != nil {
-			return true, false, err.Error()
+		if _, _, _, err := loadShopCatalogSection(shopINIPath, service.value); err != nil {
+			return true, false, false, err.Error()
 		}
-		return true, true, ""
+		return true, true, false, "shop catalog present; ordinary purchase blocked: exact-current purchase wire unverified"
 	default:
-		return false, false, "server handler is not implemented"
+		return false, false, false, "server handler is not implemented"
 	}
 }
 func auditFileComponent(value string) string {

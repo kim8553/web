@@ -1,0 +1,45 @@
+name: Stage37 Stage34 Shop PageCount Reconciliation
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'recovery/stage34_shop_pagecount_reconcile.patch'
+      - 'recovery/stage34_shop_pagecount_test.go'
+      - 'tools/stage37_current_recovery_stage34.sh'
+      - '.github/workflows/stage37-stage34-shop-pagecount.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-shop-pages:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reconstruct Stage32 and verify authored PageCount reconciliation
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage34.sh
+      - name: Upload Windows diagnostic build and verification logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage34-shop-pagecount-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            stage34_status.log
+            stage34_unit.log
+            stage34_unit_race.log
+            stage34_compile.log
+            stage34_race_compile.log
+            stage34_vet.log
+            stage34_windows.log
+            stage34-current-windows-amd64.exe
+            stage34-current-windows-amd64.sha256
+            stage34-current-windows-amd64.file.txt

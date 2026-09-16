@@ -43,6 +43,31 @@ jobs:
           go mod tidy -modfile=ci.real.mod
           go mod download -modfile=ci.real.mod
           test -z "$(gofmt -l cmd internal migrations)"
+      - name: Export exact tracked source and public Go module download cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=70ca6d915dc120f8e39327cadcae37e835c30443
+          test "$(git rev-parse HEAD:server)" = "$expected"
+          git archive --format=tar HEAD server | gzip -n > "$RUNNER_TEMP/stage37-exact-server.tar.gz"
+          test -d "$(go env GOMODCACHE)/cache/download"
+          tar -czf "$RUNNER_TEMP/stage37-go-module-cache.tar.gz" -C "$(go env GOMODCACHE)" cache/download
+          cp server/ci.real.mod "$RUNNER_TEMP/ci.real.mod"
+          cp server/ci.real.sum "$RUNNER_TEMP/ci.real.sum"
+          printf 'expected_server_git_tree=%s\nworkflow_commit=%s\nsource_scope=tracked_server_only\nmodule_scope=public_go_download_cache\n' "$expected" "$(git rev-parse HEAD)" > "$RUNNER_TEMP/PROVENANCE.txt"
+          (cd "$RUNNER_TEMP" && sha256sum stage37-exact-server.tar.gz stage37-go-module-cache.tar.gz ci.real.mod ci.real.sum PROVENANCE.txt > MANIFEST.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-public-source-go-cache-20260917
+          retention-days: 2
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/stage37-exact-server.tar.gz
+            ${{ runner.temp }}/stage37-go-module-cache.tar.gz
+            ${{ runner.temp }}/ci.real.mod
+            ${{ runner.temp }}/ci.real.sum
+            ${{ runner.temp }}/PROVENANCE.txt
+            ${{ runner.temp }}/MANIFEST.sha256
       - name: Run non-protocol tests, vet and protocol compile
         working-directory: server
         shell: bash
@@ -52,7 +77,14 @@ jobs:
           go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
           go test -modfile=ci.real.mod -c -o /tmp/handoff-protocol.test ./cmd/protocol-probe
           go vet -modfile=ci.real.mod ./...
-          echo 'TESTS_AND_VET=PASS PROTOCOL_COMPILE=PASS PROTOCOL_RUNTIME=NOT_RUN'
+          echo 'TESTS_AND_VET=PASS PROTOCOL_COMPILE=PASS PROTOCOL_FULL_RUNTIME=NOT_RUN'
+      - name: Run exact-current shop request parser runtime tests
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -modfile=ci.real.mod -count=1 -v -run '^(TestCurrentShopExchangeFormRequestContract|TestCurrentShopExchangeBuyRequestContract|TestCurrentShopExchangeBuyDoesNotAcceptExchangeDataOnWire|TestCurrentShopConditionDetailsRequestContract)$' ./cmd/protocol-probe
+          echo 'SHOP_REQUEST_PARSER_RUNTIME=PASS RESOURCE_DEPENDENT_RUNTIME=NOT_RUN'
       - name: Windows amd64 cross-build (not LIVE)
         working-directory: server
         shell: bash

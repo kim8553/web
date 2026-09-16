@@ -3,14 +3,13 @@ set -euo pipefail
 
 ROOT="$(pwd)"
 BUILD="$ROOT/buildtree"
+EXPECTED_MANIFEST="936a075a8f0baf477e253c789cf8e756436b576c67629b56901826afb04e1a44"
 
-# Reproduce and verify the Stage11 safety audit first. Stage12 is read-only:
-# it inventories the exact reconstructed regular NPC shop-buy path so it can be
-# repaired independently from mode3 exchange and independently from deferred GM
-# grant functionality.
+# Stage12 is read-only. First reproduce Stage11, then inventory every plausible
+# regular NPC shop-buy production path. Absence is a finding, not a CI error.
 bash tools/stage37_current_recovery_stage11.sh
 
-AUDIT="$ROOT/stage12_regular_shop_audit_tmp.go"
+AUDIT="$(mktemp /tmp/stage12_regular_shop_audit.XXXXXX.go)"
 cat > "$AUDIT" <<'EOF'
 package main
 
@@ -27,122 +26,80 @@ import (
     "strings"
 )
 
-type handlerInfo struct {
-    path string
-    start int
-    end int
-    source string
-    calls []string
-}
+type row struct { path, kind, name, source string; line int }
 
-func callName(expr ast.Expr) string {
-    switch x := expr.(type) {
-    case *ast.Ident:
-        return x.Name
-    case *ast.SelectorExpr:
-        left := callName(x.X)
-        if left == "" { return x.Sel.Name }
-        return left + "." + x.Sel.Name
-    case *ast.ParenExpr:
-        return callName(x.X)
-    }
-    return ""
+func interesting(s string) bool {
+    s = strings.ToLower(s)
+    return strings.Contains(s,"shop") || strings.Contains(s,"buy") || strings.Contains(s,"purchase")
 }
-
+func sourceRange(src []byte, fset *token.FileSet, n ast.Node) string {
+    a,b := fset.Position(n.Pos()).Offset, fset.Position(n.End()).Offset
+    if a < 0 || b <= a || b > len(src) { return "" }
+    return string(src[a:b])
+}
 func main() {
-    if len(os.Args) != 2 {
-        fmt.Fprintln(os.Stderr, "usage: audit <source-root>")
-        os.Exit(2)
-    }
-    root, _ := filepath.Abs(os.Args[1])
+    if len(os.Args)!=2 { fmt.Fprintln(os.Stderr,"usage: audit <source-root>"); os.Exit(2) }
+    root,_ := filepath.Abs(os.Args[1])
     fset := token.NewFileSet()
-    var handlers []handlerInfo
-    constValues := map[string]string{}
+    var rows []row
+    exactHandlers := 0
+    selectorValues := map[string]string{}
 
-    err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-        if walkErr != nil { return walkErr }
-        if d.IsDir() {
-            if d.Name() == ".git" { return filepath.SkipDir }
-            return nil
-        }
-        if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") { return nil }
-        src, err := os.ReadFile(path)
-        if err != nil { return err }
-        f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
-        if err != nil { return err }
+    err := filepath.WalkDir(root, func(path string,d fs.DirEntry,walkErr error) error {
+        if walkErr!=nil { return walkErr }
+        if d.IsDir() { if d.Name()==".git" { return filepath.SkipDir }; return nil }
+        if !strings.HasSuffix(path,".go") || strings.HasSuffix(path,"_test.go") { return nil }
+        src,err := os.ReadFile(path); if err!=nil { return err }
+        f,err := parser.ParseFile(fset,path,src,parser.ParseComments); if err!=nil { return err }
+        rel,_ := filepath.Rel(root,path)
 
-        for _, decl := range f.Decls {
-            if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.CONST {
-                for _, spec := range gd.Specs {
-                    vs, ok := spec.(*ast.ValueSpec); if !ok { continue }
-                    for i, n := range vs.Names {
-                        if n.Name != "clientCustomShopBuy" || i >= len(vs.Values) { continue }
-                        switch v := vs.Values[i].(type) {
-                        case *ast.BasicLit:
-                            constValues[n.Name] = v.Value
-                        default:
-                            constValues[n.Name] = fmt.Sprintf("%T", v)
+        for _,decl := range f.Decls {
+            switch x := decl.(type) {
+            case *ast.FuncDecl:
+                if x.Name==nil { continue }
+                if x.Name.Name=="handleShopBuy" { exactHandlers++ }
+                if interesting(x.Name.Name) {
+                    rows=append(rows,row{rel,"func",x.Name.Name,sourceRange(src,fset,x),fset.Position(x.Pos()).Line})
+                }
+            case *ast.GenDecl:
+                for _,sp := range x.Specs {
+                    vs,ok := sp.(*ast.ValueSpec); if !ok { continue }
+                    for i,n := range vs.Names {
+                        if interesting(n.Name) {
+                            rows=append(rows,row{rel,"value",n.Name,sourceRange(src,fset,vs),fset.Position(vs.Pos()).Line})
+                        }
+                        if n.Name=="clientCustomShopBuy" && i<len(vs.Values) {
+                            if lit,ok:=vs.Values[i].(*ast.BasicLit); ok { selectorValues[n.Name]=lit.Value } else { selectorValues[n.Name]=fmt.Sprintf("%T",vs.Values[i]) }
                         }
                     }
                 }
             }
-            fd, ok := decl.(*ast.FuncDecl)
-            if !ok || fd.Name == nil || fd.Name.Name != "handleShopBuy" || fd.Body == nil { continue }
-            startOff := fset.Position(fd.Pos()).Offset
-            endOff := fset.Position(fd.End()).Offset
-            if startOff < 0 || endOff > len(src) || endOff <= startOff { return fmt.Errorf("bad function offsets for %s", path) }
-            callSet := map[string]bool{}
-            ast.Inspect(fd.Body, func(n ast.Node) bool {
-                call, ok := n.(*ast.CallExpr); if !ok { return true }
-                if name := callName(call.Fun); name != "" { callSet[name] = true }
-                return true
-            })
-            calls := make([]string, 0, len(callSet))
-            for name := range callSet { calls = append(calls, name) }
-            sort.Strings(calls)
-            rel, _ := filepath.Rel(root, path)
-            handlers = append(handlers, handlerInfo{path: rel, start: fset.Position(fd.Pos()).Line, end: fset.Position(fd.End()).Line, source: string(src[startOff:endOff]), calls: calls})
         }
+        // Record direct references to historically important symbols, even when
+        // the declarations themselves are absent from the current source.
+        ast.Inspect(f, func(n ast.Node) bool {
+            id,ok:=n.(*ast.Ident); if !ok { return true }
+            switch id.Name {
+            case "clientCustomShopBuy","handleShopBuy","parseShopBuyArguments","verifiedShopBuyMessageID":
+                rows=append(rows,row{rel,"ref",id.Name,"",fset.Position(id.Pos()).Line})
+            }
+            return true
+        })
         return nil
     })
-    if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(2) }
-    if len(handlers) != 1 {
-        fmt.Fprintf(os.Stderr, "expected exactly one handleShopBuy, found %d\n", len(handlers))
-        os.Exit(1)
-    }
-    h := handlers[0]
-    fmt.Printf("handler=%s:%d-%d\n", h.path, h.start, h.end)
-    fmt.Printf("clientCustomShopBuy=%s\n", constValues["clientCustomShopBuy"])
-    fmt.Println("calls:")
-    for _, c := range h.calls { fmt.Println("  " + c) }
+    if err!=nil { fmt.Fprintln(os.Stderr,err); os.Exit(2) }
 
-    checks := []struct{name, needle string}{
-        {"uses_quest_state", "questState"},
-        {"uses_quest_store", "questStore"},
-        {"uses_persist_quest", "persistQuestLocked"},
-        {"uses_lookup_gm_item", "lookupGMItem"},
-        {"uses_gm_item_inventory_view", "gmItemInventoryView"},
-        {"uses_append_inventory_stack", "appendInventoryStackLocked"},
-        {"uses_bag_store", "bagStore"},
-        {"uses_player_bag_items", "bagItems"},
-        {"uses_shop_exchange_commit", "commitShopExchangeReplacementPersistenceFirst"},
+    sort.Slice(rows,func(i,j int)bool{ if rows[i].path!=rows[j].path{return rows[i].path<rows[j].path}; if rows[i].line!=rows[j].line{return rows[i].line<rows[j].line}; if rows[i].kind!=rows[j].kind{return rows[i].kind<rows[j].kind}; return rows[i].name<rows[j].name })
+    fmt.Printf("handleShopBuy_decl_count=%d\n",exactHandlers)
+    fmt.Printf("clientCustomShopBuy=%s\n",selectorValues["clientCustomShopBuy"])
+    if raw:=selectorValues["clientCustomShopBuy"]; raw!="" { if _,err:=strconv.ParseInt(raw,0,64); err!=nil { fmt.Printf("clientCustomShopBuy_parse_note=%v\n",err) } }
+    fmt.Printf("shop_buy_candidate_rows=%d\n",len(rows))
+    for _,r:=range rows {
+        fmt.Printf("candidate=%s:%d kind=%s name=%s\n",r.path,r.line,r.kind,r.name)
+        if r.kind=="func" || r.kind=="value" { fmt.Println("candidate_source_begin"); fmt.Println(r.source); fmt.Println("candidate_source_end") }
     }
-    fmt.Println("flags:")
-    for _, c := range checks {
-        fmt.Printf("  %s=%t\n", c.name, strings.Contains(h.source, c.needle))
-    }
-    fmt.Println("source_begin")
-    fmt.Println(h.source)
-    fmt.Println("source_end")
-
-    // Make sure the discovered selector really is the expected integer literal
-    // when represented directly. We only report other representations; we do
-    // not invent a value.
-    if raw := constValues["clientCustomShopBuy"]; raw != "" {
-        if _, err := strconv.ParseInt(raw, 0, 64); err != nil {
-            fmt.Printf("clientCustomShopBuy_parse_note=%v\n", err)
-        }
-    }
+    if exactHandlers==0 { fmt.Println("FINDING: no handleShopBuy declaration exists in the exact reconstructed 212-file production source") }
+    if selectorValues["clientCustomShopBuy"]=="" { fmt.Println("FINDING: no clientCustomShopBuy declaration exists in the exact reconstructed 212-file production source") }
 }
 EOF
 
@@ -154,12 +111,11 @@ echo "$regular_shop_audit" > "$ROOT/regular_shop_audit.exit"
 rm -f "$AUDIT"
 echo "regular_shop_audit=$regular_shop_audit"
 cat "$ROOT/regular_shop_audit.log"
-if [ "$regular_shop_audit" -ne 0 ]; then
-    exit 97
-fi
+if [ "$regular_shop_audit" -ne 0 ]; then exit 97; fi
 
-# Read-only audit: Stage10/11 production source identity must remain unchanged.
 source_files=$(find "$BUILD" -type f ! -name 'ci.real.mod' ! -name 'ci.real.sum' ! -name 'protocol-probe' | wc -l | tr -d ' ')
 manifest_sha=$(awk '{print $1}' "$ROOT/generated-manifest.sha256")
 echo "stage12_source_files=$source_files"
 echo "stage12_manifest_sha256=$manifest_sha"
+if [ "$source_files" != "212" ]; then exit 94; fi
+if [ "$manifest_sha" != "$EXPECTED_MANIFEST" ]; then exit 95; fi

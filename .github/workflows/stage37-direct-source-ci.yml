@@ -45,14 +45,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          go test -modfile=ci.real.mod -count=1 ./internal/exchangeplan ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/exchangeexecute ./internal/shopbuycommit ./internal/shopbuyexecute ./internal/shopbuygate ./internal/shopbuypersist ./internal/shopbuyplan ./internal/shopbuypublish ./internal/shopwiretrace ./migrations
-          go test -modfile=ci.real.mod -race -count=1 ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/shopbuygate ./internal/shopbuypersist
+          go test -modfile=ci.real.mod -count=1 ./internal/exchangeplan ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/exchangeexecute ./internal/shopbuycommit ./internal/shopbuyexecute ./internal/shopbuygate ./internal/shopbuypersist ./internal/shopbuyplan ./internal/shopbuypublish ./internal/shopwiretrace ./internal/shopreadiness ./migrations
+          go test -modfile=ci.real.mod -race -count=1 ./internal/exchangegate ./internal/exchangebinding ./internal/exchangecommit ./internal/shopbuygate ./internal/shopbuypersist ./internal/shopreadiness
+          echo 'shop_readiness_offline_unit_tests=PASS'
+          # The executable's package init requires the exact current skill_new.ini;
+          # compile its tests but do not run them against fabricated resources.
           go test -modfile=ci.real.mod -c -o ../direct-source-protocol.test ./cmd/protocol-probe
           go test -modfile=ci.real.mod -race -c -o ../direct-source-protocol-race.test ./cmd/protocol-probe
-          # Run only fixture-based NPC shop audit tests; full protocol tests need
-          # the exact current client resource corpus and are not claimed here.
-          go test -modfile=ci.real.mod -run '^Test(NPCShopAuditExactCatalogNeverAuthorizesPurchase|NPCShopCatalogReadyJSONOnlyForShop|BuildNPCServiceAuditSeparatesConfiguredFromImplemented)$' -count=1 ./cmd/protocol-probe
-          echo 'shop_offline_audit_tests=PASS'
           mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
           go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
           go vet -modfile=ci.real.mod ./...

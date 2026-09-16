@@ -32,7 +32,7 @@ func sampleRow() BagRow {
 	}
 }
 
-func expectBagInsert(mock sqlmock.Sqlmock, roleID role.RoleID, row BagRow, result sqlmock.Result) {
+func expectSuccessfulBagInsert(mock sqlmock.Sqlmock, roleID role.RoleID, row BagRow) {
 	mock.ExpectExec(insertBagSQL).WithArgs(
 		roleID,
 		row.Seq,
@@ -47,7 +47,7 @@ func expectBagInsert(mock sqlmock.Sqlmock, roleID role.RoleID, row BagRow, resul
 		row.Hardiness,
 		row.MaxHardiness,
 		row.BindStatus,
-	).WillReturnResult(result)
+	).WillReturnResult(sqlmock.NewResult(1, 1))
 }
 
 func TestPersistCommitsBagAndCurrencyTogether(t *testing.T) {
@@ -58,7 +58,7 @@ func TestPersistCommitsBagAndCurrencyTogether(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec(deleteBagSQL).WithArgs(roleID).WillReturnResult(sqlmock.NewResult(0, 1))
-	expectBagInsert(mock, roleID, row, sqlmock.NewResult(1, 1))
+	expectSuccessfulBagInsert(mock, roleID, row)
 	mock.ExpectExec(deleteCurrencySQL).WithArgs(roleID).WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(insertCurrencySQL).WithArgs(roleID, currency).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()

@@ -35,7 +35,7 @@ STATUS
 for spec in \
   'c28360b706f8a821aacb625af06b90ded69fef4c recovery/postbuild_files/cmd__protocol-probe__latest_client_shop_buy_atomic_persistence.go' \
   '0695e5038767dcee8ed46638ade7dbeb44b6ae84 recovery/postbuild_files/internal__shopbuypersist__persist.go' \
-  'c241ad718462755a6ad67afe5a5b79dcdd01d6a5 recovery/postbuild_files/internal__shopbuypersist__persist_test.go'; do
+  '23643232fcf28e8926106085a970f8c5069b38fe recovery/postbuild_files/internal__shopbuypersist__persist_test.go'; do
   expected="${spec%% *}"
   path="${spec#* }"
   actual="$(git hash-object "$path")"

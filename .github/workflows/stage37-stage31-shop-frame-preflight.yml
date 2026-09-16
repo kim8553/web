@@ -1,0 +1,44 @@
+name: Stage37 Stage31 Shop Frame Preflight
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - 'recovery/stage31_shop_frame_preflight.patch'
+      - 'tools/stage37_current_recovery_stage31.sh'
+      - '.github/workflows/stage37-stage31-shop-frame-preflight.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-shop-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Reconstruct Stage30 and verify Stage31 shop frame preflight
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage31.sh
+      - name: Upload source guards, regression logs and Windows build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage31-shop-preflight-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            stage31_status.log
+            stage31_unit.log
+            stage31_unit_race.log
+            stage31_compile.log
+            stage31_race_compile.log
+            stage31_vet.log
+            stage31_windows.log
+            stage31-current-windows-amd64.exe
+            stage31-current-windows-amd64.sha256
+            stage31-current-windows-amd64.file.txt

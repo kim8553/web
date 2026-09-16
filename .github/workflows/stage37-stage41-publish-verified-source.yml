@@ -1,0 +1,144 @@
+name: Stage37 Stage41 Publish Verified Source
+
+on:
+  push:
+    branches: [stage37-current-recovery-20260916]
+    paths:
+      - '.github/workflows/stage37-stage41-publish-verified-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-verified-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+      - name: Obtain exact Stage40 source hash manifest
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: '10449364889'
+          run-id: '35105362969'
+          repository: kim8553/web
+          github-token: ${{ github.token }}
+          path: reference241
+      - name: Reconstruct and test the preserved Stage34 source lineage
+        shell: bash
+        run: bash tools/stage37_current_recovery_stage34.sh
+      - name: Require exact 241-file bytes, no resources, no credentials
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path, PurePosixPath
+          import hashlib, json, re, shutil
+          root = Path('buildtree')
+          references = list(Path('reference241').rglob('stage40_source_manifest.txt'))
+          if len(references) != 1:
+              raise SystemExit(f'expected one Stage40 manifest, found {len(references)}')
+          manifest = references[0].read_bytes()
+          expected_manifest_sha = 'a02d9f22104518b4ba6556c218b3a8ba45de8b88cfdac5c57c924b98938896ef'
+          if hashlib.sha256(manifest).hexdigest() != expected_manifest_sha:
+              raise SystemExit('Stage40 reference SHA256 mismatch; publication blocked')
+          expected = {}
+          for line in manifest.decode('utf-8').splitlines():
+              digest, relative = line.split('  ', 1)
+              path = PurePosixPath(relative)
+              if relative in expected or path.is_absolute() or '..' in path.parts or len(digest) != 64:
+                  raise SystemExit('malformed reference path or hash')
+              expected[relative] = digest
+          if len(expected) != 241:
+              raise SystemExit(f'expected exactly 241 source files; got {len(expected)}')
+          excluded = {'ci.real.mod', 'ci.real.sum', 'protocol-probe'}
+          observed = {}
+          for file in root.rglob('*'):
+              if file.is_symlink():
+                  raise SystemExit(f'symlink blocked: {file}')
+              if not file.is_file() or file.name in excluded:
+                  continue
+              relative = file.relative_to(root).as_posix()
+              if relative.startswith('.git/') or relative in observed:
+                  raise SystemExit('unexpected hidden repository data or duplicate path')
+              observed[relative] = file
+          if set(observed) != set(expected):
+              missing = sorted(set(expected) - set(observed))
+              extra = sorted(set(observed) - set(expected))
+              raise SystemExit(f'source list mismatch missing={missing} extra={extra}')
+          allowed_suffixes = {'.go', '.md', '.mod', '.json', '.sql', '.bat', '.yml', '.txt', '.sum', '.ps1', '.bin'}
+          prohibited = re.compile(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|ghp_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|AKIA[0-9A-Z]{16}')
+          dest = Path('server')
+          if dest.exists():
+              raise SystemExit('server directory already exists; refusing overwrite')
+          for relative, file in sorted(observed.items()):
+              suffix = PurePosixPath(relative).suffix
+              if suffix not in allowed_suffixes and relative != '.gitignore':
+                  raise SystemExit(f'disallowed source type: {relative}')
+              if suffix == '.bin' and (not relative.startswith('testdata/') or file.stat().st_size > 65536):
+                  raise SystemExit(f'unreviewed binary fixture: {relative}')
+              if relative.endswith(('.exe', '.dll', '.package', '.patch', '.ibd', '.pem', '.key')) or relative.endswith(('roles.json', 'faculty.json')):
+                  raise SystemExit(f'private/vendor material blocked: {relative}')
+              raw = file.read_bytes()
+              if len(raw) > 2 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != expected[relative]:
+                  raise SystemExit(f'content or size mismatch: {relative}')
+              if suffix != '.bin' and prohibited.search(raw):
+                  raise SystemExit(f'credential marker found: {relative}')
+              target = dest / relative
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(file, target)
+          current = ''.join(f'{expected[p]}  {p}\n' for p in sorted(expected))
+          if hashlib.sha256(current.encode()).hexdigest() != expected_manifest_sha:
+              raise SystemExit('published manifest serialization mismatch')
+          Path('stage41_published_source_manifest.txt').write_text(current, encoding='utf-8')
+          Path('stage41_publication_status.json').write_text(json.dumps({
+              'source_lineage': '2026-09-15 handoff -> verified 210 -> Stage34 reconstructed 241',
+              'source_files': 241,
+              'source_manifest_sha256': expected_manifest_sha,
+              'source_only': True,
+              'vendor_assets': 'EXCLUDED',
+              'runtime_protocol_tests': 'NOT_RUN_RESOURCE_CORPUS_ABSENT',
+              'live_e2e': 'NOT_RUN',
+              'production_promotion': False,
+          }, sort_keys=True, indent=2) + '\n', encoding='utf-8')
+          print('stage41_exact_241_source_file_hashes=PASS')
+          print('stage41_credential_and_resource_path_guards=PASS')
+          print('stage41_source_manifest_sha256=' + expected_manifest_sha)
+          PY
+          grep -Fx 'ordinary_shop_purchase=UNCHANGED_FAIL_CLOSED_UNVERIFIED_WIRE' stage34_status.log
+          grep -Fx 'gm_web_item_grant=UNCHANGED_DEFERRED' stage34_status.log
+          grep -Fx 'live_e2e=NOT_RUN' stage34_status.log
+      - name: Commit editable source into server directory without replacing prior work
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f -- server
+          python3 - <<'PY'
+          import subprocess
+          names = subprocess.check_output(['git', 'diff', '--cached', '--name-only', '-z']).decode().split('\0')
+          names = [name for name in names if name]
+          if len(names) != 241 or any(not n.startswith('server/') for n in names):
+              raise SystemExit(f'unsafe staged-file set: {len(names)} entries')
+          print('stage41_git_staged_exact_source_files=241')
+          PY
+          git commit -m 'Stage37 Stage41: expose hash-verified 241-file diagnostic server source'
+          git push origin HEAD:refs/heads/stage37-current-recovery-20260916
+          git rev-parse HEAD | tee stage41_source_commit.txt
+      - name: Upload evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage37-stage41-source-publication-${{ github.sha }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            stage41_publication_status.json
+            stage41_published_source_manifest.txt
+            stage41_source_commit.txt
+            stage34_status.log

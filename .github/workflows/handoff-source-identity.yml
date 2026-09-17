@@ -20,16 +20,18 @@ jobs:
           set -euo pipefail
           baseline=3fabb1f0d875141f3441b6bb583298e2bbd75d33
           expected_baseline_tree=70ca6d915dc120f8e39327cadcae37e835c30443
+          expected_current_tree=35d97c02d9f2871dd332d8a25976580c05c1c5f7
           baseline_tree=$(git rev-parse "$baseline:server")
           baseline_count=$(git ls-tree -r --name-only "$baseline" server | wc -l)
           current_tree=$(git rev-parse HEAD:server)
           current_count=$(git ls-files server | wc -l)
           printf 'baseline_server_git_tree=%s\ncurrent_server_git_tree=%s\nbaseline_tracked_files=%s\ncurrent_tracked_files=%s\n' "$baseline_tree" "$current_tree" "$baseline_count" "$current_count"
           test "$baseline_tree" = "$expected_baseline_tree"
+          test "$current_tree" = "$expected_current_tree"
           test "$baseline_count" -eq 186
           test "$current_count" -eq 188
           git diff --name-status "$baseline" HEAD -- server > "$RUNNER_TEMP/audited-source-diff.txt"
-          printf 'M\tserver/cmd/protocol-probe/latest_client_shop_exchange_contract.go\nA\tserver/cmd/protocol-probe/latest_client_shop_exchange_failclosed_test.go\nA\tserver/docs/CURRENT_SHOP_EXCHANGE_BIND_AUDIT_20260917.md\n' > "$RUNNER_TEMP/expected-source-diff.txt"
+          printf 'M\tserver/cmd/protocol-probe/latest_client_shop_exchange_contract.go\nA\tserver/cmd/protocol-probe/latest_client_shop_exchange_failclosed_test.go\nM\tserver/cmd/protocol-probe/latest_client_shop_view_contract.go\nM\tserver/cmd/protocol-probe/latest_client_shop_view_contract_test.go\nM\tserver/cmd/protocol-probe/scene_lifecycle.go\nA\tserver/docs/CURRENT_SHOP_EXCHANGE_BIND_AUDIT_20260917.md\n' > "$RUNNER_TEMP/expected-source-diff.txt"
           diff -u "$RUNNER_TEMP/expected-source-diff.txt" "$RUNNER_TEMP/audited-source-diff.txt"
           echo 'EXACT_HANDOFF_BASELINE=PASS AUDITED_ADDITIONS=PASS'
       - uses: actions/setup-go@v5
@@ -56,6 +58,7 @@ jobs:
           set -euo pipefail
           baseline=3fabb1f0d875141f3441b6bb583298e2bbd75d33
           test "$(git rev-parse "$baseline:server")" = '70ca6d915dc120f8e39327cadcae37e835c30443'
+          test "$(git rev-parse HEAD:server)" = '35d97c02d9f2871dd332d8a25976580c05c1c5f7'
           test "$(git ls-files server | wc -l)" -eq 188
           git archive --format=tar HEAD server | gzip -n > "$RUNNER_TEMP/stage37-exact-server.tar.gz"
           test -d "$(go env GOMODCACHE)/cache/download"

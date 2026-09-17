@@ -10,7 +10,7 @@ permissions:
 jobs:
   source-export:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,5 +28,25 @@ jobs:
         with:
           name: stage60-corrected-server-source-offline
           path: ${{ runner.temp }}/stage60-source.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Vendor exact Go dependencies for resource-backed offline tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go mod vendor
+          test -f vendor/github.com/Hiroko103/go-quicklz/main.go
+          test -f vendor/golang.org/x/text/encoding/simplifiedchinese/gbk.go
+          tar -czf "$RUNNER_TEMP/stage60-vendor.tar.gz" vendor
+          echo 'STAGE60_DEPENDENCY_VENDOR=PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage60-corrected-server-vendor-offline
+          path: ${{ runner.temp }}/stage60-vendor.tar.gz
           if-no-files-found: error
           retention-days: 3

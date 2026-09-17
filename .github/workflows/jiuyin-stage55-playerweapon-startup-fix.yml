@@ -39,7 +39,7 @@ jobs:
           		return nil, fmt.Errorf("stat playerweapon directory: %w", statErr)
           	}
           '@
-          $patched = [regex]::Replace($text, $pattern, $replacement, 1)
+          $patched = [regex]::Replace($text, $pattern, ($replacement + "`r`n"), 1)
           if ($patched -eq $text) { throw 'expected Stage54 playerweapon block not found by regex' }
           [IO.File]::WriteAllText((Resolve-Path $path), $patched, (New-Object Text.UTF8Encoding($false)))
           & gofmt -w $path

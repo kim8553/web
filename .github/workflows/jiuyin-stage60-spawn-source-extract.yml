@@ -1,0 +1,64 @@
+name: JIUYIN Stage60 Player Spawn Source Extract
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - '.github/workflows/jiuyin-stage60-spawn-source-extract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+      - name: Extract exact current sendPlayerSpawn family
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          path = Path('server/cmd/protocol-probe/player_actor.go')
+          text = path.read_text(encoding='utf-8')
+
+          def extract(name):
+              m = re.search(r'(?m)^func\s+(?:\([^\n]+\)\s+)?' + re.escape(name) + r'\s*\(', text)
+              if not m:
+                  raise SystemExit(f'FUNCTION_NOT_FOUND {name}')
+              brace = text.find('{', m.end())
+              depth = 0
+              i = brace
+              state = None
+              esc = False
+              while i < len(text):
+                  c = text[i]
+                  if state:
+                      if state == '`':
+                          if c == '`': state = None
+                      elif esc:
+                          esc = False
+                      elif c == '\\':
+                          esc = True
+                      elif c == state:
+                          state = None
+                  else:
+                      if c in ('"', "'", '`'):
+                          state = c
+                      elif c == '{':
+                          depth += 1
+                      elif c == '}':
+                          depth -= 1
+                          if depth == 0:
+                              i += 1
+                              break
+                  i += 1
+              print(f'===== {name} =====')
+              print(text[m.start():i])
+
+          for fn in ('sendPlayerSpawn','sendPlayerAddObject','sendPlayerLocationAndVitals'):
+              extract(fn)

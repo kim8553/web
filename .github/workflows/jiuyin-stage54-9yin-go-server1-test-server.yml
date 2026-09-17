@@ -1,0 +1,104 @@
+name: JIUYIN Stage54 9yin-go-server1 Test Server
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - server/cmd/protocol-probe/latest_client_normal_shop_json_atomic.go
+      - server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_test.go
+      - server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go
+      - tools/stage54-test-server/**
+      - .github/workflows/jiuyin-stage54-9yin-go-server1-test-server.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-test-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source format and corrected runtime boundary
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic.go',
+            'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_test.go',
+            'server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go'
+          )
+          $bad = & gofmt -l @files
+          if ($bad) { throw "gofmt required: $bad" }
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path 'tools/stage54-test-server/run-stage54-test-server.ps1'),
+            [ref]$null,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+          $launcher = Get-Content -Raw 'tools/stage54-test-server/run-stage54-test-server.ps1'
+          if ($launcher -notmatch 'NINEYIN_SERVER_ROOT') { throw 'launcher does not pin explicit runtime root' }
+          if ($launcher -match "param\([\s\S]*ServerRoot\s*=\s*'D:") { throw 'historical D drive default returned' }
+          Write-Host 'RUNTIME_BASELINE=9YIN_GO_SERVER1_CURRENT_SOURCE_LINEAGE'
+      - name: Run JSON normal-buy persistence tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -count=1 -run 'TestNormalShopCommitJSONSnapshots' ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'JSON normal-buy tests failed' }
+          } finally { Pop-Location }
+      - name: Compile current Windows server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'protocol-probe compile test failed' }
+            go build -trimpath -o "$env:RUNNER_TEMP\stage54-test-server.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows server build failed' }
+          } finally { Pop-Location }
+          if (-not (Test-Path "$env:RUNNER_TEMP\stage54-test-server.exe")) { throw 'server EXE missing' }
+          Write-Host 'WINDOWS_SERVER_COMPILE=PASS; LIVE_CLIENT_E2E=NOT_RUN'
+      - name: Build clean Stage54 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = "$env:RUNNER_TEMP\stage54-pkg"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\stage54-test-server.exe" $pkg
+          Copy-Item 'tools/stage54-test-server/run-stage54-test-server.ps1' $pkg
+          Copy-Item 'tools/stage54-test-server/README_KO.md' $pkg
+          $info = @(
+            'Stage54 Windows test server',
+            "Git commit: $env:GITHUB_SHA",
+            'Server source lineage: user-supplied 9yin-go-server1.rar -> current GitHub Go source',
+            'Runtime root: explicit NINEYIN_SERVER_ROOT / -ServerRoot only; no historical D drive default',
+            'Normal NPC buy 0x46: MySQL transaction OR guarded JSON paired commit',
+            'JSON failure model: operation-level rollback tested; power-loss atomicity not claimed',
+            'Normal sell 0x47: not implemented',
+            'GM grant and exchange 0x4F: deferred',
+            'Package contains no client resources, DB data, or credentials'
+          )
+          [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $pkg -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $pkg 'SHA256SUMS.txt')
+          $zip = "$env:RUNNER_TEMP\STAGE54_9YIN_GO_SERVER1_TEST_SERVER_WINDOWS_20260918.zip"
+          Compress-Archive -Path "$pkg\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"
+      - name: Upload Stage54 test server
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage54-9yin-go-server1-test-server-windows
+          path: ${{ runner.temp }}/STAGE54_9YIN_GO_SERVER1_TEST_SERVER_WINDOWS_20260918.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Explicit limits
+        shell: pwsh
+        run: |
+          Write-Host 'USER_RUNTIME=NOT_ACCESSED'
+          Write-Host 'LIVE_SERVER_BOOT=NOT_RUN'
+          Write-Host 'CLIENT_BUY_RECONNECT_E2E=NOT_RUN'
+          Write-Host 'SALE_0X47=NOT_IMPLEMENTED; GM_AND_EXCHANGE_0X4F=DEFERRED'

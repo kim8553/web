@@ -1823,7 +1823,20 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 				if _, handleErr := handleBlockStateCustom(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
 					log.Printf("%s: handle block state: %v", conn.RemoteAddr(), handleErr)
 				}
-			case 64, 69, 79:
+			case 64, 69:
+				if _, handleErr := handleShopExchangeContract(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
+					log.Printf("%s: handle current shop exchange contract: %v", conn.RemoteAddr(), handleErr)
+				}
+			case 79:
+				request, matched, parseErr := parseShopExchangeBuyRequest(custom)
+				if parseErr != nil || !matched || player == nil {
+					log.Printf("%s: current shop exchange buy blocked: malformed request or missing scene player: %v", conn.RemoteAddr(), parseErr)
+					break
+				}
+				if !world.currentShopExchangeSessionAllows(request.ShopID) {
+					log.Printf("%s: current shop exchange buy blocked: no matching live NPC shop service shop=%s", conn.RemoteAddr(), request.ShopID)
+					break
+				}
 				if _, handleErr := handleShopExchangeContract(link, player, custom, conn.RemoteAddr().String()); handleErr != nil {
 					log.Printf("%s: handle current shop exchange contract: %v", conn.RemoteAddr(), handleErr)
 				}

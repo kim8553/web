@@ -178,11 +178,23 @@ func resolveAuthorizedCurrentShopExchangeBuyAuthority(shopPath, exchangePath str
 // against the exact-current fingerprints and invariants before any 0x4f row is
 // accepted.
 func resolveDefaultCurrentShopExchangeBuyAuthority(request shopExchangeBuyRequest) (currentShopExchangeBuyAuthority, bool, error) {
+	// sync.Once authenticates only the first load; recheck every request
+	// against the same exact-current five-file fingerprint set.
+	if err := recheckCurrentShopExchangeResources(); err != nil {
+		return currentShopExchangeBuyAuthority{}, false, err
+	}
 	authority, err := loadDefaultCurrentShopConditionAuthority()
 	if err != nil {
 		return currentShopExchangeBuyAuthority{}, false, err
 	}
-	return resolveAuthorizedCurrentShopExchangeBuyAuthority(defaultShopINIPath, defaultExchangeItemINIPath, authority, request)
+	resolved, selected, err := resolveAuthorizedCurrentShopExchangeBuyAuthority(defaultShopINIPath, defaultExchangeItemINIPath, authority, request)
+	if err != nil || !selected {
+		return resolved, selected, err
+	}
+	if err := recheckCurrentShopExchangeResources(); err != nil {
+		return currentShopExchangeBuyAuthority{}, false, err
+	}
+	return resolved, true, nil
 }
 
 // currentShopExchangeFormAuthority is display-only authority for one exact-current

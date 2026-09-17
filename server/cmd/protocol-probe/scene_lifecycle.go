@@ -43,6 +43,7 @@ type sceneLifecycle struct {
 	lastMenuOwner       uint32
 	lastMenuAt          time.Time
 	lastMenuMovie       bool
+	activeShop          currentShopExchangeSession
 	portalCooldown      time.Time
 	transportHandler    func(transPathRec) error
 	transportMenuActive bool
@@ -148,6 +149,7 @@ func (s *sceneLifecycle) begin(config, resource string) error {
 	s.lastMenuOwner = 0
 	s.lastMenuAt = time.Time{}
 	s.lastMenuMovie = false
+	s.activeShop = currentShopExchangeSession{}
 	s.epoch++
 	s.stopReplayTimersLocked()
 	if s.pathDir != "" && resource != "" {
@@ -309,6 +311,9 @@ func (s *sceneLifecycle) unregister(id uint32) error {
 	if err := s.scene.Remove(entityID); err != nil {
 		return err
 	}
+	if s.activeShop.NPCObjectID == id {
+		s.activeShop = currentShopExchangeSession{}
+	}
 	delete(s.entities, entityID)
 	delete(s.combatActors, entityID)
 	delete(s.combatStates, entityID)
@@ -426,6 +431,9 @@ func (s *sceneLifecycle) objectRequest(request clientObjectRequest) (string, err
 	if s.closed {
 		return "", nil
 	}
+	// A new NPC interaction invalidates the previous shop, even when the
+	// client keeps an old shop window open. No speculative timeout is used.
+	s.activeShop = currentShopExchangeSession{}
 	entity, exists := s.entities[worldcore.EntityID(request.ObjectID)]
 	if !exists {
 		return "", fmt.Errorf("unknown scene object id=%d owner=%d", request.ObjectID, request.OwnerID)
@@ -730,6 +738,9 @@ func cinematicTalkMark(funcID int32) (uint16, bool) {
 	}
 }
 func (s *sceneLifecycle) openSelectedServiceLocked(entity sceneEntity, service npcService) error {
+	// Called under s.mu; retain authorization only for a successfully
+	// opened shop service, never for a menu advertisement alone.
+	s.activeShop = currentShopExchangeSession{}
 	switch service.mark {
 	case 0x1001:
 		if service.value == "" {
@@ -738,6 +749,7 @@ func (s *sceneLifecycle) openSelectedServiceLocked(entity sceneEntity, service n
 		if err := s.openShopLocked(service.value); err != nil {
 			return err
 		}
+		s.activeShop = currentShopExchangeSession{ShopID: service.value, NPCObjectID: entity.id, NPCOwnerID: entity.ownerID, NPCConfigID: entity.configID, SceneEpoch: s.epoch}
 	case 0x1002:
 		if err := s.openDepotLocked(); err != nil {
 			return err

@@ -1,0 +1,69 @@
+name: JIUYIN Stage60 Real QuickLZ Scene Wire Verification
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/go.mod'
+      - 'server/go.sum'
+      - 'server/internal/stage60diag/quicklz_wire_test.go'
+      - '.github/workflows/jiuyin-stage60-quicklz-verified.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-quicklz-and-build:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Verify real upstream QuickLZ module, not local identity shim
+        shell: pwsh
+        working-directory: server
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = 'v0.0.0-20190115215310-59904abc50d0'
+          $mod = Get-Content -Raw 'go.mod'
+          if ($mod -match 'replace\s+github\.com/Hiroko103/go-quicklz') { throw 'QuickLZ is still replaced by local shim' }
+          if (-not $mod.Contains("github.com/Hiroko103/go-quicklz $expected")) { throw 'QuickLZ upstream revision missing' }
+          go mod download -json "github.com/Hiroko103/go-quicklz@$expected"
+          if ($LASTEXITCODE -ne 0) { throw 'Upstream QuickLZ module download failed' }
+          $resolved = go list -mod=mod -m -json github.com/Hiroko103/go-quicklz | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $resolved.Version -ne $expected -or $null -ne $resolved.Replace) { throw 'QuickLZ did not resolve to pinned upstream module' }
+          Write-Host 'STAGE60_UPSTREAM_QUICKLZ_MODULE=PASS'
+      - name: Test QuickLZ compressed stream header and round-trip
+        shell: pwsh
+        working-directory: server
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -mod=mod -count=1 -v ./internal/stage60diag -run TestSceneSnapshotQuickLZIsRealCompression
+          if ($LASTEXITCODE -ne 0) { throw 'QuickLZ wire regression FAILED' }
+          Write-Host 'STAGE60_QUICKLZ_WIRE_ROUNDTRIP=PASS'
+      - name: Compile and build actual server for Windows
+        shell: pwsh
+        working-directory: server
+        run: |
+          $ErrorActionPreference = 'Stop'
+          go test -mod=mod -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+          if ($LASTEXITCODE -ne 0) { throw 'Server package test compile FAILED' }
+          go build -mod=mod -trimpath -o "$env:RUNNER_TEMP\stage60-live-server.exe" ./cmd/protocol-probe
+          if ($LASTEXITCODE -ne 0) { throw 'Windows server build FAILED' }
+          go version -m "$env:RUNNER_TEMP\stage60-live-server.exe"
+          Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\stage60-live-server.exe" | Format-List
+          Write-Host 'STAGE60_WINDOWS_BUILD_WITH_REAL_QUICKLZ=PASS'
+      - name: Archive verification and corrected binary, not LIVE success
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage60-real-quicklz-windows-build-only
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/stage60-live-server.exe
+          retention-days: 14

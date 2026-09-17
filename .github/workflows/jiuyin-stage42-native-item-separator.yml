@@ -1,0 +1,50 @@
+name: JIUYIN Stage42 Native Item Separator
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/cmd/protocol-probe/latest_client_shop_exchange_config.go'
+      - 'server/cmd/protocol-probe/latest_client_shop_exchange_trailing_delimiter_test.go'
+      - '.github/workflows/jiuyin-stage42-native-item-separator.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-current-native-item-parser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - name: Extract exact production validator, not a rewrite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          source = Path('server/cmd/protocol-probe/latest_client_shop_exchange_config.go').read_text(encoding='utf-8')
+          start_marker = 'func validateExchangePairList('
+          end_marker = '\nfunc validateExchangeIntList('
+          assert source.count(start_marker) == 1 and source.count(end_marker) == 1
+          start = source.index(start_marker)
+          end = source.index(end_marker, start)
+          validator = source[start:end]
+          assert 'name == "Item"' in validator and 'entries[len(entries)-1] == ""' in validator
+          directory = Path('/tmp/stage42-native-item-validator')
+          directory.mkdir(exist_ok=False)
+          (directory / 'validator.go').write_text('package main\nimport ("fmt"; "strconv"; "strings")\n' + validator + '\n', encoding='utf-8')
+          (directory / 'validator_test.go').write_bytes(Path('server/cmd/protocol-probe/latest_client_shop_exchange_trailing_delimiter_test.go').read_bytes())
+          print('ACTUAL_PRODUCTION_VALIDATOR_AST_FRAGMENT=EXTRACTED TEST_FIXTURE=NONE')
+          PY
+      - name: Run exact extracted validator and race detector
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd /tmp/stage42-native-item-validator && GO111MODULE=off go test -race -count=1 -v .)
+          echo 'STAGE42_ACTUAL_VALIDATOR_AND_RACE=PASS PRIVATE_CURRENT_PACKAGE=NOT_PRESENT'

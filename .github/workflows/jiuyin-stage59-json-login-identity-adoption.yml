@@ -1,0 +1,174 @@
+name: JIUYIN Stage59 JSON Login Identity Adoption
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/internal/role/json_login_adoption.go'
+      - 'server/internal/role/json_login_adoption_test.go'
+      - 'server/cmd/protocol-probe/role_store.go'
+      - 'server/cmd/protocol-probe/latest_client_json_login_identity_adoption_test.go'
+      - 'tools/stage59-login-adoption/**'
+      - '.github/workflows/jiuyin-stage59-json-login-identity-adoption.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+
+      - name: Verify original local-service contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $original = Get-Content -Raw 'server/启动本地九阴服务.bat'
+          foreach ($needle in @('127.0.0.1:4000','127.0.0.1:19061','127.0.0.1:19062','loopback-lister.ps1')) {
+            if (-not $original.Contains($needle)) { throw "original local-service contract missing: $needle" }
+          }
+          $lister = Get-Content -Raw 'server/loopback-lister.ps1'
+          if (-not $lister.Contains('$svrlist #')) { throw 'original loopback server-list response missing' }
+          if (-not $lister.Contains('19061 0')) { throw 'original loopback list does not target game port 19061' }
+          Write-Host 'ORIGINAL_LOCAL_SERVICE_CONTRACT=PASS'
+
+      - name: Verify Stage59 source guardrails
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $adopt = Get-Content -Raw 'server/internal/role/json_login_adoption.go'
+          foreach ($needle in @('AdoptSoleUnverifiedLoginAccount','acct:v1:','ErrAmbiguousLegacyLoginAccount','len(identity.PasswordHash) != 0','originalIdentity := candidateIdentity')) {
+            if (-not $adopt.Contains($needle)) { throw "Stage59 adoption guard missing: $needle" }
+          }
+          $store = Get-Content -Raw 'server/cmd/protocol-probe/role_store.go'
+          if (-not $store.Contains('store.accounts.(*role.JSONRepository)')) { throw 'Stage59 login path is not JSON-only' }
+          if (-not $store.Contains('AdoptSoleUnverifiedLoginAccount')) { throw 'Stage59 login adoption call missing' }
+          $launcher = Get-Content -Raw 'tools/stage59-login-adoption/run-stage59-live-services.ps1'
+          foreach ($needle in @('STAGE59_READY=YES','4000','19061','19062','stage59-backups','Copy-Item -LiteralPath $roles','Get-FileHash -LiteralPath $backup','NINEYIN_SERVER_ROOT')) {
+            if (-not $launcher.Contains($needle)) { throw "Stage59 launcher guard missing: $needle" }
+          }
+          Write-Host 'STAGE59_STATIC_GUARDS=PASS'
+
+      - name: Run Stage59 targeted JSON repository tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'server/internal/role'
+          try {
+            go test json_login_adoption.go json_m2_repository.go json_repository.go model.go mysql_repository.go repository.go zz_recovered_overlay.go json_login_adoption_test.go
+            if ($LASTEXITCODE -ne 0) { throw 'Stage59 JSON adoption tests failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE59_JSON_ADOPTION_TESTS=PASS'
+
+      - name: Run Stage59 roleStore login-path test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'server/cmd/protocol-probe'
+          try {
+            go test role_store.go runtime_paths.go latest_client_json_login_identity_adoption_test.go
+            if ($LASTEXITCODE -ne 0) { throw 'Stage59 roleStore login-path test failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE59_ROLESTORE_LOGIN_TEST=PASS'
+
+      - name: Exercise lister from a path containing spaces
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $spaceRoot = Join-Path $env:RUNNER_TEMP 'stage59 path with spaces'
+          $outDir = Join-Path $spaceRoot 'lister output with spaces'
+          New-Item -ItemType Directory -Force -Path $spaceRoot,$outDir | Out-Null
+          $listerPath = Join-Path $spaceRoot 'loopback-lister.ps1'
+          Copy-Item 'server/loopback-lister.ps1' $listerPath
+          $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $listerPath + '"'),'-Port','4019','-OutputDir',('"' + $outDir + '"'))
+          $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -WorkingDirectory $spaceRoot -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(10)
+            do {
+              Start-Sleep -Milliseconds 250
+              $ready = @(Get-NetTCPConnection -State Listen -LocalPort 4019 -ErrorAction SilentlyContinue).Count -gt 0
+            } while (-not $ready -and -not $proc.HasExited -and (Get-Date) -lt $deadline)
+            if (-not $ready) { throw 'lister did not listen from spaced path' }
+            $client = [Net.Sockets.TcpClient]::new('127.0.0.1',4019)
+            try {
+              $stream = $client.GetStream()
+              $request = [Text.Encoding]::ASCII.GetBytes("probe`r`n")
+              $stream.Write($request,0,$request.Length)
+              $buf = New-Object byte[] 4096
+              $count = $stream.Read($buf,0,$buf.Length)
+              $response = [Text.Encoding]::ASCII.GetString($buf,0,$count)
+              if (-not $response.Contains('127.0.0.1 19061 0')) { throw "unexpected lister response: $response" }
+            } finally { $client.Dispose() }
+            if (-not (Test-Path (Join-Path $outDir 'request.bin'))) { throw 'spaced output-dir request capture missing' }
+            Write-Host 'SPACED_PATH_LISTER_RUNTIME=PASS'
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+
+      - name: Compile Windows server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'protocol package compile test failed' }
+            go build -trimpath -o "$env:RUNNER_TEMP\stage59-live-server.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          } finally { Pop-Location }
+          Write-Host 'WINDOWS_COMPILE=PASS; USER_LIVE_LOGIN_NOT_RUN'
+
+      - name: Build Stage59 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = "$env:RUNNER_TEMP\stage59-pkg"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'logs') | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\stage59-live-server.exe" $pkg
+          Copy-Item 'server/loopback-lister.ps1' $pkg
+          Copy-Item 'tools/stage59-login-adoption/run-stage59-live-services.ps1' $pkg
+          Copy-Item 'tools/stage59-login-adoption/RUN_STAGE59_LIVE.bat' $pkg
+          Copy-Item 'tools/stage59-login-adoption/README_KO.md' $pkg
+          $head = git rev-parse HEAD
+          $info = @(
+            'Stage59 JSON login identity adoption Windows LIVE package',
+            "Source branch head: $head",
+            'Server lineage: user-supplied 9yin-go-server1.rar -> current kim8553/web Go source',
+            'Local services: list 4000 + game 19061 + GM 19062',
+            'JSON-only compatibility migration: adopt exactly one active acct:v1 role owner with no verifier',
+            'Account ID / role ID / role data preserved; ambiguous candidate set fails closed',
+            'MySQL login path unchanged by Stage59 identity adoption',
+            'Launcher backs up data/roles.json and verifies SHA256 before JSON-mode startup',
+            'Stage59 targeted JSON adoption tests: PASS',
+            'Stage59 roleStore login-path test: PASS',
+            'Spaced-path lister launch/request/response: PASS',
+            'Windows compile/build: PASS',
+            'User latest-client LIVE login: NOT RUN'
+          )
+          [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $pkg -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $pkg 'SHA256SUMS.txt')
+          $zip = "$env:RUNNER_TEMP\STAGE59_9YIN_GO_SERVER1_JSON_LOGIN_ADOPTION_WINDOWS_20260918.zip"
+          Compress-Archive -Path "$pkg\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "SERVER_SHA256=$((Get-FileHash (Join-Path $pkg 'stage59-live-server.exe') -Algorithm SHA256).Hash.ToLower())"
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage59-9yin-go-server1-json-login-adoption-windows
+          path: ${{ runner.temp }}/STAGE59_9YIN_GO_SERVER1_JSON_LOGIN_ADOPTION_WINDOWS_20260918.zip
+          if-no-files-found: error
+          retention-days: 14

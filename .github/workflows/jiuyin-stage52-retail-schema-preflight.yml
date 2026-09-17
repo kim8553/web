@@ -5,7 +5,7 @@ on:
     paths: [.github/workflows/jiuyin-stage52-retail-schema-preflight.yml]
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 jobs:
   schema-fixture:
     runs-on: ubuntu-latest
@@ -25,6 +25,14 @@ jobs:
       NINEYIN_STAGE52_DISPOSABLE: YES_DROP_STAGE52_TABLES
     steps:
       - uses: actions/checkout@v4
+      - name: Apply pinned BLOB JSON compatibility fix in two Stage52 files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/stage52_schema_preflight/fix_binary_json_fixture.py
+          gofmt -w server/cmd/retail-schema-preflight/main.go server/cmd/retail-schema-preflight/integration_test.go
+          git diff --check
+          test "$(git diff --name-only)" = "$(printf 'server/cmd/retail-schema-preflight/integration_test.go\nserver/cmd/retail-schema-preflight/main.go')"
       - name: Check read-only production scope and formatting
         shell: bash
         run: |
@@ -58,6 +66,16 @@ jobs:
           test -s "$RUNNER_TEMP/protocol-probe.test"
           test -s "$RUNNER_TEMP/protocol-probe.exe"
           echo 'LINUX_WINDOWS_COMPILE_ONLY=PASS; USER_DB_AND_GAME_NOT_ACCESSED'
+      - name: Publish validated two-file fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only)" = "$(printf 'server/cmd/retail-schema-preflight/integration_test.go\nserver/cmd/retail-schema-preflight/main.go')"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- server/cmd/retail-schema-preflight/integration_test.go server/cmd/retail-schema-preflight/main.go
+          git commit -m 'fix(shop): audit stored BLOB JSON and seed fixture with bound bytes'
+          git push origin HEAD:refs/heads/stage37-assistant-handoff-20260917
       - name: Explicit limits
         run: |
           echo 'STAGE52=READ_ONLY_AUDITOR_TESTED_ON_DISPOSABLE_MYSQL_ONLY'

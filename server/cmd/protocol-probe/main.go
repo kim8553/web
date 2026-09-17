@@ -252,9 +252,15 @@ func main() {
 	log.Printf("equip catalog ready definitions=%d path=%s", equipCatalog.Count(), defaultEquipmentINI)
 	stringNames, err := loadStringNames(defaultStringNameINI)
 	if err != nil {
-		log.Fatalf("load string names: %v", err)
+		if errors.Is(err, os.ErrNotExist) {
+			stringNames = make(map[string]string)
+			log.Printf("string names unavailable path=%s: %v; continuing without optional GM display-name localization", defaultStringNameINI, err)
+		} else {
+			log.Fatalf("load string names: %v", err)
+		}
+	} else {
+		log.Printf("string names ready entries=%d path=%s", len(stringNames), defaultStringNameINI)
 	}
-	log.Printf("string names ready entries=%d path=%s", len(stringNames), defaultStringNameINI)
 	loaded, questErr := loadQuestCatalogFromTables(defaultQuestTaskRoot)
 	if questErr != nil {
 		log.Printf("load quest tables: %v; keeping built-in quests", questErr)

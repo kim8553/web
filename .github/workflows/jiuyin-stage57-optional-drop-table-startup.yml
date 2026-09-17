@@ -1,0 +1,108 @@
+name: JIUYIN Stage57 Optional Drop Table Startup
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - .github/workflows/jiuyin-stage57-optional-drop-table-startup.yml
+permissions:
+  contents: write
+jobs:
+  patch-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+          fetch-depth: 0
+
+      - name: Record drop-table usage evidence
+        shell: pwsh
+        run: |
+          Write-Host '=== drop-table references in protocol-probe ==='
+          Get-ChildItem server/cmd/protocol-probe -File -Filter *.go | Select-String -Pattern 'defaultDropTablePath|loadDropTable|dropTable.Has|openGiftBox' -CaseSensitive:$true | ForEach-Object {
+            Write-Host ("{0}:{1}: {2}" -f $_.Path,$_.LineNumber,$_.Line.Trim())
+          }
+
+      - name: Make only missing drop_table.json nonfatal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          @'
+          from pathlib import Path
+          p = Path('server/cmd/protocol-probe/main.go')
+          text = p.read_text(encoding='utf-8')
+          old = '''\tdropTable, err := loadDropTable(defaultDropTablePath)\n\tif err != nil {\n\t\tlog.Fatalf("load drop table: %v", err)\n\t}\n\tlog.Printf("drop table ready dropIDs=%d path=%s", len(dropTable.byDropID), defaultDropTablePath)'''
+          new = '''\tdropTable, err := loadDropTable(defaultDropTablePath)\n\tif err != nil {\n\t\tif errors.Is(err, os.ErrNotExist) {\n\t\t\tdropTable = &dropTable{byDropID: make(map[string]*dropTableSection)}\n\t\t\tlog.Printf("drop table unavailable path=%s: %v; continuing with gift-box drop resolution disabled", defaultDropTablePath, err)\n\t\t} else {\n\t\t\tlog.Fatalf("load drop table: %v", err)\n\t\t}\n\t} else {\n\t\tlog.Printf("drop table ready dropIDs=%d path=%s", len(dropTable.byDropID), defaultDropTablePath)\n\t}'''
+          if old not in text:
+              raise SystemExit('expected Stage56 drop-table startup block not found')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          '@ | python -
+          if ($LASTEXITCODE -ne 0) { throw 'source patch failed' }
+          gofmt -w server/cmd/protocol-probe/main.go
+          if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
+          $after = Get-Content -Raw server/cmd/protocol-probe/main.go
+          if ($after -notmatch 'continuing with gift-box drop resolution disabled') { throw 'Stage57 missing-file guard missing' }
+          if ($after -notmatch 'log\.Fatalf\("load drop table: %v", err\)') { throw 'Stage57 non-missing errors are no longer fatal' }
+
+      - name: Compile Windows server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'compile test failed' }
+            go build -trimpath -o "$env:RUNNER_TEMP\stage57-test-server.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          } finally { Pop-Location }
+          Write-Host 'WINDOWS_COMPILE=PASS; USER_RUNTIME_RETEST_REQUIRED'
+
+      - name: Commit source fix to handoff branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'ChatGPT Stage57'
+          git config user.email 'actions@users.noreply.github.com'
+          git add server/cmd/protocol-probe/main.go
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { throw 'no source change to commit' }
+          git commit -m 'fix(startup): tolerate absent unproven drop table'
+          git push origin HEAD:stage37-assistant-handoff-20260917
+          "PATCH_SHA=$(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build Stage57 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = "$env:RUNNER_TEMP\stage57-pkg"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\stage57-test-server.exe" $pkg
+          Copy-Item 'tools/stage57-test-server/run-stage57-test-server.ps1' $pkg
+          Copy-Item 'tools/stage57-test-server/README_KO.md' $pkg
+          $info = @(
+            'Stage57 Windows test server',
+            "Patched source commit: $env:PATCH_SHA",
+            'Server lineage: user-supplied 9yin-go-server1.rar -> current GitHub Go source',
+            'Fix: missing server-only resources/modern/share/item/drop_table.json no longer aborts startup',
+            'Safety: only os.ErrNotExist is tolerated; malformed JSON and other I/O errors remain fatal',
+            'Gift-box/drop resolution remains fail-closed when the table is absent; no drop data is fabricated',
+            'Stage56 optional stringname startup fix retained',
+            'Stage55 missing playerweapon startup fix retained',
+            'Normal buy 0x46 Stage54 JSON/MySQL persistence path retained',
+            'Live user runtime and current-client E2E: not yet re-tested after this fix'
+          )
+          [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $pkg -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $pkg 'SHA256SUMS.txt')
+          $zip = "$env:RUNNER_TEMP\STAGE57_9YIN_GO_SERVER1_TEST_SERVER_WINDOWS_20260918.zip"
+          Compress-Archive -Path "$pkg\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage57-9yin-go-server1-test-server-windows
+          path: ${{ runner.temp }}/STAGE57_9YIN_GO_SERVER1_TEST_SERVER_WINDOWS_20260918.zip
+          if-no-files-found: error
+          retention-days: 14

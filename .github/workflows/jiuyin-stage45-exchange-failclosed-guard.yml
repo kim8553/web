@@ -1,0 +1,27 @@
+name: JIUYIN Stage45 Exchange Fail-Closed Guard
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - tools/stage45_exchange_guard/guard_test.go
+      - server/cmd/protocol-probe/latest_client_shop_exchange_contract.go
+      - .github/workflows/jiuyin-stage45-exchange-failclosed-guard.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test synthetic mutations and actual checked-out 0x4F handler
+        run: |
+          cd tools/stage45_exchange_guard
+          GO111MODULE=off go test -race -v
+      - name: Scope disclosure
+        run: |
+          echo 'CURRENT_PRIVATE_CLIENT_BINARIES=NOT_PRESENT'
+          echo 'EXCHANGE_SETTLEMENT_SQL_LIVE_RECONNECT=NOT_RUN'

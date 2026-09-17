@@ -1,0 +1,46 @@
+name: JIUYIN Stage40 Current PCK0 Proof
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - tools/stage40_exact_current_pck0_verified_extract.py
+      - .github/workflows/jiuyin-stage40-current-pck0-proof.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-verified-streams:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate pure-Python recovery against synthetic PCK0 streams
+        run: python3 -B tools/stage40_exact_current_pck0_verified_extract.py --self-test
+      - name: Confirm pinned payload fingerprints still match production source
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import pathlib
+          import re
+          script = pathlib.Path('tools/stage40_exact_current_pck0_verified_extract.py')
+          spec = importlib.util.spec_from_file_location('stage40_verify', script)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          source = pathlib.Path('server/cmd/protocol-probe/latest_client_shop_condition_authority.go').read_text(encoding='utf-8')
+          mapping = {
+              'shop.ini': 'exactCurrentShopINISHA256',
+              'exchangeitem.ini': 'exactCurrentExchangeItemSHA256',
+              'condition.ini': 'exactCurrentConditionINISHA256',
+              'skill_maxlevel.ini': 'exactCurrentSkillMaxLevelSHA256',
+              'condition_formula_a.ini': 'exactCurrentFormulaSHA256A',
+              'condition_formula_b.ini': 'exactCurrentFormulaSHA256B',
+          }
+          for filename, const in mapping.items():
+              match = re.search(r'^\s*' + re.escape(const) + r'\s*=\s*"([0-9a-f]{64})"', source, re.M)
+              if match is None or match.group(1) != module.EXPECTED[filename]:
+                  raise SystemExit('CURRENT_FINGERPRINT_MISMATCH: ' + filename)
+          print('CURRENT_SIX_PAYLOAD_FINGERPRINTS_MATCH_PRODUCTION_SOURCE=PASS')
+          print('REAL_PRIVATE_PACKAGE_IN_CI=NOT_PRESENT; CURRENT_PACKAGE_EXTRACTION_IN_CI=NOT_RUN')
+          PY

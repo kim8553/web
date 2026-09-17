@@ -98,7 +98,15 @@ func validateExchangePairList(value string, bits int, name string) error {
 	if value == "" {
 		return nil
 	}
-	for _, entry := range strings.Split(value, ";") {
+	entries := strings.Split(value, ";")
+	// The exact-current client Item parser skips a final empty semicolon
+	// token (fewer than two comma-separated fields). Preserve the raw
+	// authored string for S2C 557; this does not authorize item exchange.
+	// Prop remains strict until its separate native parse path is proven.
+	if name == "Item" && entries[len(entries)-1] == "" {
+		entries = entries[:len(entries)-1]
+	}
+	for _, entry := range entries {
 		parts := strings.Split(entry, ",")
 		if len(parts) < 2 || strings.TrimSpace(parts[0]) == "" {
 			return fmt.Errorf("%s entry %q does not match current name,value grammar", name, entry)

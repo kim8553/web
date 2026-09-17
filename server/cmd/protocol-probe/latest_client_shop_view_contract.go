@@ -16,6 +16,22 @@ func latestClientShopViewProperties(shopID string, shopType, pageCount int32) []
 	}
 }
 
+// currentShopItemVisibleInView preserves ordinary authored listings and exposes
+// exchange listings only when the current shop.ini row carries a positive
+// ExchangeData identifier. Current form_shop.lua reads ExchangeData from the
+// View item before it can request the exchange form, so hiding valid mode 3
+// rows prevents the verified 0x40 request path from being reached.
+func currentShopItemVisibleInView(item shopCatalogItem) bool {
+	switch item.priceMode {
+	case 0, 1, 2:
+		return true
+	case 3:
+		return item.exchangeData > 0
+	default:
+		return false
+	}
+}
+
 // latestClientShopItemProperties emits only current negotiated name/type pairs.
 // Ordinal 181 is MaxPowerValue/int32 in the current table and must never carry a
 // ConfigID string. ConfigID is negotiated as string at ordinals 7 and 105; the

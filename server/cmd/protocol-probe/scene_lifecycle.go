@@ -487,9 +487,7 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
 		return fmt.Errorf("create shop view %q: %w", shopID, err)
 	}
 	for _, item := range items {
-		switch item.priceMode {
-		case 0, 1, 2:
-		default:
+		if !currentShopItemVisibleInView(item) {
 			continue
 		}
 		objectIndex, ok := currentShopViewObjectIndex(item)

@@ -1,0 +1,25 @@
+name: JIUYIN Stage55 Playerweapon Locate
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - .github/workflows/jiuyin-stage55-playerweapon-locate.yml
+permissions:
+  contents: read
+jobs:
+  locate:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Locate playerweapon startup dependency
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host '=== exact string matches ==='
+          Get-ChildItem server -Recurse -File -Include *.go | Select-String -Pattern 'playerweapon|load equipment catalog|load playerweapon models' -CaseSensitive:$false | ForEach-Object {
+            Write-Host ("{0}:{1}: {2}" -f $_.Path,$_.LineNumber,$_.Line.Trim())
+          }
+          Write-Host '=== nearby equipment loader symbols ==='
+          Get-ChildItem server -Recurse -File -Include *.go | Select-String -Pattern 'equipment|equipCatalog|loadEquip' -CaseSensitive:$false | Select-Object -First 200 | ForEach-Object {
+            Write-Host ("{0}:{1}: {2}" -f $_.Path,$_.LineNumber,$_.Line.Trim())
+          }

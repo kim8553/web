@@ -1,0 +1,30 @@
+name: JIUYIN Stage48 Item and Normal Retail Route Audit
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - .github/workflows/jiuyin-stage48-item-retail-route-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  item-retail-route-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Discover current production routes (source only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'CHECKOUT=%s\n' "$(git rev-parse HEAD)"
+          echo '=== SOURCE FILE NAMES (item/bag/shop/retail/equip/currency) ==='
+          git ls-files 'server/**/*.go' | grep -Ei '(item|bag|shop|retail|equip|currency|inventory)' | head -100 || true
+          echo '=== NONTEST ROUTE CANDIDATES (bounded grep) ==='
+          git grep -n -E 'handleShop|handle.*(Buy|Sell|Purchase|Item|Bag)|func .*([Bb]uy|[Ss]ell|[Pp]urchase|[Ii]tem[Uu]se|[Bb]ag)|[Pp]ersist[Bb]ag|[Pp]ersist[Cc]urrency|shop.*[Bb]uy|shop.*[Ss]ell' -- 'server/**/*.go' ':!server/**/*_test.go' | head -125 || true
+          echo '=== NORMAL SHOP RECEIVERS (bounded grep) ==='
+          git grep -n -E 'handleShopExchangeContract|[Ss]hop.*[Rr]equest|[Cc]ustom.*(0x4[fF]|[Ss]hop)|[Ss]ell[Pp]rice[012]|[Bb]uy[Pp]rice' -- 'server/**/*.go' ':!server/**/*_test.go' | head -100 || true
+      - name: Scope disclosure
+        run: |
+          echo 'READ_ONLY_CURRENT_SERVER_SOURCE=YES'
+          echo 'GM_GRANT_AND_0X4F_EXCHANGE=NOT_MODIFIED'
+          echo 'RETAIL_ITEM_TRANSACTION_AND_LIVE_TEST=NOT_RUN'

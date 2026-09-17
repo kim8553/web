@@ -1,0 +1,116 @@
+name: JIUYIN Stage55 Playerweapon Startup Fix
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - .github/workflows/jiuyin-stage55-playerweapon-startup-fix.yml
+permissions:
+  contents: write
+jobs:
+  patch-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+          fetch-depth: 0
+      - name: Patch only missing playerweapon directory failure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $path = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+          $text = Get-Content -Raw $path
+          $old = @'
+          weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
+          if weaponErr != nil {
+              return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
+          }
+          catalog.weaponModels = weaponModels
+          heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
+          if heldErr != nil {
+              return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
+          }
+          catalog.weaponHeld = heldModes
+          '@
+          $new = @'
+          catalog.weaponModels = make(map[string]string)
+          catalog.weaponHeld = make(map[string]string)
+          if _, statErr := os.Stat(defaultPlayerWeaponDir); statErr == nil {
+              weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
+              if weaponErr != nil {
+                  return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
+              }
+              catalog.weaponModels = weaponModels
+              heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
+              if heldErr != nil {
+                  return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
+              }
+              catalog.weaponHeld = heldModes
+          } else if !os.IsNotExist(statErr) {
+              return nil, fmt.Errorf("stat playerweapon directory: %w", statErr)
+          }
+          '@
+          if (-not $text.Contains($old)) { throw 'expected Stage54 playerweapon block not found' }
+          $text = $text.Replace($old, $new)
+          [IO.File]::WriteAllText((Resolve-Path $path), $text, (New-Object Text.UTF8Encoding($false)))
+          & gofmt -w $path
+          if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
+          $after = Get-Content -Raw $path
+          if ($after -notmatch 'os\.IsNotExist\(statErr\)') { throw 'missing-dir guard not present' }
+          if ($after -notmatch 'stat playerweapon directory') { throw 'non-missing errors are not preserved' }
+      - name: Compile Windows server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'compile test failed' }
+            go build -trimpath -o "$env:RUNNER_TEMP\stage55-test-server.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          } finally { Pop-Location }
+          Write-Host 'WINDOWS_COMPILE=PASS; USER_RUNTIME_RETEST_REQUIRED'
+      - name: Commit source fix to handoff branch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git config user.name 'ChatGPT Stage55'
+          git config user.email 'actions@users.noreply.github.com'
+          git add server/cmd/protocol-probe/zz_recovered_overlay.go
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { throw 'no source change to commit' }
+          git commit -m 'fix(startup): tolerate absent unused playerweapon helper directory'
+          git push origin HEAD:stage37-assistant-handoff-20260917
+          "PATCH_SHA=$(git rev-parse HEAD)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Build Stage55 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = "$env:RUNNER_TEMP\stage55-pkg"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\stage55-test-server.exe" $pkg
+          Copy-Item 'tools/stage55-test-server/run-stage55-test-server.ps1' $pkg
+          Copy-Item 'tools/stage55-test-server/README_KO.md' $pkg
+          $info = @(
+            'Stage55 Windows test server',
+            "Patched source commit: $env:PATCH_SHA",
+            'Server lineage: user-supplied 9yin-go-server1.rar -> current GitHub Go source',
+            'Fix: absent resources/modern/share/ini/effect/playerweapon no longer aborts equipment catalog startup',
+            'Only missing-directory is tolerated; other stat/read errors still fail',
+            'Normal buy 0x46: current Stage54 JSON/MySQL persistence path retained',
+            'Live user runtime and client E2E: not yet re-tested after this fix'
+          )
+          [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $pkg -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $pkg 'SHA256SUMS.txt')
+          $zip = "$env:RUNNER_TEMP\STAGE55_9YIN_GO_SERVER1_TEST_SERVER_WINDOWS_20260918.zip"
+          Compress-Archive -Path "$pkg\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage55-9yin-go-server1-test-server-windows
+          path: ${{ runner.temp }}/STAGE55_9YIN_GO_SERVER1_TEST_SERVER_WINDOWS_20260918.zip
+          if-no-files-found: error
+          retention-days: 14

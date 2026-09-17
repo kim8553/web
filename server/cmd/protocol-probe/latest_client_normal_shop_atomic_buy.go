@@ -69,9 +69,11 @@ func normalShopFrameForCurrency(value normalShopPersistedCurrency) ([]byte, erro
 	})
 }
 
-// normalShopAtomicBuy is deliberately fail-closed for JSON/unverified storage,
-// unopened NPC shops, unknown items, unsupported quantities and full bags.
-// No actor or client-visible state changes until after the MySQL COMMIT succeeds.
+// normalShopAtomicBuy accepts the exact-current normal shop request shape and
+// persists it through whichever storage backend the 9yin-go-server1 runtime is
+// actually using: one SQL transaction for MySQL, or the guarded paired JSON
+// commit for the native no-DSN runtime. No actor/client-visible state changes
+// occur until persistence succeeds.
 func normalShopAtomicBuy(link sceneMessageConnection, player *playerActor, world *sceneLifecycle,
 	itemCatalog *itemCatalog, equipCatalog *equipCatalog, bagStore bagStoreIface,
 	currencyStore currencyStoreIface, roleID role.RoleID, custom clientCustomMessage,
@@ -96,12 +98,18 @@ func normalShopAtomicBuy(link sceneMessageConnection, player *playerActor, world
 		log.Printf("%s: normal buy blocked: no current matching NPC shop session shop=%q", remote, shopID)
 		return true, nil
 	}
-	bagSQL, bagOK := bagStore.(*mysqlBagStore)
-	currencySQL, currencyOK := currencyStore.(*mysqlCurrencyStore)
-	if !bagOK || !currencyOK || bagSQL == nil || currencySQL == nil || bagSQL.db == nil || bagSQL.db != currencySQL.db {
-		log.Printf("%s: normal buy blocked: unified MySQL bag/currency store unavailable; JSON is not atomic", remote)
+
+	bagSQL, bagSQLOK := bagStore.(*mysqlBagStore)
+	currencySQL, currencySQLOK := currencyStore.(*mysqlCurrencyStore)
+	mysqlMode := bagSQLOK && currencySQLOK && bagSQL != nil && currencySQL != nil && bagSQL.db != nil && bagSQL.db == currencySQL.db
+	bagJSON, bagJSONOK := bagStore.(*bagStore)
+	currencyJSON, currencyJSONOK := currencyStore.(*currencyStore)
+	jsonMode := bagJSONOK && currencyJSONOK && bagJSON != nil && currencyJSON != nil
+	if !mysqlMode && !jsonMode {
+		log.Printf("%s: normal buy blocked: bag/currency stores are not one supported backend", remote)
 		return true, nil
 	}
+
 	listings, _, _, err := shopCatalogItems(defaultShopINIPath, shopID)
 	if err != nil {
 		log.Printf("%s: normal buy blocked: shop catalog: %v", remote, err)
@@ -130,10 +138,11 @@ func normalShopAtomicBuy(link sceneMessageConnection, player *playerActor, world
 		return true, nil
 	}
 
-	// Keep the actor lock across snapshot creation, SQL commit, and the in-memory
-	// update; regular actor mutations also take this mutex. We never call an
-	// actor method that re-locks it while held.
+	// Keep the actor lock across snapshot creation, persistence, and the
+	// in-memory update; regular actor mutations also take this mutex. We never
+	// call an actor method that re-locks it while held.
 	var frames [][]byte
+	storageMode := "JSON"
 	committed, commitErr := func() (bool, error) {
 		player.mu.Lock()
 		defer player.mu.Unlock()
@@ -177,21 +186,28 @@ func normalShopAtomicBuy(link sceneMessageConnection, player *playerActor, world
 		frames = make([][]byte, 0, 1+len(itemFrames))
 		frames = append(frames, currencyFrame)
 		frames = append(frames, itemFrames...)
-		beforeBag := normalShopPersistedRows(player.bagItems)
-		afterBag := append(append([]normalShopPersistedBagRow(nil), beforeBag...), normalShopPersistedRows([]bagItem{reward})...)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if txErr := normalShopCommitMySQLSnapshots(ctx, bagSQL.db, uint64(roleID), beforeCurrency, afterCurrency, beforeBag, afterBag); txErr != nil {
-			return false, fmt.Errorf("normal buy MySQL transaction: %w", txErr)
+
+		afterBagItems := append(append([]bagItem(nil), player.bagItems...), reward)
+		if mysqlMode {
+			storageMode = "MySQL"
+			beforeBag := normalShopPersistedRows(player.bagItems)
+			afterBag := normalShopPersistedRows(afterBagItems)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if txErr := normalShopCommitMySQLSnapshots(ctx, bagSQL.db, uint64(roleID), beforeCurrency, afterCurrency, beforeBag, afterBag); txErr != nil {
+				return false, fmt.Errorf("normal buy MySQL transaction: %w", txErr)
+			}
+		} else {
+			if txErr := normalShopCommitJSONSnapshots(bagJSON, currencyJSON, roleID, afterCurrency, afterBagItems); txErr != nil {
+				return false, fmt.Errorf("normal buy JSON transaction: %w", txErr)
+			}
 		}
+
 		player.silver, player.gold, player.silverCard, player.silverTicket = afterCurrency.Silver, afterCurrency.Gold, afterCurrency.SilverCard, afterCurrency.SilverTicket
-		player.bagItems = append(player.bagItems, reward)
+		player.bagItems = afterBagItems
 		return true, nil
 	}()
 	if commitErr != nil {
-		// A commit-returned connection failure may have occurred after durable
-		// commit. Ending this session forces DB reloading instead of allowing
-		// stale actor/client state to continue.
 		log.Printf("%s: normal buy aborted; disconnect for authoritative state reload: %v", remote, commitErr)
 		return true, commitErr
 	}
@@ -201,6 +217,6 @@ func normalShopAtomicBuy(link sceneMessageConnection, player *playerActor, world
 	if err := writeFrames(link, frames...); err != nil {
 		return true, fmt.Errorf("normal buy committed but client update failed; reconnect required: %w", err)
 	}
-	log.Printf("%s: normal buy MySQL committed shop=%s item=%s count=1 mode=%d cost=%d view=%d", remote, shopID, reward.ConfigID, listing.priceMode, total, view)
+	log.Printf("%s: normal buy %s committed shop=%s item=%s count=1 mode=%d cost=%d view=%d", remote, storageMode, shopID, reward.ConfigID, listing.priceMode, total, view)
 	return true, nil
 }

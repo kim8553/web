@@ -30,7 +30,7 @@ jobs:
           go-version-file: server/go.mod
           cache: false
 
-      - name: Verify Stage60 lineage and local-service contract
+      - name: Verify Stage60 lineage, launcher syntax, and local-service contract
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -38,13 +38,22 @@ jobs:
           foreach ($needle in @('127.0.0.1:4000','127.0.0.1:19061','127.0.0.1:19062','loopback-lister.ps1')) {
             if (-not $original.Contains($needle)) { throw "original local-service contract missing: $needle" }
           }
-          $launcher = Get-Content -Raw 'tools/stage60-live-login-e2e/run-stage60-live-services.ps1'
+          $launcherPath = (Resolve-Path 'tools/stage60-live-login-e2e/run-stage60-live-services.ps1').Path
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($launcherPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if (@($parseErrors).Count -gt 0) {
+            $details = @($parseErrors | ForEach-Object { "line=$($_.Extent.StartLineNumber) col=$($_.Extent.StartColumnNumber) $($_.Message)" }) -join '; '
+            throw "Stage60 launcher PowerShell parse failed: $details"
+          }
+          $launcher = Get-Content -Raw $launcherPath
           foreach ($needle in @(
             'NINEYIN_SERVER_ROOT',
             'stage60-backups',
             'roles.before-stage60-login.',
             'Stage60 refuses to reuse old listeners',
             '4000,19061,19062',
+            "('{0}:{1}' -f `$port, (`$owners -join ','))",
             'STAGE60_READY=YES',
             'STAGE60_LIVE_RESULT_',
             'LOGIN_OPCODE_0X02_SEEN',
@@ -53,6 +62,7 @@ jobs:
           )) {
             if (-not $launcher.Contains($needle)) { throw "Stage60 launcher guard missing: $needle" }
           }
+          Write-Host 'STAGE60_LAUNCHER_PARSE=PASS'
           Write-Host 'STAGE60_LINEAGE_AND_STATIC_GUARDS=PASS'
 
       - name: Verify Stage59 JSON adoption guardrails remain intact
@@ -169,6 +179,7 @@ jobs:
             'Server lineage: user-supplied 9yin-go-server1.rar -> current kim8553/web Go source',
             'Stage59 JSON identity adoption guardrails retained',
             'Original local-service contract: list 4000 + game 19061 + GM 19062',
+            'Stage60 launcher PowerShell parse check: PASS',
             'Stage60 refuses to reuse pre-existing listeners',
             'JSON launcher backup + SHA256 verification: enabled',
             'Stage59 targeted JSON adoption tests under Stage60: PASS',

@@ -6506,7 +6506,29 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 		log.Printf("%s: shop buy %s item %s unsupported capital type %d", remote, shopID, item.configID, item.priceMode)
 		return true, nil
 	}
-	total := int64(item.price) * int64(amount)
+	// Encode the reward before touching the wallet: an unknown bag view,
+	// an unrepresentable slot, or a malformed item must not charge.
+	reward := enrichBagItem(bagItem{ConfigID: item.configID, Amount: amount}, itemCatalog, nil)
+	view := bagViewForViewID(reward.ViewID)
+	if view == 0 {
+		log.Printf("%s: reject shop buy %s item %s: unsupported bag category %d", remote, shopID, item.configID, reward.ViewID)
+		return true, nil
+	}
+	slot := int(bagSlotFor(player, view))
+	if slot < 1 || slot > 65535 {
+		log.Printf("%s: reject shop buy %s item %s: invalid free slot %d", remote, shopID, item.configID, slot)
+		return true, nil
+	}
+	reward.Slot = int32(slot)
+	itemFrame, err := serverViewAdd(view, uint16(slot), bagItemProps(view, reward))
+	if err != nil {
+		return true, fmt.Errorf("encode shop reward before wallet debit: %w", err)
+	}
+	total, totalErr := checkedOrdinaryShopTotal(item.price, amount)
+	if totalErr != nil {
+		log.Printf("%s: reject shop buy %s item %s: %v", remote, shopID, item.configID, totalErr)
+		return true, nil
+	}
 	switch item.priceMode {
 	case 0:
 		_, gold, _, _ := player.currencySnapshot()
@@ -6534,14 +6556,7 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 	if err != nil {
 		return true, err
 	}
-	reward := bagItem{ConfigID: item.configID, Amount: amount}
-	reward = enrichBagItem(reward, itemCatalog, nil)
-	slot := player.addBagItem(reward)
-	view := bagViewForViewID(reward.ViewID)
-	itemFrame, err := serverViewAdd(view, uint16(slot), bagItemProps(view, reward))
-	if err != nil {
-		return true, err
-	}
+	slot = player.addBagItem(reward)
 	frames := [][]byte{currencyFrame, itemFrame}
 	if err := writeFrames(link, frames...); err != nil {
 		return true, err

@@ -31,11 +31,29 @@ func TestCurrentNativeItemInternalGarbageStillRejected(t *testing.T) {
 	}
 }
 
-func TestPropFinalSemicolonIsNotEnabledWithoutNativeEvidence(t *testing.T) {
-	if err := validateExchangePairList("CapitalType1,10;", 64, "Prop"); err == nil {
-		t.Fatal("unproven Prop trailing separator was enabled")
+// Exact-current FxGameLogic.dll 0x11B16600..0x11B166E7 splits the Prop
+// field on semicolon and skips a comma-split element with fewer than 2 parts.
+func TestCurrentNativePropFinalSemicolon(t *testing.T) {
+	valid := []string{
+		"CapitalType1,10;", "SchoolContribute,80;WGJobSkillPoint,90;",
+		"CapitalType2,1234567890123;", "CapitalType1,10;SchoolContribute,80",
 	}
-	if err := validateExchangePairList("CapitalType1,10", 64, "Prop"); err != nil {
-		t.Fatal(err)
+	for _, input := range valid {
+		if err := validateExchangePairList(input, 64, "Prop"); err != nil {
+			t.Errorf("current Prop grammar wrongly rejects %q: %v", input, err)
+		}
+	}
+}
+
+func TestCurrentNativePropMalformedStillRejected(t *testing.T) {
+	invalid := []string{
+		";", ";CapitalType1,1", "CapitalType1,1;;",
+		"CapitalType1,1;;SchoolContribute,2", "CapitalType1,1;bad",
+		"CapitalType1,wat;", "CapitalType1,9223372036854775808;",
+	}
+	for _, input := range invalid {
+		if err := validateExchangePairList(input, 64, "Prop"); err == nil {
+			t.Errorf("malformed Prop grammar unexpectedly accepted %q", input)
+		}
 	}
 }

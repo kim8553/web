@@ -54,7 +54,7 @@ func loadShopExchangeDefinition(path string, exchangeData int32) (shopExchangeDe
 		Condition:     strings.TrimSpace(iniValue(fields, "Condition")),
 		Condition2:    strings.TrimSpace(iniValue(fields, "Condition2")),
 		Filters:       strings.TrimSpace(iniValue(fields, "Filters")),
-		Prop:          strings.TrimSpace(iniValue(fields, "Prop")),
+		Prop:         strings.TrimSpace(iniValue(fields, "Prop")),
 	}
 	if err := validateShopExchangeDefinition(definition); err != nil {
 		return shopExchangeDefinition{}, fmt.Errorf("exchange item section %d: %w", exchangeData, err)
@@ -99,11 +99,12 @@ func validateExchangePairList(value string, bits int, name string) error {
 		return nil
 	}
 	entries := strings.Split(value, ";")
-	// The exact-current client Item parser skips a final empty semicolon
-	// token (fewer than two comma-separated fields). Preserve the raw
-	// authored string for S2C 557; this does not authorize item exchange.
-	// Prop remains strict until its separate native parse path is proven.
-	if name == "Item" && entries[len(entries)-1] == "" {
+	// Exact-current FxGameLogic.dll InitCurExchangeData skips a final empty
+	// semicolon token (fewer than two comma-separated fields) for BOTH Item
+	// (0x11B1593C..0x11B15947) and Prop (0x11B166DC..0x11B166E7).
+	// Keep raw authored strings intact in S2C 557; this only aligns display
+	// grammar, and never authorizes exchange debit, grant or persistence.
+	if (name == "Item" || name == "Prop") && entries[len(entries)-1] == "" {
 		entries = entries[:len(entries)-1]
 	}
 	for _, entry := range entries {

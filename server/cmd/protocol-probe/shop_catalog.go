@@ -119,7 +119,14 @@ func loadShopCatalogSection(path, shopID string) ([]shopCatalogItem, int32, int3
 		if page < 0 || position < 0 {
 			return nil, 0, 0, fmt.Errorf("shop %s line %d: invalid page=%d position=%d", shopID, lineNumber, page, position)
 		}
-		items = append(items, shopCatalogItem{configID: strings.TrimSpace(parts[0]), amount: amount, priceMode: priceMode, price: price, page: page, position: position, exchangeData: exchangeData})
+		// A nonpositive quantity, negative price, or missing item identity can
+		// cause the purchase handler to mutate currency without a valid item.
+		// Reject malformed source rows before they reach that handler.
+		configID := strings.TrimSpace(parts[0])
+		if configID == "" || amount <= 0 || price < 0 {
+			return nil, 0, 0, fmt.Errorf("shop %s line %d: invalid item config=%q amount=%d price=%d", shopID, lineNumber, configID, amount, price)
+		}
+		items = append(items, shopCatalogItem{configID: configID, amount: amount, priceMode: priceMode, price: price, page: page, position: position, exchangeData: exchangeData})
 		if page > maxPageKey {
 			maxPageKey = page
 		}

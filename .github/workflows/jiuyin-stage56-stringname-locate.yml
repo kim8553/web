@@ -11,10 +11,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Locate stringname dependency and usage
+      - name: Locate stringname dependency and next startup resources
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Get-ChildItem server -Recurse -File -Include *.go | Select-String -Pattern 'loadStringNames|defaultStringNameINI|stringNames' -CaseSensitive:$true | ForEach-Object {
+          Get-ChildItem server -Recurse -File -Include *.go | Select-String -Pattern 'loadStringNames|defaultStringNameINI|stringNames|defaultQuestTaskRoot|loadQuestCatalogFromTables|defaultDropTablePath|loadDropTable' -CaseSensitive:$true | ForEach-Object {
             Write-Host ("{0}:{1}: {2}" -f $_.Path,$_.LineNumber,$_.Line.Trim())
           }

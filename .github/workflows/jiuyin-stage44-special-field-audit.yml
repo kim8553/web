@@ -1,0 +1,30 @@
+name: JIUYIN Stage44 Special Field Audit
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'tools/stage44_exchange_special_field_audit.py'
+      - 'tools/test_stage44_exchange_special_field_audit.py'
+      - '.github/workflows/jiuyin-stage44-special-field-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-read-only-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Reject invalid config and verify special-field matrix with synthetic data
+        run: |
+          set -euo pipefail
+          cd tools
+          python -m unittest -v test_stage44_exchange_special_field_audit.py
+          python -m py_compile stage44_exchange_special_field_audit.py
+          echo 'STAGE44_SYNTHETIC_AUDIT=PASS PRIVATE_CURRENT_INI=NOT_PRESENT PURCHASE_MUTATION=NOT_RUN'

@@ -18,9 +18,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m py_compile tools/stage48_normal_shop_guard/apply_normal_shop_total_guard.py
+          PYTHONPYCACHEPREFIX="$RUNNER_TEMP/stage48-python-cache" python3 -m py_compile tools/stage48_normal_shop_guard/apply_normal_shop_total_guard.py
           test -z "$(gofmt -l server/cmd/protocol-probe/latest_client_normal_shop_buy_guard.go server/cmd/protocol-probe/latest_client_normal_shop_buy_guard_test.go server/_builddeps/xtext/encoding/simplifiedchinese/simplifiedchinese.go)"
-          python3 tools/stage48_normal_shop_guard/apply_normal_shop_total_guard.py
+          python3 -B tools/stage48_normal_shop_guard/apply_normal_shop_total_guard.py
           git diff --check
           git diff --stat
           git diff -- server/cmd/protocol-probe/zz_recovered_overlay.go
@@ -53,6 +53,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git status --short
           test "$(git status --porcelain | wc -l)" -eq 1
           test "$(git diff --name-only)" = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
           git config user.name 'github-actions[bot]'

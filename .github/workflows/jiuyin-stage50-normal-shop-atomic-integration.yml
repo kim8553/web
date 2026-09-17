@@ -1,0 +1,67 @@
+name: JIUYIN Stage50 Normal Shop Atomic Integration
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - .github/workflows/jiuyin-stage50-normal-shop-atomic-integration.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  pinned-atomic-buyer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Validate staged code and patch precisely the two retail files
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPYCACHEPREFIX="$RUNNER_TEMP/jiuyin-pycache"
+          python3 -m py_compile tools/stage50_normal_shop_atomic/apply_normal_shop_atomic_buy.py
+          test -z "$(gofmt -l server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go server/cmd/protocol-probe/latest_client_normal_shop_mysql_atomic.go server/cmd/protocol-probe/latest_client_normal_shop_mysql_atomic_test.go)"
+          python3 tools/stage50_normal_shop_atomic/apply_normal_shop_atomic_buy.py
+          git diff --check
+          test -z "$(gofmt -l server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go)"
+          test "$(git diff --name-only | wc -l)" -eq 2
+          test "$(git diff --name-only)" = "$(printf 'server/cmd/protocol-probe/main.go\nserver/cmd/protocol-probe/zz_recovered_overlay.go')"
+          git diff --stat
+          git diff -- server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go
+      - name: Re-run Stage49 isolated transaction tests with race detector
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server/cmd/protocol-probe
+          GO111MODULE=off go test -race -count=1 -v latest_client_normal_shop_mysql_atomic.go latest_client_normal_shop_mysql_atomic_test.go
+      - name: Compile actual server package and Linux plus Windows targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go test -c -o "$RUNNER_TEMP/protocol-probe.test" ./cmd/protocol-probe
+          go build -o "$RUNNER_TEMP/protocol-probe" ./cmd/protocol-probe
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/protocol-probe.exe" ./cmd/protocol-probe
+          test -s "$RUNNER_TEMP/protocol-probe.test"
+          test -s "$RUNNER_TEMP/protocol-probe"
+          test -s "$RUNNER_TEMP/protocol-probe.exe"
+          echo 'COMPILE_ONLY=PASS; no skill_new.ini substitute; no runtime server or real MySQL launched'
+      - name: Publish only compiled production retail route changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only | wc -l)" -eq 2
+          test "$(git diff --name-only)" = "$(printf 'server/cmd/protocol-probe/main.go\nserver/cmd/protocol-probe/zz_recovered_overlay.go')"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go
+          git commit -m 'fix(shop): route both normal 0x46 callers through MySQL atomic buyer'
+          git push origin HEAD:refs/heads/stage37-assistant-handoff-20260917
+      - name: Disclose exact scope
+        run: |
+          echo 'NORMAL_0X46_MYSQL_SINGLE_UNIT=CODE_WIRED_AND_COMPILED_NOT_LIVE_TESTED'
+          echo 'STAGE49_FAKE_DRIVER_TX_TESTS=PASS_ONLY'
+          echo 'JSON_AND_UNVERIFIED_SHOP_SESSIONS=FAIL_CLOSED'
+          echo 'SALE_0X47=NOT_IMPLEMENTED'
+          echo 'GM_GRANT_AND_EXCHANGE_0X4F=UNCHANGED'
+          echo 'MYSQL_LIVE_ROLLBACK_WINDOWS_RUNTIME_RECONNECT=NOT_RUN'

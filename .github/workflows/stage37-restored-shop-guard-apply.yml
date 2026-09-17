@@ -4,6 +4,7 @@ on:
     branches: [stage37-restored-20260918]
     paths:
       - '.github/workflows/stage37-restored-shop-guard-apply.yml'
+      - 'server/cmd/protocol-probe/shop_purchase_guard_test.go'
   workflow_dispatch:
 permissions:
   contents: write

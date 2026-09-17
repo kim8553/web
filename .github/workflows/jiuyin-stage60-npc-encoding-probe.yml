@@ -4,6 +4,8 @@ on:
   push:
     branches: [stage37-assistant-handoff-20260917]
     paths:
+      - 'server/go.mod'
+      - 'server/go.sum'
       - 'server/internal/clientdata/npc_creator.go'
       - 'server/internal/clientdata/npc_creator_encoding_live_fixture_test.go'
       - '.github/workflows/jiuyin-stage60-npc-encoding-probe.yml'

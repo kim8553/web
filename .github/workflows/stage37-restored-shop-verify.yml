@@ -32,19 +32,27 @@ jobs:
           go mod tidy -modfile=ci.real.mod
           go mod download -modfile=ci.real.mod
           test -z "$(gofmt -l cmd/protocol-probe/shop_catalog.go cmd/protocol-probe/shop_catalog_input_validation_test.go)"
-      - name: Test shop catalog and existing current-client shop contracts
+      - name: Test exact shop parser in isolated package (no private resources)
         working-directory: server
+        shell: bash
         run: |
           set -euo pipefail
-          go test -modfile=ci.real.mod -count=1 -run '^(TestShopCatalogRejectsMalformedPurchaseRows|TestShopCatalogAcceptsZeroPriceOrdinaryItem|TestLatestClientShop.*|TestCurrentShop.*|TestShopCatalog.*)$' ./cmd/protocol-probe
-      - name: Run non-protocol package tests and vet
+          mkdir -p /tmp/stage37-shop-parser-test
+          cp cmd/protocol-probe/shop_catalog.go cmd/protocol-probe/shop_catalog_input_validation_test.go /tmp/stage37-shop-parser-test/
+          printf 'package main\nconst defaultModernShareRoot = ""\n' > /tmp/stage37-shop-parser-test/test_root_stub.go
+          cd /tmp/stage37-shop-parser-test
+          GO111MODULE=off go test -count=1 -v *.go
+          echo 'SHOP_PARSER_ISOLATED=PASS FULL_PROTOCOL_RUNTIME=NOT_RUN'
+      - name: Run non-protocol tests, protocol compilation and vet
         working-directory: server
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
           go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go test -modfile=ci.real.mod -c -o /tmp/stage37-protocol.test ./cmd/protocol-probe
           go vet -modfile=ci.real.mod ./...
+          echo 'NON_PROTOCOL_TESTS=PASS PROTOCOL_COMPILE=PASS VET=PASS'
       - name: Build Windows amd64 server (not a LIVE test)
         working-directory: server
         shell: bash

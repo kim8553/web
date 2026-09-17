@@ -1,0 +1,30 @@
+# Stage42 — exact-current native Item trailing-semicolon proof and guarded Go correction (2026-09-17)
+
+## Exact authority and non-destructive continuation
+
+- Continue `kim8553/web`, branch `stage37-assistant-handoff-20260917`, from Stage41 HEAD `7043d6d905ece068bb540f6d2c569ace23c2886d`. Never replace the current server with the recently uploaded older `九阴服务端.zip`, original 9yin-go-server1.rar, V37/V46/JYZJ, or old client files.
+- Directly inspected actual current `bin64.zip` member `fxgamelogic.dll`: length **43,327,760 bytes**, SHA256 `16cf49b652c39b63ba0767780cc39f32ea1e50bdc683da9d5e7b2697cf95c3e8` (PE x64 ImageBase `0x11000000`). No executable was run or edited.
+- Rechecked actual hash-authenticated current `res/share.package` `ExchangeItem.ini` payload: **716,215 bytes**, SHA256 `ed931884d8a8bb19bad512b5eb571fe8ac97b783449144d4a4834eb050f0dee6`. The source filename label is inherited from the verified Stage40 file digest; the encrypted package index filename remains unrecovered.
+
+## Native machine-code proof — ONLY Item list parsing, NOT exchange settlement
+
+At `FxGameLogic.dll` virtual address `0x11B15560`, the native `exchange_item_manager::InitCurExchangeData` consumes the 11 fields of S2C 557's config string. The Item string read from the fourth token is split with literal `;`: `0x11B15860` loads delimiter at `0x12CBB388`, `0x11B15877` calls split helper `0x1106B13F` (jmp target `0x112C4350`). The helper's `0x112C4410..0x112C44BE` loop includes the remainder after delimiters. Each Item element is then split by literal comma `,` at `0x11B15928..0x11B15937`; `0x11B1593C..0x11B15947` checks pair count `<2` and branches past that element at `0x11B15B57` rather than failing the whole form. Therefore a **single terminal `;`** creates a trailing empty element that this client skips. This is a client **display/config parser** fact; it does not establish the official server's item consumption, currency, reward, count, binding, or transaction semantics. The separate Prop parsing path is not proven here.
+
+## Actual production fix, bounded to proven grammar
+
+- Production file: `server/cmd/protocol-probe/latest_client_shop_exchange_config.go`. Before blob `a8b060503c3946b96d084b651784d575bc1fba8c`, after blob `99e6865fc4839cbad1d7f0430e85b7c22d16ebb3` (both independently matched with `git hash-object` against the exact file bytes). Production commit `694383595f09ee11988d4270ef4a96bc1d5a70cf`.
+- Exactly one production function changed: `validateExchangePairList` accepts one final empty semicolon token when **`name == "Item"`**. The original entire `Item` string, including final `;`, continues unchanged to `encodeShopExchangeConfig` and S2C 557. Existing strict handling remains for empty items inside lists, duplicate terminal `;;`, invalid numeric amounts, and **all Prop fields**. No 0x4F handler, inventory, reward, DB, Go module, or binary was changed.
+- New test file: `server/cmd/protocol-probe/latest_client_shop_exchange_trailing_delimiter_test.go`, commit `ab6a933d5b8f2a6328bced08e33e618e1da4e89b` tests valid trailing Item lists, rejection of internal/bad Item tokens, and unchanged Prop strictness.
+- Directly parsed ten hash-verified exact-current ExchangeData definitions containing one terminal Item semicolon, IDs **11564, 14087, 14088, 14089, 14286, 14287, 14288, 14322, 14323, 14324**. Each has no authored `BindStatus`, no `Prop`, and exactly one mode-3 listing reference. An isolated test using the **actual ten full Item strings** against the extracted actual patched Go validator passed, including `-race`. This proves the *specific prior grammar rejection* is removed for ten definitions; it does **not** prove successful client display, end-user selection, or exchange settlement.
+- CI-only workflow `.github/workflows/jiuyin-stage42-native-item-separator.yml`, commit `feebffefd4f9e39e79c1f4f66d973267e0948025`, extracts the **actual production function** from the checked-out Go source, runs the committed tests with `go test -race`, and never invents a production implementation or uploads private client bytes. [Actions run 35231001190](https://github.com/kim8553/web/actions/runs/35231001190) completed **SUCCESS**. Current-client package extraction and Windows game LIVE were not run inside Actions.
+
+## Remaining blockers, not silently solved by a grammar fix
+
+1. `Type` and `AddValue` native setter parses do not prove how a game server spends resources or grants rewards; Stage41 identified special ExchangeData **1050, 1051, 15311, 7395** (7395 is an empty definition referenced by 20 rows). The `Prop` grammar and `SchoolContribute`/`WGJobSkillPoint` behavior require separately established native/server evidence.
+2. 131 `BindStatus=1` definitions referenced by 388 shop rows remain fail-closed: neither server-authoritative runtime `ShowBind` nor `ExchangeBind` is known. No binding field is invented.
+3. The production 0x4F purchase handler is still **read-only/fail-closed**. Actual selection-session ownership/range, material quantity/count and binding debit order, outcome mapping, bag capacity, concurrent/replayed requests, one SQL atomic commit/rollback, result-to-client synchronization, and reconnect persistence are **NOT PROVEN / NOT IMPLEMENTED**.
+4. Existing handoff-source-identity CI may reject every post-handoff commit because it pins an older tree; a failure there does not establish a gameplay regression or negate the separately verified Stage42 validator. Claim overall Windows build PASS only if a current-source workflow explicitly succeeds; the dedicated Stage42 workflow does *not* build the full server.
+
+## Next evidence-driven continuation
+
+Trace current `FxGameLogic.dll` Prop list parser and `Type`/`AddValue` getter use with precise xrefs and native instruction addresses; recover relevant current Lua only from authenticated current packages; preserve unknowns. Then establish authoritative client vs server transaction boundaries. Do not unlock 0x4F debit/grant from a successful display grammar test.

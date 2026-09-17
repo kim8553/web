@@ -1,0 +1,113 @@
+name: JIUYIN Stage37 0x4F Session Patch
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - '.github/workflows/jiuyin-stage37-exchange4f-session-apply.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-and-fast-forward:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - name: Verify pinned branch and apply only exact-source modifications
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/stage37-assistant-handoff-20260917'
+          git fetch origin stage37-assistant-handoff-20260917
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/stage37-assistant-handoff-20260917)"
+          python3 tools/stage37_exchange4f_shop_session_patch.py
+          gofmt -w server/cmd/protocol-probe/scene_lifecycle.go server/cmd/protocol-probe/main.go server/cmd/protocol-probe/latest_client_shop_exchange_contract.go
+          grep -F 'case 79:' server/cmd/protocol-probe/main.go
+          grep -F 'world.currentShopExchangeSessionAllows(request.ShopID)' server/cmd/protocol-probe/main.go
+          grep -F 'recheckCurrentShopExchangeResources()' server/cmd/protocol-probe/latest_client_shop_exchange_contract.go
+          git diff --check
+      - name: Real dependencies in disposable CI modfile
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+          go mod download -modfile=ci.real.mod
+      - name: Session guard and resource-mutation regression
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          GO111MODULE=off go test -count=1 -v cmd/protocol-probe/latest_client_shop_exchange_session_guard.go cmd/protocol-probe/latest_client_shop_exchange_session_guard_test.go
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          GO111MODULE=off go build -o "$tmp/hash-extract" ../tools/stage37_exchange4f_hash_extract.go
+          "$tmp/hash-extract" cmd/protocol-probe/latest_client_shop_condition_authority.go "$tmp/production.go"
+          cp ../tools/stage37_exchange4f_hash_ci_test.go "$tmp/hash_test.go"
+          (cd "$tmp" && GO111MODULE=off go test -count=1 -v production.go hash_test.go)
+          echo 'EXCHANGE_SESSION_AND_RESOURCE_HASH=PASS'
+      - name: Existing 0x4F isolated preflight and race regression
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          GO111MODULE=off go run ../tools/stage37_exchange4f_isolated_extract.go -source cmd/protocol-probe -output "$tmp/production.go"
+          cp ../tools/stage37_exchange4f_isolated_support.go "$tmp/support.go"
+          cp cmd/protocol-probe/latest_client_shop_exchange_buy_guard_regression_test.go "$tmp/guard_test.go"
+          (cd "$tmp" && GO111MODULE=off go test -count=1 production.go support.go guard_test.go)
+          (cd "$tmp" && GO111MODULE=off go test -race -count=1 production.go support.go guard_test.go)
+          GO111MODULE=off go test -race -count=1 cmd/protocol-probe/latest_client_shop_exchange_session_guard.go cmd/protocol-probe/latest_client_shop_exchange_session_guard_test.go
+          echo 'EXCHANGE_0X4F_ISOLATED_AND_RACE=PASS'
+      - name: Other-package regressions, protocol compile and vet
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          test "${#pkgs[@]}" -gt 0
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go test -modfile=ci.real.mod -c -o /tmp/exchange4f-session-protocol.test ./cmd/protocol-probe
+          go vet -modfile=ci.real.mod ./...
+          echo 'OTHER_GO_TEST=PASS PROTOCOL_COMPILE=PASS VET=PASS PROTOCOL_RUNTIME=NOT_RUN'
+      - name: Windows amd64 cross-build
+        working-directory: server
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -trimpath -modfile=ci.real.mod -o /tmp/exchange4f-session-server.exe ./cmd/protocol-probe
+          file /tmp/exchange4f-session-server.exe | grep -E 'PE32\+ executable.*x86-64'
+          echo 'WINDOWS_AMD64_BUILD=PASS LIVE=NOT_RUN E2E=NOT_RUN'
+      - name: Commit verified changes without reset or force push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -- server/cmd/protocol-probe/scene_lifecycle.go server/cmd/protocol-probe/main.go server/cmd/protocol-probe/latest_client_shop_exchange_contract.go
+          git diff --cached --check
+          test -n "$(git diff --cached --name-only)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(exchange): bind 0x4f preflight to opened NPC shop and recheck current resources'
+          git push origin HEAD:refs/heads/stage37-assistant-handoff-20260917
+          git rev-parse HEAD

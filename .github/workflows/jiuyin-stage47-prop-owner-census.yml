@@ -1,0 +1,35 @@
+name: JIUYIN Stage47 Prop Owner Census
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - tools/stage47_prop_owner_audit/audit.py
+      - .github/workflows/jiuyin-stage47-prop-owner-census.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  current-server-census:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit exact Prop identifiers only in checked-out server Go and SQL
+        run: |
+          python3 -m py_compile tools/stage47_prop_owner_audit/audit.py
+          python3 tools/stage47_prop_owner_audit/audit.py --output stage47-current-server-prop-census.md
+          cat stage47-current-server-prop-census.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Save bounded non-private candidate report
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage47-current-server-prop-census
+          path: stage47-current-server-prop-census.md
+          if-no-files-found: error
+      - name: Scope disclosure
+        run: |
+          echo 'ONLY_EXACT_TOKEN_CENSUS=YES'
+          echo 'PRIVATE_CLIENT_BINARIES_AND_RESOURCES=NOT_READ'
+          echo 'PROPERTY_OWNER_OR_SETTLEMENT=NOT_PROVEN'
+          echo 'LIVE_PURCHASE_SQL_REPLAY_RECONNECT=NOT_RUN'

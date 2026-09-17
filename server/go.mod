@@ -14,8 +14,6 @@ require filippo.io/edwards25519 v1.1.0 // indirect
 
 require github.com/Hiroko103/go-quicklz v0.0.0
 
-replace golang.org/x/text => ./_builddeps/xtext
-
 replace github.com/DATA-DOG/go-sqlmock => ./_builddeps/sqlmock
 
 replace github.com/Hiroko103/go-quicklz => ./_builddeps/quicklz

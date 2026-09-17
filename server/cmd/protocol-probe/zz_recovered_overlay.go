@@ -6506,7 +6506,11 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 		log.Printf("%s: shop buy %s item %s unsupported capital type %d", remote, shopID, item.configID, item.priceMode)
 		return true, nil
 	}
-	total := int64(item.price) * int64(amount)
+	total, safeCost := normalShopSafeTotal(item.price, amount)
+	if !safeCost {
+		log.Printf("%s: shop buy %s item %s blocked: invalid price=%d quantity=%d or total exceeds actor int32 currency range", remote, shopID, item.configID, item.price, amount)
+		return true, nil
+	}
 	switch item.priceMode {
 	case 0:
 		_, gold, _, _ := player.currencySnapshot()

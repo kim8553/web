@@ -1,0 +1,52 @@
+name: Mission source export 348abaa1
+
+on:
+  push:
+    branches:
+      - mission/source-export-348abaa1
+    paths:
+      - .github/workflows/mission-source-export-348abaa1.yml
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact target source
+        uses: actions/checkout@v4
+        with:
+          ref: 2b33d2ca8124bda32b1db815c4b0fd7fabcdfabc
+          fetch-depth: 0
+
+      - name: Verify exact source identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "2b33d2ca8124bda32b1db815c4b0fd7fabcdfabc"
+          git status --porcelain=v1 | tee /tmp/status.txt
+          test ! -s /tmp/status.txt
+
+      - name: Export exact tracked source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive --format=tar.gz --output=/tmp/jiuyin-source-2b33d2ca.tar.gz 2b33d2ca8124bda32b1db815c4b0fd7fabcdfabc
+          sha256sum /tmp/jiuyin-source-2b33d2ca.tar.gz | tee /tmp/jiuyin-source-2b33d2ca.sha256
+          printf '%s\n' \
+            'MISSION=source-export-348abaa1' \
+            'REPOSITORY=kim8553/web' \
+            'SOURCE_SHA=2b33d2ca8124bda32b1db815c4b0fd7fabcdfabc' \
+            'REPRESENTATION=git-archive-tar-gz' \
+            > /tmp/MISSION_PROVENANCE.txt
+
+      - name: Upload exact source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jiuyin-source-2b33d2ca-348abaa1
+          retention-days: 2
+          path: |
+            /tmp/jiuyin-source-2b33d2ca.tar.gz
+            /tmp/jiuyin-source-2b33d2ca.sha256
+            /tmp/MISSION_PROVENANCE.txt

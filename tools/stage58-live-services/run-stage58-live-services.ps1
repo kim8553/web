@@ -26,6 +26,11 @@ function Get-PortOwners([int]$Port) {
     return @(Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
 }
 
+function Quote-ChildArg([string]$Value) {
+    if ($Value.Contains('"')) { throw "Child-process path contains an unsupported quote character: $Value" }
+    return '"' + $Value + '"'
+}
+
 $gameOwners = @(Get-PortOwners 19061)
 $gmOwners = @(Get-PortOwners 19062)
 if ($gameOwners.Count -gt 0 -or $gmOwners.Count -gt 0) {
@@ -46,14 +51,14 @@ if ([string]::IsNullOrWhiteSpace($env:NINEYIN_MYSQL_DSN)) {
 
 $listerOwners = @(Get-PortOwners 4000)
 if ($listerOwners.Count -eq 0) {
-    $listerArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$lister,'-Port','4000','-OutputDir',$listerLogs)
+    $listerArgs = @('-NoProfile','-ExecutionPolicy','Bypass','-File',(Quote-ChildArg $lister),'-Port','4000','-OutputDir',(Quote-ChildArg $listerLogs))
     $listerProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $listerArgs -WorkingDirectory $PSScriptRoot -PassThru
     Write-Host "Started server-list service PID=$($listerProc.Id)"
 } else {
     Write-Host "Server-list port 4000 is already listening; reusing existing listener PID(s): $($listerOwners -join ',')"
 }
 
-$serverArgs = @('-listen','127.0.0.1:19061','-gm-listen','127.0.0.1:19062','-log-file',$runtimeLog)
+$serverArgs = @('-listen','127.0.0.1:19061','-gm-listen','127.0.0.1:19062','-log-file',(Quote-ChildArg $runtimeLog))
 $serverProc = Start-Process -FilePath $exe -ArgumentList $serverArgs -WorkingDirectory $root -PassThru
 Write-Host "Started game service PID=$($serverProc.Id)"
 

@@ -1,0 +1,57 @@
+name: JIUYIN Stage48 Normal Shop Total Fix
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - .github/workflows/jiuyin-stage48-normal-shop-total-fix.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  pinned-normal-shop-fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Verify pinned patch and Go guard files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/stage48_normal_shop_guard/apply_normal_shop_total_guard.py
+          test -z "$(gofmt -l server/cmd/protocol-probe/latest_client_normal_shop_buy_guard.go server/cmd/protocol-probe/latest_client_normal_shop_buy_guard_test.go)"
+          python3 tools/stage48_normal_shop_guard/apply_normal_shop_total_guard.py
+          git diff --check
+          git diff --stat
+          git diff -- server/cmd/protocol-probe/zz_recovered_overlay.go
+          test "$(git diff --name-only | wc -l)" -eq 1
+          test "$(git diff --name-only)" = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+      - name: Run isolated arithmetic boundary tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server/cmd/protocol-probe
+          GO111MODULE=off go test -race -count=1 -v latest_client_normal_shop_buy_guard.go latest_client_normal_shop_buy_guard_test.go
+      - name: Compile actual server package and run arithmetic test
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go test ./cmd/protocol-probe -run '^TestNormalShopSafeTotal$' -count=1
+      - name: Publish only tested production guard patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git status --porcelain | wc -l)" -eq 1
+          test "$(git diff --name-only)" = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- server/cmd/protocol-probe/zz_recovered_overlay.go
+          git commit -m 'fix(shop): reject invalid and overflowing normal-retail purchase totals'
+          git push origin HEAD:refs/heads/stage37-assistant-handoff-20260917
+      - name: Scope disclosure
+        run: |
+          echo 'NORMAL_SHOP_BUY_TOTAL_BOUNDARY_ONLY=TESTED'
+          echo 'GM_GRANT_AND_EXCHANGE_0X4F=UNCHANGED'
+          echo 'SELL_HANDLER_AND_ATOMIC_TRANSACTION=NOT_IMPLEMENTED'
+          echo 'WINDOWS_BOOT_LIVE_PURCHASE_RECONNECT=NOT_RUN'

@@ -1,0 +1,199 @@
+name: JIUYIN Stage60 LIVE Login Scene Encoding Fix
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/go.mod'
+      - 'server/go.sum'
+      - 'server/internal/clientdata/npc_creator.go'
+      - 'server/internal/clientdata/npc_creator_encoding_live_fixture_test.go'
+      - 'server/internal/role/json_login_adoption.go'
+      - 'server/cmd/protocol-probe/role_store.go'
+      - 'server/loopback-lister.ps1'
+      - 'tools/stage60-live-login-e2e/**'
+      - '.github/workflows/jiuyin-stage60-live-login-scene-encoding-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+
+      - name: Verify launcher parses and original local-service contract remains
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $original = Get-Content -Raw 'server/启动本地九阴服务.bat'
+          foreach ($needle in @('127.0.0.1:4000','127.0.0.1:19061','127.0.0.1:19062','loopback-lister.ps1')) {
+            if (-not $original.Contains($needle)) { throw "original local-service contract missing: $needle" }
+          }
+          $launcherPath = (Resolve-Path 'tools/stage60-live-login-e2e/run-stage60-live-services.ps1').Path
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($launcherPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if (@($parseErrors).Count -gt 0) {
+            $details = @($parseErrors | ForEach-Object { "line=$($_.Extent.StartLineNumber) col=$($_.Extent.StartColumnNumber) $($_.Message)" }) -join '; '
+            throw "Stage60 launcher parse failed: $details"
+          }
+          Write-Host 'STAGE60_LAUNCHER_PARSE_AND_PORT_CONTRACT=PASS'
+
+      - name: Verify real x/text dependency is active
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mod = Get-Content -Raw 'server/go.mod'
+          if ($mod -match 'replace\s+golang.org/x/text') { throw 'identity-only x/text shim is still active' }
+          if (-not $mod.Contains('golang.org/x/text v0.28.0')) { throw 'expected x/text dependency declaration missing' }
+          Push-Location server
+          try {
+            $resolved = go list -m -f '{{.Path}} {{.Version}} {{if .Replace}}REPLACED={{.Replace.Path}}{{end}}' golang.org/x/text
+            Write-Host $resolved
+            if ($resolved -match 'REPLACED=') { throw "x/text unexpectedly replaced: $resolved" }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_REAL_XTEXT_GBK_DEPENDENCY=PASS'
+
+      - name: Parse exact original Chengdu GatherNpc bytes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test ./internal/clientdata -run '^TestLoadNPCCreatorOriginalChengduGatherNpcEncodingFixture$' -count=1 -v
+            if ($LASTEXITCODE -ne 0) { throw 'exact original GatherNpc encoding fixture failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_ORIGINAL_GATHERNPC_ENCODING_FIXTURE=PASS'
+
+      - name: Run clientdata tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test ./internal/clientdata
+            if ($LASTEXITCODE -ne 0) { throw 'clientdata tests failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_CLIENTDATA_TESTS=PASS'
+
+      - name: Run Stage59 JSON adoption tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'server/internal/role'
+          try {
+            go test json_login_adoption.go json_m2_repository.go json_repository.go model.go mysql_repository.go repository.go zz_recovered_overlay.go json_login_adoption_test.go
+            if ($LASTEXITCODE -ne 0) { throw 'Stage59 JSON adoption tests failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_JSON_ADOPTION_TESTS=PASS'
+
+      - name: Run roleStore login-path test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'server/cmd/protocol-probe'
+          try {
+            go test role_store.go runtime_paths.go latest_client_json_login_identity_adoption_test.go
+            if ($LASTEXITCODE -ne 0) { throw 'roleStore login-path test failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_ROLESTORE_LOGIN_TEST=PASS'
+
+      - name: Exercise server-list lister
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $outDir = Join-Path $env:RUNNER_TEMP 'stage60-lister'
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+          $lister = (Resolve-Path 'server/loopback-lister.ps1').Path
+          $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $lister + '"'),'-Port','4019','-OutputDir',('"' + $outDir + '"'))
+          $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(15)
+            do {
+              Start-Sleep -Milliseconds 250
+              $ready = @(Get-NetTCPConnection -State Listen -LocalPort 4019 -ErrorAction SilentlyContinue).Count -gt 0
+            } while (-not $ready -and -not $proc.HasExited -and (Get-Date) -lt $deadline)
+            if (-not $ready) { throw 'Stage60 lister did not listen' }
+            $client = [Net.Sockets.TcpClient]::new('127.0.0.1',4019)
+            try {
+              $stream = $client.GetStream()
+              $request = [Text.Encoding]::ASCII.GetBytes("probe`r`n")
+              $stream.Write($request,0,$request.Length)
+              $buf = New-Object byte[] 4096
+              $count = $stream.Read($buf,0,$buf.Length)
+              $response = [Text.Encoding]::ASCII.GetString($buf,0,$count)
+              if (-not $response.Contains('127.0.0.1 19061 0')) { throw "unexpected lister response: $response" }
+            } finally { $client.Dispose() }
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
+          Write-Host 'STAGE60_LISTER_RUNTIME=PASS'
+
+      - name: Compile Windows server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'protocol package compile test failed' }
+            go build -trimpath -o "$env:RUNNER_TEMP\stage60-live-server.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_WINDOWS_COMPILE_BUILD=PASS'
+
+      - name: Build Stage60 fixed LIVE package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = "$env:RUNNER_TEMP\stage60-pkg"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\stage60-live-server.exe" $pkg
+          Copy-Item 'server/loopback-lister.ps1' $pkg
+          Copy-Item 'tools/stage60-live-login-e2e/run-stage60-live-services.ps1' $pkg
+          Copy-Item 'tools/stage60-live-login-e2e/RUN_STAGE60_LIVE.bat' $pkg
+          Copy-Item 'tools/stage60-live-login-e2e/README_KO.md' $pkg
+          $head = git rev-parse HEAD
+          $info = @(
+            'Stage60 LIVE login scene-encoding fix package',
+            "Source branch head: $head",
+            'Server lineage: user-supplied 9yin-go-server1.rar -> current kim8553/web Go source',
+            'LIVE evidence before this build: login 0x02 PASS; role list PASS; character selection reached; scene init failed on city05_chengdu/GatherNpc.xml invalid UTF-8',
+            'Confirmed root cause: prior local x/text compatibility shim was identity-only and did not decode GBK',
+            'Fix: use declared golang.org/x/text v0.28.0 real GBK decoder',
+            'Exact original GatherNpc.xml fixture SHA256: 2cab4fdcef65c5ee179c43f8e0ea5258c94237b0f500e5c22a37c82b04ee50a9',
+            'Exact original GatherNpc encoding fixture: PASS',
+            'Clientdata tests: PASS',
+            'Stage59 JSON identity adoption tests: PASS',
+            'roleStore login-path test: PASS',
+            'lister runtime test: PASS',
+            'Windows compile/build: PASS',
+            'User current-client scene entry/reconnect after this fix: NOT RUN'
+          )
+          [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $pkg -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $pkg 'SHA256SUMS.txt')
+          $zip = "$env:RUNNER_TEMP\STAGE60_9YIN_GO_SERVER1_LIVE_LOGIN_SCENE_ENCODING_FIX_WINDOWS_20260918.zip"
+          Compress-Archive -Path "$pkg\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "SERVER_SHA256=$((Get-FileHash (Join-Path $pkg 'stage60-live-server.exe') -Algorithm SHA256).Hash.ToLower())"
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage60-9yin-go-server1-live-login-scene-encoding-fix-windows
+          path: ${{ runner.temp }}/STAGE60_9YIN_GO_SERVER1_LIVE_LOGIN_SCENE_ENCODING_FIX_WINDOWS_20260918.zip
+          if-no-files-found: error
+          retention-days: 14

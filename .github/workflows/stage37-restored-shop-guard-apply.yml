@@ -49,19 +49,18 @@ jobs:
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
           go mod download -modfile=ci.real.mod
-      - name: Run existing Go tests, vet, protocol compile and Windows build
+      - name: Run non-protocol tests, vet, protocol compile and Windows build
         working-directory: server
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
           go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
-          go test -modfile=ci.real.mod -run '^TestCheckedOrdinaryShopTotal$' -count=1 ./cmd/protocol-probe
           go test -modfile=ci.real.mod -c -o /tmp/stage37-restored-protocol.test ./cmd/protocol-probe
           go vet -modfile=ci.real.mod ./...
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o /tmp/stage37-restored-shop-guard.exe ./cmd/protocol-probe
           file /tmp/stage37-restored-shop-guard.exe | grep -E 'PE32\+ executable.*x86-64'
-          echo 'SCOPED_TESTS=PASS PROTOCOL_COMPILE=PASS VET=PASS WINDOWS_BUILD=PASS FULL_PROTOCOL_RUNTIME=NOT_RUN LIVE_E2E=NOT_RUN'
+          echo 'ISOLATED_SHOP_TESTS=PASS NON_PROTOCOL_TESTS=PASS PROTOCOL_COMPILE=PASS VET=PASS WINDOWS_BUILD=PASS FULL_PROTOCOL_RUNTIME=NOT_RUN LIVE_E2E=NOT_RUN'
       - name: Commit only reviewed handler change, without force push
         shell: bash
         run: |

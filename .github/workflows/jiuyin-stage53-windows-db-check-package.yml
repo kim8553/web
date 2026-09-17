@@ -76,3 +76,11 @@ jobs:
           if ($LASTEXITCODE -ne 2 -or (($output | Out-String) -notmatch 'BLOCKED: no local NINEYIN_MYSQL_DSN')) { throw 'Missing DSN did not fail closed' }
           if (Test-Path "$env:RUNNER_TEMP\stage53-fixture\stage53_report.json") { throw 'Unexpected report without DB' }
           Write-Host 'WINDOWS_NO_DSN_FAIL_CLOSED=PASS; USER_DB_NOT_ACCESSED'
+          $marker = 'stage53-test-only-marker'
+          Set-Content -LiteralPath "$env:RUNNER_TEMP\stage53-empty-server\mysql.env" -Value ('set "NINEYIN_MYSQL_DSN=fixtureuser:' + $marker + '@tcp(127.0.0.1:1)/stage53_fixture"') -Encoding Ascii
+          $output = & powershell -NoProfile -NonInteractive -File "$env:RUNNER_TEMP\stage53-fixture\run-stage53-preflight.ps1" -ServerRoot "$env:RUNNER_TEMP\stage53-empty-server" 2>&1
+          $text = $output | Out-String
+          if ($LASTEXITCODE -ne 2 -or $text -match 'no local NINEYIN_MYSQL_DSN') { throw 'Local mysql.env was not loaded' }
+          if ($text -match $marker -or (Test-Path "$env:RUNNER_TEMP\stage53-fixture\stage53_report.json")) { throw 'Credentials leaked or unexpected report created' }
+          Write-Host 'WINDOWS_LOCAL_ENV_FAIL_CLOSED_NO_SECRET_OUTPUT=PASS'
+          exit 0

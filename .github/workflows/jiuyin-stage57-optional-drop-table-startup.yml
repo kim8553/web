@@ -32,10 +32,15 @@ jobs:
           p = Path('server/cmd/protocol-probe/main.go')
           text = p.read_text(encoding='utf-8')
           old = '''\tdropTable, err := loadDropTable(defaultDropTablePath)\n\tif err != nil {\n\t\tlog.Fatalf("load drop table: %v", err)\n\t}\n\tlog.Printf("drop table ready dropIDs=%d path=%s", len(dropTable.byDropID), defaultDropTablePath)'''
-          new = '''\tdropTable, err := loadDropTable(defaultDropTablePath)\n\tif err != nil {\n\t\tif errors.Is(err, os.ErrNotExist) {\n\t\t\tdropTable = &dropTable{byDropID: make(map[string]*dropTableSection)}\n\t\t\tlog.Printf("drop table unavailable path=%s: %v; continuing with gift-box drop resolution disabled", defaultDropTablePath, err)\n\t\t} else {\n\t\t\tlog.Fatalf("load drop table: %v", err)\n\t\t}\n\t} else {\n\t\tlog.Printf("drop table ready dropIDs=%d path=%s", len(dropTable.byDropID), defaultDropTablePath)\n\t}'''
+          new = '''\tdropCatalog, err := loadDropTable(defaultDropTablePath)\n\tif err != nil {\n\t\tif errors.Is(err, os.ErrNotExist) {\n\t\t\tdropCatalog = &dropTable{byDropID: make(map[string]*dropTableSection)}\n\t\t\tlog.Printf("drop table unavailable path=%s: %v; continuing with gift-box drop resolution disabled", defaultDropTablePath, err)\n\t\t} else {\n\t\t\tlog.Fatalf("load drop table: %v", err)\n\t\t}\n\t} else {\n\t\tlog.Printf("drop table ready dropIDs=%d path=%s", len(dropCatalog.byDropID), defaultDropTablePath)\n\t}'''
           if old not in text:
               raise SystemExit('expected Stage56 drop-table startup block not found')
-          p.write_text(text.replace(old, new, 1), encoding='utf-8', newline='\n')
+          text = text.replace(old, new, 1)
+          needle = 'itemCatalog, equipCatalog, dropTable, npcSchema, sceneRegistry'
+          if needle not in text:
+              raise SystemExit('expected main handle dropTable argument not found')
+          text = text.replace(needle, 'itemCatalog, equipCatalog, dropCatalog, npcSchema, sceneRegistry', 1)
+          p.write_text(text, encoding='utf-8', newline='\n')
           '@ | python -
           if ($LASTEXITCODE -ne 0) { throw 'source patch failed' }
           gofmt -w server/cmd/protocol-probe/main.go
@@ -43,6 +48,7 @@ jobs:
           $after = Get-Content -Raw server/cmd/protocol-probe/main.go
           if ($after -notmatch 'continuing with gift-box drop resolution disabled') { throw 'Stage57 missing-file guard missing' }
           if ($after -notmatch 'log\.Fatalf\("load drop table: %v", err\)') { throw 'Stage57 non-missing errors are no longer fatal' }
+          if ($after -notmatch 'dropCatalog, npcSchema, sceneRegistry') { throw 'Stage57 handle wiring missing' }
 
       - name: Compile Windows server
         shell: pwsh

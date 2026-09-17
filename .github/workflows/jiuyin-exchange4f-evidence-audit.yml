@@ -1,0 +1,49 @@
+name: JIUYIN Exchange 0x4F Evidence Audit
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: ['.github/workflows/jiuyin-exchange4f-evidence-audit.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect interaction coordinates, condition evaluation, and persistence contracts
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path('server/cmd/protocol-probe')
+          files = sorted(root.glob('*.go'))
+          print('AUDIT_HEAD:', __import__('subprocess').check_output(['git','rev-parse','HEAD'], text=True).strip())
+          for label, pat, limit in [
+              ('player-position-writes', r'(?:position[XYZ]|\.Position\s*=|setPosition|setLocation|positionSnapshot)', 42),
+              ('npc-interaction-range', r'(?:interact.{0,24}(?:range|radius|dist)|(?:range|radius|distance).{0,24}(?:npc|shop|interact)|math\.Hypot|dx\*dx|dz\*dz)', 45),
+              ('exchange-condition-call', r'(?:evaluateExchangeConditionDetails|evaluateConditionRoot|exactCurrentConditionEvaluator|currentShopExchangeSessionAllows)', 35),
+              ('inventory-persistence', r'(?:type (?:mysqlBagStore|bagStoreIface|bagItem)|func .*Save|func .*Grant|func .*Debit|BeginTx|\.Commit\(|\.Rollback\(|\.ExecContext\(|\.QueryContext\()', 95),
+          ]:
+              print('\n===', label, '===')
+              matches = []
+              rx = re.compile(pat, re.I)
+              for path in files:
+                  try: lines = path.read_text(encoding='utf-8').splitlines()
+                  except UnicodeDecodeError: continue
+                  for no, line in enumerate(lines, 1):
+                      if rx.search(line):
+                          matches.append(f'{path}:{no}: {line.strip()[:195]}')
+              print('MATCH_COUNT',len(matches))
+              for line in matches[:limit]: print(line)
+              if len(matches)>limit: print('TRUNCATED',len(matches)-limit)
+          print('\n=== relevant-file-names ===')
+          for p in files:
+              if any(x in p.name for x in ('bag','shop','mysql','store','movement','position','condition','exchange')):
+                  print(p)
+          PY

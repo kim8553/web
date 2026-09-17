@@ -39,14 +39,21 @@ jobs:
         run: |
           set -euo pipefail
           cd server
+          # Offline test copy only: repository's local sqlmock shim has no Go files.
+          # Remove that replacement in this runner without modifying exported source.
+          go mod edit -dropreplace github.com/DATA-DOG/go-sqlmock
           go mod vendor
           test -f vendor/github.com/Hiroko103/go-quicklz/main.go
           test -f vendor/golang.org/x/text/encoding/simplifiedchinese/gbk.go
+          test -f vendor/github.com/DATA-DOG/go-sqlmock/sqlmock.go
+          cp go.mod "$RUNNER_TEMP/stage60-offline-go.mod"
           tar -czf "$RUNNER_TEMP/stage60-vendor.tar.gz" vendor
           echo 'STAGE60_DEPENDENCY_VENDOR=PASS'
       - uses: actions/upload-artifact@v4
         with:
           name: stage60-corrected-server-vendor-offline
-          path: ${{ runner.temp }}/stage60-vendor.tar.gz
+          path: |
+            ${{ runner.temp }}/stage60-vendor.tar.gz
+            ${{ runner.temp }}/stage60-offline-go.mod
           if-no-files-found: error
           retention-days: 3

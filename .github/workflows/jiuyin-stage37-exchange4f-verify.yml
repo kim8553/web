@@ -5,6 +5,7 @@ on:
     branches: [stage37-assistant-handoff-20260917]
     paths:
       - 'server/**'
+      - 'tools/stage37_exchange4f_isolated_*.go'
       - '.github/workflows/jiuyin-stage37-exchange4f-verify.yml'
   workflow_dispatch:
 
@@ -25,8 +26,8 @@ jobs:
           go-version: '1.23.2'
           cache: false
       # The committed go.mod intentionally replaces public dependencies with
-      # partial _builddeps stubs. Mirror the established Stage37 CI-only
-      # modfile procedure; never edit or overwrite the production go.mod.
+      # partial _builddeps stubs. Mirror established Stage37 CI-only procedure;
+      # never edit or overwrite the production go.mod.
       - name: Resolve real public dependencies in CI-only modfile
         shell: bash
         run: |
@@ -39,14 +40,43 @@ jobs:
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
           go mod download -modfile=ci.real.mod
-      - name: Exchange 0x4F preflight regressions
-        run: go test -modfile=ci.real.mod ./cmd/protocol-probe -run 'TestCurrentShopExchangeBuy(WireRejectsMalformedTypedRequests|PreflightRejectsUnauthoredCoordinatesAndDefinitionDrift)$' -count=1
-      - name: Go regression suite
-        run: go test -modfile=ci.real.mod ./...
+      # A normal go test ./cmd/protocol-probe panics in an unrelated global
+      # skill-catalog initializer: modern/share/skill/skill_new.ini is external
+      # and absent from this GitHub checkout. Extract exact source ASTs into
+      # a disposable test package; only the fixture INI loader is a CI stub.
+      - name: Exchange 0x4F isolated source regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          GO111MODULE=off go run ../tools/stage37_exchange4f_isolated_extract.go -source cmd/protocol-probe -output "$tmp/production.go"
+          cp ../tools/stage37_exchange4f_isolated_support.go "$tmp/support.go"
+          cp cmd/protocol-probe/latest_client_shop_exchange_buy_guard_regression_test.go "$tmp/guard_test.go"
+          (cd "$tmp" && GO111MODULE=off go test -count=1 -v production.go support.go guard_test.go)
+          echo 'EXCHANGE_0X4F_ISOLATED_TEST=PASS'
+      - name: Other Go regression suite and protocol test compile
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          test "${#pkgs[@]}" -gt 0
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go test -modfile=ci.real.mod -c -o /tmp/exchange4f-protocol-probe.test ./cmd/protocol-probe
+          echo 'OTHER_GO_TEST=PASS PROTOCOL_TEST_COMPILE=PASS PROTOCOL_RUNTIME_TEST=NOT_RUN'
       - name: Go vet
         run: go vet -modfile=ci.real.mod ./...
-      - name: Exchange 0x4F race regressions
-        run: go test -race -modfile=ci.real.mod ./cmd/protocol-probe -run 'TestCurrentShopExchangeBuy(WireRejectsMalformedTypedRequests|PreflightRejectsUnauthoredCoordinatesAndDefinitionDrift)$' -count=1
+      - name: Exchange 0x4F isolated race regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          GO111MODULE=off go run ../tools/stage37_exchange4f_isolated_extract.go -source cmd/protocol-probe -output "$tmp/production.go"
+          cp ../tools/stage37_exchange4f_isolated_support.go "$tmp/support.go"
+          cp cmd/protocol-probe/latest_client_shop_exchange_buy_guard_regression_test.go "$tmp/guard_test.go"
+          (cd "$tmp" && GO111MODULE=off go test -race -count=1 production.go support.go guard_test.go)
+          echo 'EXCHANGE_0X4F_ISOLATED_RACE=PASS'
       - name: Windows amd64 cross-build
         env:
           GOOS: windows
@@ -55,3 +85,5 @@ jobs:
         run: |
           mkdir -p build
           go build -trimpath -modfile=ci.real.mod -o build/9yin-game-native-menu.exe ./cmd/protocol-probe
+          file build/9yin-game-native-menu.exe | grep -E 'PE32\+ executable.*x86-64'
+          echo 'WINDOWS_AMD64_BUILD=PASS LIVE=NOT_RUN E2E=NOT_RUN'

@@ -42,6 +42,19 @@ type currentShopExchangeBuySelection struct {
 	Item    shopCatalogItem
 }
 
+// currentShopExchangeBuyAuthority is the mutation-free, server-authoritative
+// preflight result for a current 0x4f exchange purchase. It proves only that
+// the request resolves to an exact-current mode3 row, that its ExchangeData is
+// present in the authenticated current condition authority and classified SAFE
+// for authoritative condition evaluation, and that the full ExchangeItem row
+// parses without drifting from that authority projection. It is not permission
+// to charge, grant, bind, persist, or replicate an item.
+type currentShopExchangeBuyAuthority struct {
+	Selection  currentShopExchangeBuySelection
+	Definition shopExchangeDefinition
+	Capability exchangeConditionCapability
+}
+
 func parseShopExchangeFormRequest(custom clientCustomMessage) (shopExchangeFormRequest, bool, error) {
 	if len(custom.Values) == 0 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != clientCustomRequestShopExchangeForm {
 		return shopExchangeFormRequest{}, false, nil
@@ -127,6 +140,51 @@ func resolveCurrentShopExchangeBuySelection(shopPath string, request shopExchang
 	return currentShopExchangeBuySelection{Request: request, Item: *item}, true, nil
 }
 
+// resolveAuthorizedCurrentShopExchangeBuyAuthority layers the authenticated
+// ExchangeData/condition authority over the coordinate re-resolution above.
+// The caller is responsible for supplying an authority built from the same
+// shop/exchange resources; the production wrapper below enforces that with the
+// exact-current SHA256 gates in buildCurrentShopConditionAuthority.
+func resolveAuthorizedCurrentShopExchangeBuyAuthority(shopPath, exchangePath string, authority *currentShopConditionAuthority, request shopExchangeBuyRequest) (currentShopExchangeBuyAuthority, bool, error) {
+	if authority == nil {
+		return currentShopExchangeBuyAuthority{}, false, fmt.Errorf("nil current shop condition authority")
+	}
+	selection, selected, err := resolveCurrentShopExchangeBuySelection(shopPath, request)
+	if err != nil || !selected {
+		return currentShopExchangeBuyAuthority{}, selected, err
+	}
+	exchangeData := selection.Item.exchangeData
+	spec, ok := authority.definitions[exchangeData]
+	if !ok {
+		return currentShopExchangeBuyAuthority{}, false, nil
+	}
+	capability, ok := authority.audit.ByExchangeData[exchangeData]
+	if !ok || !capability.Safe {
+		return currentShopExchangeBuyAuthority{}, false, nil
+	}
+	definition, err := loadShopExchangeDefinition(exchangePath, exchangeData)
+	if err != nil {
+		return currentShopExchangeBuyAuthority{}, false, err
+	}
+	if definition.Condition != spec.Condition || definition.Condition2 != spec.Condition2 || definition.Filters != spec.Filters {
+		return currentShopExchangeBuyAuthority{}, false, fmt.Errorf("ExchangeData %d authority projection drift", exchangeData)
+	}
+	return currentShopExchangeBuyAuthority{Selection: selection, Definition: definition, Capability: capability}, true, nil
+}
+
+// resolveDefaultCurrentShopExchangeBuyAuthority is the production preflight.
+// loadDefaultCurrentShopConditionAuthority first authenticates shop.ini,
+// ExchangeItem.ini, Condition.ini, condition_formula.ini and skill_maxlevel.ini
+// against the exact-current fingerprints and invariants before any 0x4f row is
+// accepted.
+func resolveDefaultCurrentShopExchangeBuyAuthority(request shopExchangeBuyRequest) (currentShopExchangeBuyAuthority, bool, error) {
+	authority, err := loadDefaultCurrentShopConditionAuthority()
+	if err != nil {
+		return currentShopExchangeBuyAuthority{}, false, err
+	}
+	return resolveAuthorizedCurrentShopExchangeBuyAuthority(defaultShopINIPath, defaultExchangeItemINIPath, authority, request)
+}
+
 // handleShopExchangeContract recognizes the exact current-client request
 // layouts without pretending that the server-side exchange implementation is
 // complete. The exact current InitCurExchangeData 11-field grammar is now
@@ -185,19 +243,19 @@ func handleShopExchangeContract(link sceneMessageConnection, player *playerActor
 		if err != nil {
 			return true, err
 		}
-		selection, selected, selectErr := resolveCurrentShopExchangeBuySelection(defaultShopINIPath, request)
+		authorized, selected, selectErr := resolveDefaultCurrentShopExchangeBuyAuthority(request)
 		if selectErr != nil {
-			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: exact-current shop authority unavailable: %v",
+			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: exact-current shop/exchange authority unavailable: %v",
 				remote, request.ShopID, request.Page, request.Position, request.Count, selectErr)
 			return true, nil
 		}
 		if !selected {
-			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: request does not resolve to an authored mode3 exchange listing",
+			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: request is not an authenticated SAFE mode3 exchange listing",
 				remote, request.ShopID, request.Page, request.Position, request.Count)
 			return true, nil
 		}
-		log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d re-resolved config=%s exchange_data=%d blocked: exchange cost/condition commit path unresolved",
-			remote, request.ShopID, request.Page, request.Position, request.Count, selection.Item.configID, selection.Item.exchangeData)
+		log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d authenticated config=%s exchange_data=%d leaves=%d blocked: condition acceptance/cost/bind/commit path unresolved",
+			remote, request.ShopID, request.Page, request.Position, request.Count, authorized.Selection.Item.configID, authorized.Selection.Item.exchangeData, len(authorized.Capability.Leaves))
 		return true, nil
 	}
 	return false, nil

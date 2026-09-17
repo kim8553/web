@@ -59,7 +59,7 @@ function Stop-Own($Proc,[string]$Label) {
 $busy = @()
 foreach ($port in 4000,19061,19062) {
     $owners = @(PortOwners $port)
-    if ($owners.Count -gt 0) { $busy += "$port:$($owners -join ',')" }
+    if ($owners.Count -gt 0) { $busy += ('{0}:{1}' -f $port, ($owners -join ',')) }
 }
 if ($busy.Count -gt 0) {
     throw "Stage60 refuses to reuse old listeners. Close previous Nine Yin test processes first. Busy: $($busy -join '; ')"

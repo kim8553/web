@@ -16,7 +16,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify source format and corrected runtime boundary
+      - name: Format candidate source and verify corrected runtime boundary
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -25,8 +25,10 @@ jobs:
             'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_test.go',
             'server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go'
           )
+          & gofmt -w @files
+          if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
           $bad = & gofmt -l @files
-          if ($bad) { throw "gofmt required: $bad" }
+          if ($bad) { throw "gofmt still required: $bad" }
           $errors = $null
           [System.Management.Automation.Language.Parser]::ParseFile(
             (Resolve-Path 'tools/stage54-test-server/run-stage54-test-server.ps1'),
@@ -60,6 +62,23 @@ jobs:
           } finally { Pop-Location }
           if (-not (Test-Path "$env:RUNNER_TEMP\stage54-test-server.exe")) { throw 'server EXE missing' }
           Write-Host 'WINDOWS_SERVER_COMPILE=PASS; LIVE_CLIENT_E2E=NOT_RUN'
+      - name: Preserve exact formatted sources used for the passing build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $src = "$env:RUNNER_TEMP\stage54-formatted-source"
+          New-Item -ItemType Directory -Force -Path $src | Out-Null
+          Copy-Item 'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic.go' $src
+          Copy-Item 'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_test.go' $src
+          Copy-Item 'server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go' $src
+          Compress-Archive -Path "$src\*" -DestinationPath "$env:RUNNER_TEMP\STAGE54_FORMATTED_SOURCE.zip" -CompressionLevel Optimal
+      - name: Upload exact formatted sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage54-formatted-source
+          path: ${{ runner.temp }}/STAGE54_FORMATTED_SOURCE.zip
+          if-no-files-found: error
+          retention-days: 14
       - name: Build clean Stage54 package
         shell: pwsh
         run: |
@@ -71,7 +90,7 @@ jobs:
           Copy-Item 'tools/stage54-test-server/README_KO.md' $pkg
           $info = @(
             'Stage54 Windows test server',
-            "Git commit: $env:GITHUB_SHA",
+            "Git input commit: $env:GITHUB_SHA (three Stage54 Go files gofmt-normalized in CI before test/build)",
             'Server source lineage: user-supplied 9yin-go-server1.rar -> current GitHub Go source',
             'Runtime root: explicit NINEYIN_SERVER_ROOT / -ServerRoot only; no historical D drive default',
             'Normal NPC buy 0x46: MySQL transaction OR guarded JSON paired commit',

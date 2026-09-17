@@ -1,77 +1,117 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
-// The exact-current Lua request shape is understood, but the server-side
-// exchange-binding and purchase-commit rules are not. A syntactically valid
-// request must not accidentally emit S2C 557 or an apparent purchase success.
 func TestCurrentShopExchangeFormAndBuyRemainFailClosed(t *testing.T) {
-	cases := []struct {
-		name   string
-		values []clientCustomValue
-	}{
-		{
-			name: "form request 0x40",
-			values: []clientCustomValue{
-				{Type: 2, Int32: clientCustomRequestShopExchangeForm},
-				{Type: 2, Int32: 121},
-				{Type: 2, Int32: 7},
-				{Type: 6, Text: "Shop_Test"},
-				{Type: 2, Int32: 3},
-				{Type: 2, Int32: 9},
-			},
-		},
-		{
-			name: "buy request 0x4f",
-			values: []clientCustomValue{
-				{Type: 2, Int32: clientCustomExchangeFromShop},
-				{Type: 6, Text: "Shop_Test"},
-				{Type: 2, Int32: 3},
-				{Type: 2, Int32: 9},
-				{Type: 2, Int32: 4},
-			},
-		},
+	connection := &captureSceneConnection{}
+	player := newPlayerActor()
+
+	formRequest := clientCustomMessage{Values: []clientCustomValue{
+		{Type: 2, Int32: clientCustomRequestShopExchangeForm},
+		{Type: 2, Int32: 1001},
+		{Type: 2, Int32: 2},
+		{Type: 6, Text: "shop_test"},
+		{Type: 2, Int32: 0},
+		{Type: 2, Int32: 1},
+	}}
+	matched, err := handleShopExchangeContract(connection, player, formRequest, "test")
+	if err != nil {
+		t.Fatalf("form request: %v", err)
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			link := &captureMessageConnection{}
-			matched, err := handleShopExchangeContract(link, nil, clientCustomMessage{Values: tc.values}, "test")
-			if err != nil || !matched {
-				t.Fatalf("matched=%t err=%v", matched, err)
-			}
-			if got := len(link.Frames()); got != 0 {
-				t.Fatalf("unproven exchange request emitted %d server frames, want zero", got)
-			}
-		})
+	if !matched {
+		t.Fatal("form request was not matched")
+	}
+	if len(connection.frames) != 0 {
+		t.Fatalf("form request emitted %d frames while binding rule unresolved", len(connection.frames))
+	}
+
+	buyRequest := clientCustomMessage{Values: []clientCustomValue{
+		{Type: 2, Int32: clientCustomExchangeFromShop},
+		{Type: 6, Text: "shop_test"},
+		{Type: 2, Int32: 0},
+		{Type: 2, Int32: 1},
+		{Type: 2, Int32: 1},
+	}}
+	matched, err = handleShopExchangeContract(connection, player, buyRequest, "test")
+	if err != nil {
+		t.Fatalf("buy request: %v", err)
+	}
+	if !matched {
+		t.Fatal("buy request was not matched")
+	}
+	if len(connection.frames) != 0 {
+		t.Fatalf("buy request emitted %d frames while commit path unresolved", len(connection.frames))
 	}
 }
 
-func TestCurrentShopExchangeFormMessage557TypedFieldSequence(t *testing.T) {
-	request := shopExchangeFormRequest{ViewIdent: 121, BindIndex: 7, ShopID: "Shop_Test", Page: 3, Position: 9}
-	const config = "2|17|3|item_a,4|4|5|1|1001|2001|2001|CapitalType1,99"
-	frame, err := serverShopExchangeFormMessage(request, config)
+func TestResolveCurrentShopExchangeBuySelectionReResolvesAuthoredMode3Row(t *testing.T) {
+	dir := t.TempDir()
+	shopPath := filepath.Join(dir, "shop.ini")
+	data := []byte("[shop_mode3]\nType=7\nPageInfo=all\n0=item_exchange,2,3,0,0,0,4,70123\n" +
+		"[shop_normal]\nType=7\nPageInfo=all\n0=item_normal,1,0,99,0,0,5,0\n")
+	if err := os.WriteFile(shopPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	selection, ok, err := resolveCurrentShopExchangeBuySelection(shopPath, shopExchangeBuyRequest{
+		ShopID: "shop_mode3", Page: 0, Position: 5, Count: 3,
+	})
+	if err != nil {
+		t.Fatalf("resolve mode3: %v", err)
+	}
+	if !ok {
+		t.Fatal("authored mode3 row was not resolved")
+	}
+	if selection.Item.configID != "item_exchange" || selection.Item.exchangeData != 70123 || selection.Item.priceMode != 3 {
+		t.Fatalf("unexpected selection: %+v", selection.Item)
+	}
+	if selection.Request.Count != 3 {
+		t.Fatalf("request count drifted: %d", selection.Request.Count)
+	}
+
+	if _, ok, err := resolveCurrentShopExchangeBuySelection(shopPath, shopExchangeBuyRequest{
+		ShopID: "shop_mode3", Page: 0, Position: 4, Count: 1,
+	}); err != nil || ok {
+		t.Fatalf("un-authored coordinate accepted: ok=%t err=%v", ok, err)
+	}
+	if _, ok, err := resolveCurrentShopExchangeBuySelection(shopPath, shopExchangeBuyRequest{
+		ShopID: "shop_normal", Page: 0, Position: 6, Count: 1,
+	}); err != nil || ok {
+		t.Fatalf("non-mode3 row accepted as exchange purchase: ok=%t err=%v", ok, err)
+	}
+	if _, ok, err := resolveCurrentShopExchangeBuySelection(shopPath, shopExchangeBuyRequest{
+		ShopID: "shop_mode3", Page: 0, Position: 5, Count: 0,
+	}); err != nil || ok {
+		t.Fatalf("non-positive count accepted: ok=%t err=%v", ok, err)
+	}
+}
+
+func TestServerShopExchangeFormMessageRoundTripShape(t *testing.T) {
+	frame, err := serverShopExchangeFormMessage(1001, 2, "shop_test", 0, 1, "3|0|1|item_x|1|0|0||||")
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := parseClientCustomMessage(frame)
+	custom, err := parseServerCustomMessage(frame)
 	if err != nil {
-		t.Fatalf("decode typed response: %v", err)
+		t.Fatal(err)
 	}
-	if decoded.Opcode != 0x1e || len(decoded.Values) != 7 {
-		t.Fatalf("custom response opcode=%#x value count=%d, want 0x1e/7", decoded.Opcode, len(decoded.Values))
+	if custom.Selector != serverCustomOpenShopExchangeForm {
+		t.Fatalf("selector=%d want=%d", custom.Selector, serverCustomOpenShopExchangeForm)
 	}
-	wantTypes := []byte{2, 2, 2, 6, 2, 2, 6}
-	wantInts := map[int]int32{0: 557, 1: 121, 2: 7, 4: 3, 5: 9}
-	wantStrings := map[int]string{3: "Shop_Test", 6: config}
-	for i, value := range decoded.Values {
-		if value.Type != wantTypes[i] {
-			t.Fatalf("typed response value %d type=%d want=%d", i, value.Type, wantTypes[i])
+	if len(custom.Values) != 6 {
+		t.Fatalf("values=%d want=6", len(custom.Values))
+	}
+	wantTypes := []byte{2, 2, 6, 2, 2, 6}
+	for i, want := range wantTypes {
+		if custom.Values[i].Type != want {
+			t.Fatalf("value[%d].type=%d want=%d", i, custom.Values[i].Type, want)
 		}
-		if want, ok := wantInts[i]; ok && value.Int32 != want {
-			t.Fatalf("typed response value %d int=%d want=%d", i, value.Int32, want)
-		}
-		if want, ok := wantStrings[i]; ok && value.Text != want {
-			t.Fatalf("typed response value %d text=%q want=%q", i, value.Text, want)
-		}
+	}
+	if custom.Values[0].Int32 != 1001 || custom.Values[1].Int32 != 2 || custom.Values[2].Text != "shop_test" || custom.Values[3].Int32 != 0 || custom.Values[4].Int32 != 1 || custom.Values[5].Text != "3|0|1|item_x|1|0|0||||" {
+		t.Fatalf("round-trip values=%+v", custom.Values)
 	}
 }

@@ -1,0 +1,36 @@
+name: JIUYIN Stage60 NPC Encoding Probe
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/internal/clientdata/npc_creator.go'
+      - 'server/internal/clientdata/npc_creator_encoding_live_fixture_test.go'
+      - '.github/workflows/jiuyin-stage60-npc-encoding-probe.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Parse exact original Chengdu GatherNpc bytes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test ./internal/clientdata -run '^TestLoadNPCCreatorOriginalChengduGatherNpcEncodingFixture$' -count=1 -v
+            if ($LASTEXITCODE -ne 0) { throw 'exact GatherNpc encoding fixture failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_ORIGINAL_GATHERNPC_ENCODING_FIXTURE=PASS'

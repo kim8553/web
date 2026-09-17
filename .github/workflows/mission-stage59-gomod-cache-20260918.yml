@@ -1,0 +1,39 @@
+name: Stage59 Go module cache supply 20260918
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: ['.github/workflows/mission-stage59-gomod-cache-20260918.yml']
+permissions:
+  contents: read
+jobs:
+  supply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+      - name: Download declared modules only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go mod download
+          cache=$(go env GOMODCACHE)
+          printf 'source_head=%s\n' "$(git -C .. rev-parse HEAD)" > "$RUNNER_TEMP/PROVENANCE.txt"
+          printf 'go_version=%s\n' "$(go version)" >> "$RUNNER_TEMP/PROVENANCE.txt"
+          tar -C "$cache" -czf "$RUNNER_TEMP/gomodcache.tgz" .
+          (cd "$RUNNER_TEMP" && sha256sum gomodcache.tgz PROVENANCE.txt > MANIFEST.sha256)
+          cat "$RUNNER_TEMP/PROVENANCE.txt"
+          cat "$RUNNER_TEMP/MANIFEST.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage59-gomod-cache-20260918
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/gomodcache.tgz
+            ${{ runner.temp }}/PROVENANCE.txt
+            ${{ runner.temp }}/MANIFEST.sha256

@@ -27,7 +27,7 @@ jobs:
             if (-not $original.Contains($needle)) { throw "original local-service contract missing: $needle" }
           }
           $lister = Get-Content -Raw 'server/loopback-lister.ps1'
-          if (-not $lister.Contains("'$svrlist #")) { throw 'original loopback server-list response missing' }
+          if (-not $lister.Contains('$svrlist #')) { throw 'original loopback server-list response missing' }
           if (-not $lister.Contains('19061 0')) { throw 'original loopback list does not target game port 19061' }
           Write-Host 'ORIGINAL_LOCAL_SERVICE_CONTRACT=PASS'
 

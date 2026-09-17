@@ -42,9 +42,10 @@ jobs:
             if ($errors.Count -ne 0) { $errors | Format-List | Out-String | Write-Host; throw "PowerShell parse failed: $script" }
           }
           $launcher = Get-Content -Raw 'tools/stage58-live-services/run-stage58-live-services.ps1'
-          foreach ($needle in @('4000','19061','19062','STAGE58_READY=YES','STAGE58_READY=NO','NINEYIN_SERVER_ROOT','Quote-ChildArg')) {
+          foreach ($needle in @('4000','19061','19062','STAGE58_READY=YES','STAGE58_READY=NO','NINEYIN_SERVER_ROOT','Quote-ChildArg','artifacts\local\logs\protocol-probe-live.log')) {
             if (-not $launcher.Contains($needle)) { throw "Stage58 launcher contract missing: $needle" }
           }
+          if ($launcher.Contains("'-log-file'")) { throw 'Stage58 launcher still passes path-valued -log-file through Start-Process' }
           Write-Host 'STAGE58_LAUNCHER_STATIC=PASS'
 
       - name: Exercise lister from a path containing spaces
@@ -86,8 +87,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $main = Get-Content -Raw 'server/cmd/protocol-probe/main.go'
-          foreach ($needle in @('continuing without optional GM display-name localization','continuing with gift-box drop resolution disabled')) {
-            if (-not $main.Contains($needle)) { throw "retained startup fix missing: $needle" }
+          foreach ($needle in @('continuing without optional GM display-name localization','continuing with gift-box drop resolution disabled','runtimeProjectPath("artifacts", "local", "logs", "protocol-probe-live.log")')) {
+            if (-not $main.Contains($needle)) { throw "retained runtime source missing: $needle" }
           }
           $buy = Get-Content -Raw 'server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go'
           if (-not $buy.Contains('normalShopAtomicBuy')) { throw 'normal buy 0x46 implementation missing' }
@@ -104,13 +105,7 @@ jobs:
             go build -trimpath -o "$env:RUNNER_TEMP\stage58-live-server.exe" ./cmd/protocol-probe
             if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
           } finally { Pop-Location }
-          $helpDir = Join-Path $env:RUNNER_TEMP 'stage58 server arg path with spaces'
-          New-Item -ItemType Directory -Force -Path $helpDir | Out-Null
-          $helpLog = Join-Path $helpDir 'runtime log with spaces.log'
-          $helpArgs = @('-log-file',('"' + $helpLog + '"'),'-h')
-          $helpProc = Start-Process -FilePath "$env:RUNNER_TEMP\stage58-live-server.exe" -ArgumentList $helpArgs -Wait -PassThru
-          if ($helpProc.ExitCode -ne 0) { throw "server spaced-path argument probe failed exit=$($helpProc.ExitCode)" }
-          Write-Host 'WINDOWS_COMPILE=PASS; SPACED_SERVER_ARG=PASS; USER_LIVE_E2E_NOT_RUN'
+          Write-Host 'WINDOWS_COMPILE=PASS; USER_LIVE_E2E_NOT_RUN'
 
       - name: Build Stage58 package
         shell: pwsh
@@ -131,8 +126,8 @@ jobs:
             'Server lineage: user-supplied 9yin-go-server1.rar -> current kim8553/web Go source',
             'Original local-service contract restored: list 4000 + game 19061 + GM 19062',
             'loopback-lister.ps1 copied unchanged from server runtime source',
-            'Spaced-path lister launch: PASS',
-            'Spaced-path server argument probe: PASS',
+            'Spaced-path lister launch/request/response: PASS',
+            'Server uses NINEYIN_SERVER_ROOT default runtime log path; no path-valued -log-file child argument',
             'Stage54 normal buy 0x46 JSON/MySQL persistence retained',
             'Stage55/56/57 startup compatibility changes retained',
             'Compile: PASS',

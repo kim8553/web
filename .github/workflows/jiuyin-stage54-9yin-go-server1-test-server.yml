@@ -5,6 +5,7 @@ on:
     paths:
       - server/cmd/protocol-probe/latest_client_normal_shop_json_atomic.go
       - server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_test.go
+      - server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_isolated_test_support.go
       - server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go
       - tools/stage54-test-server/**
       - .github/workflows/jiuyin-stage54-9yin-go-server1-test-server.yml
@@ -23,6 +24,7 @@ jobs:
           $files = @(
             'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic.go',
             'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_test.go',
+            'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_isolated_test_support.go',
             'server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go'
           )
           & gofmt -w @files
@@ -40,16 +42,20 @@ jobs:
           if ($launcher -notmatch 'NINEYIN_SERVER_ROOT') { throw 'launcher does not pin explicit runtime root' }
           if ($launcher -match "param\([\s\S]*ServerRoot\s*=\s*'D:") { throw 'historical D drive default returned' }
           Write-Host 'RUNTIME_BASELINE=9YIN_GO_SERVER1_CURRENT_SOURCE_LINEAGE'
-      - name: Run JSON normal-buy persistence tests
+      - name: Run isolated JSON normal-buy persistence tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Push-Location server
+          Push-Location server/cmd/protocol-probe
           try {
-            go test -count=1 -run 'TestNormalShopCommitJSONSnapshots' ./cmd/protocol-probe
-            if ($LASTEXITCODE -ne 0) { throw 'JSON normal-buy tests failed' }
+            go test -tags retailjsonisolated -count=1 `
+              latest_client_normal_shop_json_atomic.go `
+              latest_client_normal_shop_json_atomic_isolated_test_support.go `
+              latest_client_normal_shop_json_atomic_test.go
+            if ($LASTEXITCODE -ne 0) { throw 'isolated JSON normal-buy tests failed' }
           } finally { Pop-Location }
-      - name: Compile current Windows server
+          Write-Host 'JSON_PAIR_PERSISTENCE_AND_ROLLBACK=PASS; RUNTIME_RESOURCES_NOT_REQUIRED_FOR_THIS_ISOLATED_TEST'
+      - name: Compile current Windows server without executing resource init
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -61,7 +67,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Windows server build failed' }
           } finally { Pop-Location }
           if (-not (Test-Path "$env:RUNNER_TEMP\stage54-test-server.exe")) { throw 'server EXE missing' }
-          Write-Host 'WINDOWS_SERVER_COMPILE=PASS; LIVE_CLIENT_E2E=NOT_RUN'
+          Write-Host 'WINDOWS_SERVER_COMPILE=PASS; RUNTIME_INIT_AND_LIVE_CLIENT_E2E=NOT_RUN'
       - name: Preserve exact formatted sources used for the passing build
         shell: pwsh
         run: |
@@ -70,6 +76,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $src | Out-Null
           Copy-Item 'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic.go' $src
           Copy-Item 'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_test.go' $src
+          Copy-Item 'server/cmd/protocol-probe/latest_client_normal_shop_json_atomic_isolated_test_support.go' $src
           Copy-Item 'server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go' $src
           Compress-Archive -Path "$src\*" -DestinationPath "$env:RUNNER_TEMP\STAGE54_FORMATTED_SOURCE.zip" -CompressionLevel Optimal
       - name: Upload exact formatted sources
@@ -90,10 +97,12 @@ jobs:
           Copy-Item 'tools/stage54-test-server/README_KO.md' $pkg
           $info = @(
             'Stage54 Windows test server',
-            "Git input commit: $env:GITHUB_SHA (three Stage54 Go files gofmt-normalized in CI before test/build)",
+            "Git input commit: $env:GITHUB_SHA (Stage54 Go files gofmt-normalized in CI before test/build)",
             'Server source lineage: user-supplied 9yin-go-server1.rar -> current GitHub Go source',
             'Runtime root: explicit NINEYIN_SERVER_ROOT / -ServerRoot only; no historical D drive default',
             'Normal NPC buy 0x46: MySQL transaction OR guarded JSON paired commit',
+            'JSON paired persistence + rollback: isolated Windows test PASS required before package creation',
+            'Full runtime init requires the original/current 9yin-go-server1 resources; CI does not invent skill_new.ini',
             'JSON failure model: operation-level rollback tested; power-loss atomicity not claimed',
             'Normal sell 0x47: not implemented',
             'GM grant and exchange 0x4F: deferred',

@@ -1684,7 +1684,7 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 							return
 						}
 					case 70:
-						if _, handleErr := handleShopBuyCustom(link, player, itemCatalog, bagStore, currencyStore, selectedRoleID(selected), custom, conn.RemoteAddr().String()); handleErr != nil {
+						if _, handleErr := handleShopBuyCustom(link, player, world, itemCatalog, equipCatalog, bagStore, currencyStore, selectedRoleID(selected), custom, conn.RemoteAddr().String()); handleErr != nil {
 							log.Printf("%s: handle activity shop buy: %v", conn.RemoteAddr(), handleErr)
 							return
 						}
@@ -1841,7 +1841,7 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 					log.Printf("%s: handle current shop exchange contract: %v", conn.RemoteAddr(), handleErr)
 				}
 			case 70:
-				if _, handleErr := handleShopBuyCustom(link, player, itemCatalog, bagStore, currencyStore, selectedRoleID(selected), custom, conn.RemoteAddr().String()); handleErr != nil {
+				if _, handleErr := handleShopBuyCustom(link, player, world, itemCatalog, equipCatalog, bagStore, currencyStore, selectedRoleID(selected), custom, conn.RemoteAddr().String()); handleErr != nil {
 					log.Printf("%s: handle shop buy: %v", conn.RemoteAddr(), handleErr)
 					return
 				}

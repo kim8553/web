@@ -1,0 +1,49 @@
+# Exact-current C2S 0x4F exchange execution checkpoint — 2026-09-17
+
+## Authority and scope
+
+- Continue **`kim8553/web` / `stage37-assistant-handoff-20260917`**, never reset to the handoff HEAD `7efbd3f5a090d598d75c0ac64381de099f791859`. Handoff `server/` tree was `70083784bbedd6c71a020873bc761b64efe48580`; this checkpoint adds tests without reverting cumulative source.
+- Server lineage: actual `9yin-go-server1.rar`, SHA256 `ddc2f6bc078660a40eedf077d43befd6402ed59478ccde987d44171c1d7aefa5`, matches `recovery/CURRENT_RAR_SHOP_EXCHANGE_BIND_AUDIT_20260917.md`. The original RAR is comparison evidence, NOT the working tree.
+- Current-client binary: Google Drive file **`bin64.zip`** ID `13KBBJ9nEQjPZngrI_Ald-u15zlV1MKnS`, SHA256 `0bfa5c66c874f6fdd78cb343d7c1ebff29490c2f5d3e7e10be45012bc0f3b2ec`. Examined ZIP members: `fxgame.exe` SHA256 `c7f0366026452d525dc0c74b8499aac30fdb69189591420978e12c7094b5fde3`; `FxGameLogic.dll` SHA256 `16cf49b652c39b63ba0767780cc39f32ea1e50bdc683da9d5e7b2697cf95c3e8`; `FxNet2.dll` SHA256 `0443d9f401fdcc6a92a391869c898780ffac93399913dc9a82c7cac8cf6c3fde`; `fxcore.dll` SHA256 `ce0da0f52a80db5033e177a59be868c44b0baeca4a71226b0ccb2aca76cae724`. The first two member digests match the previous exact-current binary audit; no older uploaded BIN64 was substituted.
+- Current resource root: Google Drive `res` folder ID `1GPzJ4RrC_TfcJLnH4sW41PB8HkNesOgQ`. Downloaded actual `res/ini.package` (Drive ID `1ae-QNOVdK6aIPusyLh0kABrfo6qsp4F7`, SHA256 `6185812c6153b2a6da56071968dcd1254510a974df06a7e36a0229be2105779a`) and `res/share.package` (Drive ID `1eoJ5ViSVdEY1xk8OKNcxmqHhcOmARQxh`, SHA256 `200497852ba3a29279e51f01e2913b5f7260480f2a740a32ebd1680b869844b6`); both start with `PCK0`. These are opaque packages, **not ZIPs**; internal individual Lua/INI content was **not** unpacked or rehashed in this checkpoint. This does not establish absence of `ExchangeItem.ini`, `shop.ini`, or `tool_item.ini`. Prior extracted-resource fingerprints are retained as previous evidence, not newly proven package internals.
+
+## Actual 0x4F call path at the handoff source
+
+`custom_c2s.go:parseClientCustomMessage` -> `main.go` custom selector `case 64, 69, 79` -> `latest_client_shop_exchange_contract.go:handleShopExchangeContract` -> `parseShopExchangeBuyRequest` -> `resolveDefaultCurrentShopExchangeBuyAuthority` -> `loadDefaultCurrentShopConditionAuthority` (cached `sync.Once` authority) -> `resolveAuthorizedCurrentShopExchangeBuyAuthority` -> `resolveCurrentShopExchangeBuySelection` -> `shop_catalog.go:loadShopCatalogSection` + `latest_client_shop_view_contract.go:currentShopListing` -> `latest_client_shop_exchange_config.go:loadShopExchangeDefinition` -> `Condition/Condition2/Filters` projection match and SAFE capability gate -> **log and return; NO item debit, grant or exchange response**.
+
+`0x4F` accepts exactly five typed values: selector int32 79, `ShopID` string, page int32, position int32, count int32. The client does **not** supply a sixth `ExchangeData`: the server resolves it from the authored mode-3 listing. Position conversion is wire position minus one. The current `0x4F` dispatcher does not pass its bag/currency stores to this handler; do not call an unrelated GM grant or ordinary shop purchase path as an exchange transaction.
+
+## Implementation boundary — twelve requested checks
+
+| Check | Verified current state | Missing proof / work |
+|---|---|---|
+| 1. Request receive/decode | Custom frame decoding, selector dispatch, exact five typed values implemented; malformed inputs fail closed. | Actual current Windows client 0x4F LIVE packet not newly captured here. |
+| 2. NPC/shop/page/position | Shop ID and authored page/position checked by catalog lookup. | Current opened NPC/service ownership is **not validated in this 0x4F path**. |
+| 3. ExchangeData | Positive mode-3 ExchangeData resolved server-side from shop.ini. | Current package-internal INI bytes not independently extracted here. |
+| 4. Definition/conditions | ExchangeItem section parses; Condition/Condition2/Filters projection and SAFE capability checked. | Current player's actual condition acceptance is **not evaluated by the purchase branch**. SAFE capability alone is not acceptance. |
+| 5. Material kind/count | Only requested `Count > 0` and authored definition's basic grammar are checked. | Actual material requirements, per-character inventory, multiplication/overflow and availability not established. |
+| 6. Material binding/consumption order | No debit. | Binding partition and debit order unknown. |
+| 7. Result kind/count/binding | No grant. | Authoritative outcome and binding rule unknown. `DropBind=1` alone proves neither `ShowBind` nor `ExchangeBind`. |
+| 8. Bag capacity | No exchange-capacity calculation. | Slots, stacking and outcome-capacity rule unknown. |
+| 9. Atomic mutation | No exchange mutation. | Coupled debit+grant with idempotency/serialization and rollback absent. |
+| 10. DB failure/rollback | No exchange DB write. | Atomic durable commit across existing bag/other stores not established. Existing independent save APIs are not proof of transaction semantics. |
+| 11. Client bag/view sync | Existing 557 form/508 conditions are independent display paths; no 0x4F exchange result. | Postcommit bag/view protocol and failure response unknown. |
+| 12. Reconnect persistence | No exchange outcome exists to reload. | Exchange commit+reentry E2E not run. |
+
+For inadequate material, wrong selection, full bag, repeats, DB failures and item duplication/loss, only the malformed/unauthorized **read-only preflight** cases below have been exercised. No debit/grant code was activated and no transaction guarantees are claimed.
+
+**Additional pre-commit gate:** `loadDefaultCurrentShopConditionAuthority` is `sync.Once` cached and hashes resource files when initially building the authority. `resolveDefaultCurrentShopExchangeBuyAuthority` rereads the shop and ExchangeItem sections but does not rehash both files on every 0x4F request. Therefore initial SHA verification alone is not an adequate guard against resource changes after cache initialization. Require current resource revalidation/immutable deployment evidence before enabling mutations; do not treat this observation as proof of a currently exploitable exchange, because exchange mutation remains disabled.
+
+## New files and verification (run on source commit `e54c813df899987e52b82c4322852e8e733d3f04`)
+
+- `server/cmd/protocol-probe/latest_client_shop_exchange_buy_guard_regression_test.go`: 7 malformed wire cases, 9 unauthored/invalid selection cases, repeated valid read-only preflight, unchanged fixture bytes, unsafe-capability rejection and ExchangeItem projection drift rejection. Includes a synthetic `BindStatus=1` row **only to test selection**, not to turn on a 557 display or grant.
+- `tools/stage37_exchange4f_isolated_extract.go`: Go AST extractor of the **unchanged actual production declarations** for a CI-only isolated regression. `tools/stage37_exchange4f_isolated_support.go` supplies a **test-only synthetic INI fixture adapter** and minimal authority type; never use it in a running server.
+- `.github/workflows/jiuyin-stage37-exchange4f-verify.yml`: CI-only real-public-dependency modfile, isolated preflight + isolated race, other packages' regression, protocol-probe test **compile only**, `go vet ./...`, Windows amd64 PE32+ cross-build. Production `server/go.mod` remains unchanged.
+- GitHub Actions run: https://github.com/kim8553/web/actions/runs/35219276271 — **completed SUCCESS**, isolated 0x4F regressions PASS, other-package Go tests PASS, full protocol-probe test binary COMPILE PASS, Go vet PASS, isolated race PASS, Windows amd64 build PASS. **Full protocol-probe runtime tests / full `go test ./...` NOT PASS/NOT RUN**: attempting the full runtime test without separate exact-current resource files panicked in the unrelated `skill_catalog.go` global initializer for missing `modern/share/skill/skill_new.ini`; the earlier locally replaced `golang.org/x/text` stub also failed to compile `Decoder.String`, hence the CI-only modfile. No server-source fix was inferred from either environment blocker. Actual Windows client connection, feature LIVE, item persistence and reentry E2E **NOT RUN**.
+- Existing `.github/workflows/stage37-mode3-shop-view-ci.yml` uses a fixed handoff `server/` tree SHA (`70083784...`) and failed its historical exact-tree audit after the new test file was added, before its Go test/build steps. That old workflow failure must not be misreported as a new mode3 functional regression or as a PASS; the separate exact-commit exchange CI above ran all its listed checks.
+
+## Next unfinished task (resume here, not Stage1)
+
+1. On the latest branch HEAD, trace the opened NPC/service state through `scene_lifecycle.go` into 0x4F and prove the server-side ownership/range checks and live session binding. Compare exact current `shop.ini` / `ExchangeItem.ini` from **Drive `res` package internals** only after a version-correct package extraction is evidenced, and revalidate resource hashes at the exchange pre-commit boundary rather than relying on `sync.Once`.
+2. From exact-current authoritative definitions/client behavior and existing bag/DB implementations, establish material type, quantities, consumption by binding, result binding, capacity, and a single durable/rollback-safe mutation; write insufficiency, duplicate, capacity, DB-failure and reentry tests *before* enabling any grant/debit. Keep unknown 557 `ShowBind`/`ExchangeBind` and the 388 blocked positive-BindStatus rows fail-closed; the official 39-item life-profession notice cannot be generalized.
+3. Only after these proofs, test actual latest-client packets, 557 observations from an authorized environment, LIVE shop exchange and reconnect/DB E2E. Frida observer existence is not evidence of a successful or conflict-free attach.

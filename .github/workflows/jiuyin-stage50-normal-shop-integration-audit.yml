@@ -17,16 +17,16 @@ jobs:
           set -euo pipefail
           echo '--- CURRENT SHA ---'; git rev-parse HEAD
           echo '--- DECLARATIONS ---'
-          rg -n --glob '*.go' '^type (bagItem|bagStoreIface|currencyStoreIface|shopCatalogItem|serverViewSpec) struct|^type (bagStoreIface|currencyStoreIface) interface|^func persistBagEquip|^func starterBagViews|^func bagItemProps|^func \(.*\) setSilver\(' server/cmd/protocol-probe | head -65 || true
+          grep -RInE --include='*.go' '^type (bagItem|bagStoreIface|currencyStoreIface|shopCatalogItem|serverViewSpec) struct|^type (bagStoreIface|currencyStoreIface) interface|^func persistBagEquip|^func starterBagViews|^func bagItemProps|^func \(.*\) setSilver\(' server/cmd/protocol-probe | head -65
           echo '--- SHOP SESSION LIFECYCLE ---'
-          rg -n 'activeShop|currentShopExchangeSessionAllows|handleShopBuyCustom' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/latest_client_shop_exchange_session_lifecycle.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -65 || true
+          grep -nE 'activeShop|currentShopExchangeSessionAllows|handleShopBuyCustom' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/latest_client_shop_exchange_session_lifecycle.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -65
           echo '--- BAG LIMIT / SLOT ---'
-          rg -n 'BaseCap|MaxAmount|nextBagSlot|bagViewForViewID|assignMissingBagSlotsLocked' server/cmd/protocol-probe/messages.go server/cmd/protocol-probe/player_actor.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -85 || true
+          grep -nE 'BaseCap|MaxAmount|nextBagSlot|bagViewForViewID|assignMissingBagSlotsLocked' server/cmd/protocol-probe/messages.go server/cmd/protocol-probe/player_actor.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -85
           echo '--- PERSISTENCE CALL SITES ---'
-          rg -n 'persistBagEquip\(|currencyStore\.Save\(|bagStore\.Save\(' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -85 || true
+          grep -nE 'persistBagEquip\(|currencyStore\.Save\(|bagStore\.Save\(' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -85
           echo '--- DECLARATION CONTEXT ---'
           for pattern in '^type bagItem struct' '^type bagStoreIface interface' '^type currencyStoreIface interface' '^func persistBagEquip' '^func starterBagViews'; do
-            result="$(rg -n --glob '*.go' "$pattern" server/cmd/protocol-probe | head -1 || true)"
+            result="$(grep -RInE --include='*.go' "$pattern" server/cmd/protocol-probe | head -1 || true)"
             if test -n "$result"; then
               file="${result%%:*}"; part="${result#*:}"; line="${part%%:*}"; from=$((line>3?line-3:1)); to=$((line+42)); echo "FILE=$file LINES=$from:$to"; sed -n "${from},${to}p" "$file";
             fi

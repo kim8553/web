@@ -15,11 +15,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          Write-Host '=== exact string matches ==='
+          Write-Host '=== playerweapon loader matches ==='
           Get-ChildItem server -Recurse -File -Include *.go | Select-String -Pattern 'playerweapon|load equipment catalog|load playerweapon models' -CaseSensitive:$false | ForEach-Object {
             Write-Host ("{0}:{1}: {2}" -f $_.Path,$_.LineNumber,$_.Line.Trim())
           }
-          Write-Host '=== nearby equipment loader symbols ==='
-          Get-ChildItem server -Recurse -File -Include *.go | Select-String -Pattern 'equipment|equipCatalog|loadEquip' -CaseSensitive:$false | Select-Object -First 200 | ForEach-Object {
+          Write-Host '=== weaponModels / weaponHeld usage ==='
+          Get-ChildItem server -Recurse -File -Include *.go | Select-String -Pattern 'weaponModels|weaponHeld' -CaseSensitive:$true | ForEach-Object {
             Write-Host ("{0}:{1}: {2}" -f $_.Path,$_.LineNumber,$_.Line.Trim())
           }

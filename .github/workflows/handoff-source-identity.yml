@@ -29,7 +29,7 @@ jobs:
           test "$baseline_count" -eq 186
           test "$current_count" -eq 188
           git diff --name-status "$baseline" HEAD -- server > "$RUNNER_TEMP/audited-source-diff.txt"
-          printf 'A\tserver/cmd/protocol-probe/latest_client_shop_exchange_failclosed_test.go\nA\tserver/docs/CURRENT_SHOP_EXCHANGE_BIND_AUDIT_20260917.md\n' > "$RUNNER_TEMP/expected-source-diff.txt"
+          printf 'M\tserver/cmd/protocol-probe/latest_client_shop_exchange_contract.go\nA\tserver/cmd/protocol-probe/latest_client_shop_exchange_failclosed_test.go\nA\tserver/docs/CURRENT_SHOP_EXCHANGE_BIND_AUDIT_20260917.md\n' > "$RUNNER_TEMP/expected-source-diff.txt"
           diff -u "$RUNNER_TEMP/expected-source-diff.txt" "$RUNNER_TEMP/audited-source-diff.txt"
           echo 'EXACT_HANDOFF_BASELINE=PASS AUDITED_ADDITIONS=PASS'
       - uses: actions/setup-go@v5

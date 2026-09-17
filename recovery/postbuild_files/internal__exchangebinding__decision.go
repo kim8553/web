@@ -12,6 +12,18 @@ type Decision struct {
 func Bound() Decision   { return Decision{known: true, bindStatus: 1} }
 func Unbound() Decision { return Decision{known: true, bindStatus: 0} }
 
+// FromMaterialDerivedBound applies only the independently verified one-way
+// material rule: consuming at least one bound exchange material makes the
+// produced result bound. A false materialDerivedBound value is not enough to
+// prove an unbound result because authored/base result binding precedence is
+// still unresolved; keep that case unknown so Require continues to fail closed.
+func FromMaterialDerivedBound(materialDerivedBound bool) Decision {
+	if materialDerivedBound {
+		return Bound()
+	}
+	return Decision{}
+}
+
 // Require returns a runtime item BindStatus only for an explicit authoritative
 // decision. Unknown decisions fail closed.
 func (d Decision) Require() (int32, error) {

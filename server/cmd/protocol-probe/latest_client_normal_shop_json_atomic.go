@@ -103,7 +103,6 @@ func normalShopCommitJSONSnapshots(bag *bagStore, currency *currencyStore, roleI
 
 	key := strconv.FormatUint(uint64(roleID), 10)
 	oldBagRoles := cloneNormalShopBagRoles(bag.roles)
-	oldCurrencyRoles := cloneNormalShopCurrencyRoles(currency.roles)
 	newBagRoles := cloneNormalShopBagRoles(bag.roles)
 	newCurrencyRoles := cloneNormalShopCurrencyRoles(currency.roles)
 	newBagRoles[key] = append([]bagItem(nil), afterBag...)

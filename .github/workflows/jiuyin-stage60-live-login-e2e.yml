@@ -135,36 +135,21 @@ jobs:
           } finally { Pop-Location }
           Write-Host 'STAGE60_WINDOWS_COMPILE_BUILD=PASS'
 
-      - name: Windows server boot smoke
+      - name: Record runtime-resource boot gate
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $root = (Resolve-Path 'server').Path
-          $env:NINEYIN_SERVER_ROOT = $root
-          $stdout = Join-Path $env:RUNNER_TEMP 'stage60-boot.stdout.log'
-          $stderr = Join-Path $env:RUNNER_TEMP 'stage60-boot.stderr.log'
-          $proc = Start-Process -FilePath "$env:RUNNER_TEMP\stage60-live-server.exe" `
-            -ArgumentList @('-listen','127.0.0.1:19161','-gm-listen','127.0.0.1:19162','-npc-patrol-count','0') `
-            -WorkingDirectory $root -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          try {
-            $deadline = (Get-Date).AddSeconds(120)
-            $ready = $false
-            do {
-              Start-Sleep -Milliseconds 500
-              if ($proc.HasExited) { break }
-              $game = @(Get-NetTCPConnection -State Listen -LocalPort 19161 -ErrorAction SilentlyContinue).Count -gt 0
-              $gm = @(Get-NetTCPConnection -State Listen -LocalPort 19162 -ErrorAction SilentlyContinue).Count -gt 0
-              $ready = $game -and $gm
-            } while (-not $ready -and (Get-Date) -lt $deadline)
-            if (-not $ready) {
-              if (Test-Path $stdout) { Get-Content $stdout -Tail 80 }
-              if (Test-Path $stderr) { Get-Content $stderr -Tail 80 }
-              throw 'Stage60 Windows server boot smoke failed'
-            }
-            Write-Host 'STAGE60_WINDOWS_SERVER_BOOT_SMOKE=PASS'
-          } finally {
-            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          $ciSkill = 'server/resources/modern/share/skill/skill_new.ini'
+          if (Test-Path -LiteralPath $ciSkill) {
+            throw 'Unexpected full runtime skill resource is present in GitHub checkout; re-audit Stage60 CI assumptions.'
           }
+          $launcher = Get-Content -Raw 'tools/stage60-live-login-e2e/run-stage60-live-services.ps1'
+          if (-not $launcher.Contains('resources\modern\share\skill\skill_new.ini')) {
+            throw 'Stage60 launcher no longer requires the original runtime skill resource.'
+          }
+          Write-Host 'STAGE60_CI_SERVER_BOOT=NOT_RUN'
+          Write-Host 'Reason: GitHub checkout intentionally does not contain the user 9yin-go-server1 runtime resource skill_new.ini.'
+          Write-Host 'Actual server boot remains a Stage60 LIVE gate on the user-supplied 9yin-go-server1 runtime root.'
 
       - name: Build Stage60 LIVE package
         shell: pwsh
@@ -190,7 +175,8 @@ jobs:
             'roleStore login-path test under Stage60: PASS',
             'lister runtime test: PASS',
             'Windows compile/build: PASS',
-            'Windows CI server boot smoke on isolated ports: PASS',
+            'Windows CI server boot: NOT RUN (GitHub checkout lacks user 9yin-go-server1 runtime skill_new.ini)',
+            'User Windows server boot on actual runtime root: NOT RUN by CI',
             'User current-client LIVE login/scene/reconnect: NOT RUN by CI'
           )
           [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))

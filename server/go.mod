@@ -12,8 +12,6 @@ require (
 
 require filippo.io/edwards25519 v1.1.0 // indirect
 
-require github.com/Hiroko103/go-quicklz v0.0.0
+require github.com/Hiroko103/go-quicklz v0.0.0-20190115215310-59904abc50d0
 
 replace github.com/DATA-DOG/go-sqlmock => ./_builddeps/sqlmock
-
-replace github.com/Hiroko103/go-quicklz => ./_builddeps/quicklz

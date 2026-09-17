@@ -1,0 +1,306 @@
+name: Mission mode3 shop view 348abaa1
+
+on:
+  push:
+    branches:
+      - mission/source-export-348abaa1
+    paths:
+      - .github/workflows/mission-mode3-shop-view-348abaa1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact target parent
+        uses: actions/checkout@v4
+        with:
+          ref: 2b33d2ca8124bda32b1db815c4b0fd7fabcdfabc
+          fetch-depth: 2
+
+      - name: Verify parent identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "2b33d2ca8124bda32b1db815c4b0fd7fabcdfabc"
+          test -z "$(git status --porcelain=v1)"
+
+      - name: Apply evidence-bounded mode3 View fix and regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          view = Path('server/cmd/protocol-probe/latest_client_shop_view_contract.go')
+          s = view.read_text()
+          marker = 'func latestClientShopItemProperties(item shopCatalogItem) []serverViewProperty {\n'
+          helper = '''// currentShopItemVisibleInView preserves ordinary authored listings and exposes
+          // exchange listings only when the current shop.ini row carries a positive
+          // ExchangeData identifier. Current form_shop.lua reads ExchangeData from the
+          // View item before it can request the exchange form, so hiding valid mode 3
+          // rows prevents the verified 0x40 request path from being reached.
+          func currentShopItemVisibleInView(item shopCatalogItem) bool {
+          \tswitch item.priceMode {
+          \tcase 0, 1, 2:
+          \t\treturn true
+          \tcase 3:
+          \t\treturn item.exchangeData > 0
+          \tdefault:
+          \t\treturn false
+          \t}
+          }
+
+          '''
+          if helper not in s:
+              if marker not in s:
+                  raise SystemExit('latestClientShopItemProperties marker missing')
+              # Keep the existing latestClientShopItemProperties doc comment attached to its function.
+              doc = '''// latestClientShopItemProperties emits only current negotiated name/type pairs.
+          // Ordinal 181 is MaxPowerValue/int32 in the current table and must never carry a
+          // ConfigID string. ConfigID is negotiated as string at ordinals 7 and 105; the
+          // same value is emitted at both, matching the current bag/view identity contract.
+          '''
+              if doc + marker not in s:
+                  raise SystemExit('shop item property doc marker drift')
+              s = s.replace(doc + marker, helper + doc + marker, 1)
+          view.write_text(s)
+
+          scene = Path('server/cmd/protocol-probe/scene_lifecycle.go')
+          s = scene.read_text()
+          old = '''\tfor _, item := range items {
+          \t\tswitch item.priceMode {
+          \t\tcase 0, 1, 2:
+          \t\tdefault:
+          \t\t\tcontinue
+          \t\t}
+          '''
+          new = '''\tfor _, item := range items {
+          \t\tif !currentShopItemVisibleInView(item) {
+          \t\t\tcontinue
+          \t\t}
+          '''
+          if old not in s:
+              raise SystemExit('openShopLocked mode switch drift')
+          scene.write_text(s.replace(old, new, 1))
+
+          test = Path('server/cmd/protocol-probe/latest_client_shop_view_contract_test.go')
+          s = test.read_text()
+          if '"bytes"' not in s:
+              s = s.replace('import (\n', 'import (\n\t"bytes"\n\t"encoding/binary"\n', 1)
+          append = r'''
+
+          func TestCurrentShopItemVisibleInViewKeepsOrdinaryAndPositiveExchangeData(t *testing.T) {
+          \ttests := []struct {
+          \t\tname string
+          \t\titem shopCatalogItem
+          \t\twant bool
+          \t}{
+          \t\t{name: "mode0", item: shopCatalogItem{priceMode: 0}, want: true},
+          \t\t{name: "mode1", item: shopCatalogItem{priceMode: 1}, want: true},
+          \t\t{name: "mode2", item: shopCatalogItem{priceMode: 2}, want: true},
+          \t\t{name: "mode3-positive-exchange", item: shopCatalogItem{priceMode: 3, exchangeData: 13097}, want: true},
+          \t\t{name: "mode3-zero-exchange", item: shopCatalogItem{priceMode: 3, exchangeData: 0}, want: false},
+          \t\t{name: "mode3-negative-exchange", item: shopCatalogItem{priceMode: 3, exchangeData: -1}, want: false},
+          \t\t{name: "unknown-mode", item: shopCatalogItem{priceMode: 4, exchangeData: 13097}, want: false},
+          \t}
+          \tfor _, tc := range tests {
+          \t\tt.Run(tc.name, func(t *testing.T) {
+          \t\t\tif got := currentShopItemVisibleInView(tc.item); got != tc.want {
+          \t\t\t\tt.Fatalf("visible=%v want=%v item=%#v", got, tc.want, tc.item)
+          \t\t\t}
+          \t\t})
+          \t}
+          }
+
+          func TestOpenShopViewIncludesPositiveMode3AndHidesInvalidMode3(t *testing.T) {
+          \tpath := filepath.Join(t.TempDir(), "shop.ini")
+          \tconst data = `[Shop_view_exchange]
+          PageInfo=Page1
+          Type=0
+          0=item_mode0,1,0,10,0,1,0,0,0
+          0=item_mode1,1,1,11,0,1,1,0,0
+          0=item_mode2,1,2,12,0,1,2,0,0
+          0=item_exchange,1,3,0,0,1,3,13097,0
+          0=item_exchange_invalid,1,3,0,0,1,4,0,0
+          `
+          \tif err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          \tprevious := defaultShopINIPath
+          \tdefaultShopINIPath = path
+          \tt.Cleanup(func() { defaultShopINIPath = previous })
+
+          \tconn := &captureMessageConnection{}
+          \tlifecycle := &sceneLifecycle{conn: conn}
+          \tif err := lifecycle.openShopLocked("Shop_view_exchange"); err != nil {
+          \t\tt.Fatal(err)
+          \t}
+          \tframes := conn.Frames()
+          \tif len(frames) != 5 {
+          \t\tt.Fatalf("frame count=%d want=5 (create + 3 ordinary + 1 valid exchange)", len(frames))
+          \t}
+          \tif len(frames[0]) < 7 || frames[0][0] != 0x15 || binary.LittleEndian.Uint16(frames[0][1:3]) != 61 {
+          \t\tt.Fatalf("shop create frame=%x", frames[0])
+          \t}
+          \twantObjectIndex := []uint16{1, 2, 3, 4}
+          \tfor i, want := range wantObjectIndex {
+          \t\tframe := frames[i+1]
+          \t\tif len(frame) < 7 || frame[0] != 0x18 {
+          \t\t\tt.Fatalf("item frame[%d]=%x", i, frame)
+          \t\t}
+          \t\tif got := binary.LittleEndian.Uint16(frame[1:3]); got != 61 {
+          \t\t\tt.Fatalf("item frame[%d] view=%d want=61", i, got)
+          \t\t}
+          \t\tif got := binary.LittleEndian.Uint16(frame[3:5]); got != want {
+          \t\t\tt.Fatalf("item frame[%d] object index=%d want=%d", i, got, want)
+          \t\t}
+          \t}
+
+          \texchange := frames[4]
+          \tneedle := make([]byte, 6)
+          \tbinary.LittleEndian.PutUint16(needle[0:2], 233)
+          \tbinary.LittleEndian.PutUint32(needle[2:6], 13097)
+          \tif !bytes.Contains(exchange, needle) {
+          \t\tt.Fatalf("mode3 frame lacks ExchangeData ordinal/value 233/13097: %x", exchange)
+          \t}
+          }
+          '''
+          if 'TestCurrentShopItemVisibleInViewKeepsOrdinaryAndPositiveExchangeData' not in s:
+              s += append
+          test.write_text(s)
+          PY
+          gofmt -w \
+            server/cmd/protocol-probe/latest_client_shop_view_contract.go \
+            server/cmd/protocol-probe/scene_lifecycle.go \
+            server/cmd/protocol-probe/latest_client_shop_view_contract_test.go
+          git diff --check
+          git diff -- \
+            server/cmd/protocol-probe/latest_client_shop_view_contract.go \
+            server/cmd/protocol-probe/scene_lifecycle.go \
+            server/cmd/protocol-probe/latest_client_shop_view_contract_test.go
+
+      - name: Verify exact wiring and isolated runtime semantics
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          scene = Path('server/cmd/protocol-probe/scene_lifecycle.go').read_text()
+          start = scene.index('func (s *sceneLifecycle) openShopLocked')
+          end = scene.index('\ntype talkMenuItem struct', start)
+          body = scene[start:end]
+          assert 'if !currentShopItemVisibleInView(item)' in body
+          assert 'switch item.priceMode' not in body
+          contract = Path('server/cmd/protocol-probe/latest_client_shop_view_contract.go').read_text()
+          assert 'case 3:' in contract
+          assert 'return item.exchangeData > 0' in contract
+          assert 'viewInt(233, item.exchangeData)' in contract
+          PY
+          cd server/cmd/protocol-probe
+          cat > zz_ci_shop_view_stub.go <<'EOF_STUB'
+          package main
+
+          var defaultModernShareRoot = "."
+
+          type serverViewProperty struct {
+              index uint16
+              text  *string
+              int32 *int32
+          }
+
+          func viewString(index uint16, value string) serverViewProperty { return serverViewProperty{index: index, text: &value} }
+          func viewInt(index uint16, value int32) serverViewProperty { return serverViewProperty{index: index, int32: &value} }
+          EOF_STUB
+          cat > zz_ci_shop_view_isolated_test.go <<'EOF_TEST'
+          package main
+
+          import "testing"
+
+          func TestMode3ViewVisibilityCI(t *testing.T) {
+              cases := []struct { item shopCatalogItem; want bool }{
+                  {shopCatalogItem{priceMode: 0}, true},
+                  {shopCatalogItem{priceMode: 1}, true},
+                  {shopCatalogItem{priceMode: 2}, true},
+                  {shopCatalogItem{priceMode: 3, exchangeData: 13097}, true},
+                  {shopCatalogItem{priceMode: 3, exchangeData: 0}, false},
+                  {shopCatalogItem{priceMode: 3, exchangeData: -1}, false},
+                  {shopCatalogItem{priceMode: 4, exchangeData: 13097}, false},
+              }
+              for i, tc := range cases {
+                  if got := currentShopItemVisibleInView(tc.item); got != tc.want { t.Fatalf("case %d got=%v want=%v", i, got, tc.want) }
+              }
+          }
+          func TestMode3ExchangeDataOrdinalCI(t *testing.T) {
+              props := latestClientShopItemProperties(shopCatalogItem{configID: "item", amount: 1, priceMode: 3, exchangeData: 13097})
+              last := props[len(props)-1]
+              if last.index != 233 || last.int32 == nil || *last.int32 != 13097 { t.Fatalf("last=%#v", last) }
+              props = latestClientShopItemProperties(shopCatalogItem{configID: "item", amount: 1, priceMode: 3, exchangeData: 0})
+              for _, p := range props { if p.index == 233 { t.Fatal("invalid mode3 emitted ExchangeData") } }
+          }
+          func TestShopViewObjectIndexFormulaCI(t *testing.T) {
+              cases := []struct { page, pos int32; want uint16 }{{0, 0, 1}, {0, 35, 36}, {1, 0, 501}, {4, 35, 2036}}
+              for _, tc := range cases {
+                  got, ok := currentShopViewObjectIndex(shopCatalogItem{page: tc.page, position: tc.pos})
+                  if !ok || got != tc.want { t.Fatalf("page=%d pos=%d got=%d ok=%v want=%d", tc.page, tc.pos, got, ok, tc.want) }
+              }
+          }
+          EOF_TEST
+          trap 'rm -f zz_ci_shop_view_stub.go zz_ci_shop_view_isolated_test.go' EXIT
+          GO111MODULE=off go test -count=1 shop_catalog.go latest_client_shop_view_contract.go zz_ci_shop_view_stub.go zz_ci_shop_view_isolated_test.go
+
+      - name: Set up Go 1.23.2
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+
+      - name: Prepare real dependencies and run compile/test/vet/build gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/go-sql-driver/mysql
+          go mod edit -modfile=ci.real.mod -dropreplace=golang.org/x/text
+          go mod edit -modfile=ci.real.mod -dropreplace=filippo.io/edwards25519
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/DATA-DOG/go-sqlmock
+          go mod edit -modfile=ci.real.mod -dropreplace=github.com/Hiroko103/go-quicklz
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod download -modfile=ci.real.mod
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          test "${#pkgs[@]}" -gt 0
+          go test -modfile=ci.real.mod "${pkgs[@]}" -count=1
+          go test -modfile=ci.real.mod -c -o /tmp/protocol-probe.test ./cmd/protocol-probe
+          go vet -modfile=ci.real.mod ./...
+          go build -modfile=ci.real.mod -o /tmp/protocol-probe ./cmd/protocol-probe
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o /tmp/stage37-live-server.exe ./cmd/protocol-probe
+          rm -f ci.real.mod ci.real.sum
+          cd ..
+          test -z "$(git status --porcelain=v1 | grep -v '^ M server/cmd/protocol-probe/' || true)"
+          echo 'PROTOCOL_RUNTIME_NOT_RUN: private exact-current resource corpus is intentionally absent from public GitHub.'
+
+      - name: Commit and fast-forward target branch
+        shell: bash
+        env:
+          TARGET_BRANCH: stage37-assistant-handoff-20260917
+          EXPECTED_PARENT: 2b33d2ca8124bda32b1db815c4b0fd7fabcdfabc
+        run: |
+          set -euo pipefail
+          git fetch origin "$TARGET_BRANCH"
+          test "$(git rev-parse origin/$TARGET_BRANCH)" = "$EXPECTED_PARENT"
+          git config user.name 'OpenAI Assistant'
+          git config user.email 'assistant@users.noreply.github.com'
+          git add \
+            server/cmd/protocol-probe/latest_client_shop_view_contract.go \
+            server/cmd/protocol-probe/scene_lifecycle.go \
+            server/cmd/protocol-probe/latest_client_shop_view_contract_test.go
+          test "$(git diff --cached --name-only | wc -l | tr -d ' ')" = '3'
+          git commit -m 'Shop: include valid mode3 exchange items in view'
+          NEW_SHA="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          echo "PUBLISHED_SHA=$NEW_SHA"

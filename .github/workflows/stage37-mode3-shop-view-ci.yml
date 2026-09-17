@@ -1,0 +1,156 @@
+name: Stage37 mode3 shop view verification
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/**'
+      - '.github/workflows/stage37-mode3-shop-view-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Exact current server source audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_server_tree='35d97c02d9f2871dd332d8a25976580c05c1c5f7'
+          actual_server_tree="$(git rev-parse HEAD:server)"
+          printf 'expected_server_tree=%s\nactual_server_tree=%s\ncommit=%s\n' "$expected_server_tree" "$actual_server_tree" "$(git rev-parse HEAD)"
+          test "$actual_server_tree" = "$expected_server_tree"
+          grep -F 'func currentShopItemVisibleInView(item shopCatalogItem) bool {' server/cmd/protocol-probe/latest_client_shop_view_contract.go
+          grep -F 'return item.exchangeData > 0' server/cmd/protocol-probe/latest_client_shop_view_contract.go
+          grep -F 'properties = append(properties, viewInt(233, item.exchangeData))' server/cmd/protocol-probe/latest_client_shop_view_contract.go
+          grep -F 'if !currentShopItemVisibleInView(item) {' server/cmd/protocol-probe/scene_lifecycle.go
+          grep -F 'TestOpenShopViewIncludesPositiveMode3AndHidesInvalidMode3' server/cmd/protocol-probe/latest_client_shop_view_contract_test.go
+          echo 'EXACT_SOURCE_AUDIT=PASS'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+
+      - name: Resolve real public dependencies in CI-only modfile
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+          go mod download -modfile=ci.real.mod
+          test -z "$(gofmt -l cmd internal migrations)"
+
+      - name: Isolated mode3 view regression
+        working-directory: server/cmd/protocol-probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > zz_ci_shop_view_stub.go <<'EOF_STUB'
+          package main
+
+          var defaultModernShareRoot = "."
+
+          type serverViewProperty struct {
+              index uint16
+              text  *string
+              int32 *int32
+          }
+
+          func viewString(index uint16, value string) serverViewProperty { return serverViewProperty{index: index, text: &value} }
+          func viewInt(index uint16, value int32) serverViewProperty { return serverViewProperty{index: index, int32: &value} }
+          EOF_STUB
+          cat > zz_ci_shop_view_isolated_test.go <<'EOF_TEST'
+          package main
+
+          import "testing"
+
+          func TestMode3ViewVisibilityCI(t *testing.T) {
+              cases := []struct {
+                  item shopCatalogItem
+                  want bool
+              }{
+                  {shopCatalogItem{priceMode: 0}, true},
+                  {shopCatalogItem{priceMode: 1}, true},
+                  {shopCatalogItem{priceMode: 2}, true},
+                  {shopCatalogItem{priceMode: 3, exchangeData: 13097}, true},
+                  {shopCatalogItem{priceMode: 3, exchangeData: 0}, false},
+                  {shopCatalogItem{priceMode: 3, exchangeData: -1}, false},
+                  {shopCatalogItem{priceMode: 4, exchangeData: 13097}, false},
+              }
+              for i, tc := range cases {
+                  if got := currentShopItemVisibleInView(tc.item); got != tc.want {
+                      t.Fatalf("case %d got=%v want=%v", i, got, tc.want)
+                  }
+              }
+          }
+
+          func TestMode3ExchangeDataOrdinalCI(t *testing.T) {
+              props := latestClientShopItemProperties(shopCatalogItem{configID: "item", amount: 1, priceMode: 3, exchangeData: 13097})
+              found := false
+              for _, p := range props {
+                  if p.index == 233 {
+                      if p.int32 == nil || *p.int32 != 13097 {
+                          t.Fatalf("ordinal 233=%#v", p)
+                      }
+                      found = true
+                  }
+              }
+              if !found {
+                  t.Fatal("valid mode3 did not emit ExchangeData ordinal 233")
+              }
+              props = latestClientShopItemProperties(shopCatalogItem{configID: "item", amount: 1, priceMode: 3, exchangeData: 0})
+              for _, p := range props {
+                  if p.index == 233 {
+                      t.Fatal("invalid mode3 emitted ExchangeData")
+                  }
+              }
+          }
+
+          func TestShopViewObjectIndexFormulaCI(t *testing.T) {
+              cases := []struct {
+                  page, pos int32
+                  want      uint16
+              }{{0, 0, 1}, {0, 35, 36}, {1, 0, 501}, {4, 35, 2036}}
+              for _, tc := range cases {
+                  got, ok := currentShopViewObjectIndex(shopCatalogItem{page: tc.page, position: tc.pos})
+                  if !ok || got != tc.want {
+                      t.Fatalf("page=%d pos=%d got=%d ok=%v want=%d", tc.page, tc.pos, got, ok, tc.want)
+                  }
+              }
+          }
+          EOF_TEST
+          trap 'rm -f zz_ci_shop_view_stub.go zz_ci_shop_view_isolated_test.go' EXIT
+          GO111MODULE=off go test -count=1 shop_catalog.go latest_client_shop_view_contract.go zz_ci_shop_view_stub.go zz_ci_shop_view_isolated_test.go
+          echo 'MODE3_VIEW_REGRESSION=PASS'
+
+      - name: Go test vet protocol compile and Windows amd64 build
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          test "${#pkgs[@]}" -gt 0
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go test -modfile=ci.real.mod -c -o /tmp/protocol-probe.test ./cmd/protocol-probe
+          go vet -modfile=ci.real.mod ./...
+          go build -modfile=ci.real.mod -o /tmp/protocol-probe ./cmd/protocol-probe
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o /tmp/stage37-live-server.exe ./cmd/protocol-probe
+          file /tmp/stage37-live-server.exe | grep -E 'PE32\+ executable.*x86-64'
+          sha256sum /tmp/stage37-live-server.exe
+          echo 'GO_TEST=PASS GO_VET=PASS PROTOCOL_COMPILE=PASS WINDOWS_AMD64_BUILD=PASS'
+          echo 'LIVE=NOT_RUN E2E=NOT_RUN'

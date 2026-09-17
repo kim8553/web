@@ -1,0 +1,81 @@
+name: JIUYIN Stage51 Real MySQL Atomicity
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: [.github/workflows/jiuyin-stage51-real-mysql-atomic.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  real-mysql-atomic:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: stage51-fixture-only
+          MYSQL_DATABASE: jiuyin_stage51
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent -h 127.0.0.1 -uroot -pstage51-fixture-only"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+    env:
+      NINEYIN_STAGE51_TEST_MYSQL_DSN: 'root:stage51-fixture-only@tcp(127.0.0.1:3306)/jiuyin_stage51?parseTime=true'
+      NINEYIN_STAGE51_DISPOSABLE: YES_DROP_STAGE51_TABLES
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare real official MySQL driver, never the local inert stub
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go mod edit -dropreplace=github.com/go-sql-driver/mysql
+          go mod edit -dropreplace=filippo.io/edwards25519
+          go mod download github.com/go-sql-driver/mysql filippo.io/edwards25519
+          test -z "$(gofmt -l cmd/protocol-probe/latest_client_normal_shop_mysql_real_test.go cmd/protocol-probe/latest_client_normal_shop_mysql_atomic.go cmd/protocol-probe/latest_client_normal_shop_mysql_atomic_test.go)"
+          if grep -q '^replace github.com/go-sql-driver/mysql' go.mod; then echo 'FAIL: inert MySQL driver still in use'; exit 1; fi
+          if grep -q '^replace filippo.io/edwards25519' go.mod; then echo 'FAIL: inert Ed25519 dependency still in use'; exit 1; fi
+          go list -m github.com/go-sql-driver/mysql filippo.io/edwards25519
+          git diff --check
+      - name: Exercise real InnoDB commit readback rollback and concurrent stale buy
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server/cmd/protocol-probe
+          go test -race -count=1 -v -tags=mysql_integration -run '^TestNormalShopMySQLRealAtomicity$' latest_client_normal_shop_mysql_atomic.go latest_client_normal_shop_mysql_real_test.go
+      - name: Recheck fake-driver regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server/cmd/protocol-probe
+          go test -race -count=1 -v latest_client_normal_shop_mysql_atomic.go latest_client_normal_shop_mysql_atomic_test.go
+      - name: Compile actual server and Windows target with official MySQL driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go test -c -o "$RUNNER_TEMP/protocol-probe.test" ./cmd/protocol-probe
+          go build -o "$RUNNER_TEMP/protocol-probe" ./cmd/protocol-probe
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/protocol-probe.exe" ./cmd/protocol-probe
+          test -s "$RUNNER_TEMP/protocol-probe.test"
+          test -s "$RUNNER_TEMP/protocol-probe"
+          test -s "$RUNNER_TEMP/protocol-probe.exe"
+          echo 'COMPILE_ONLY=PASS; no actual user MySQL, Snail client, or server runtime was launched'
+      - name: Publish real driver dependency correction only after all tests pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only)" = 'server/go.mod'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- server/go.mod
+          git commit -m 'fix(mysql): replace nonfunctional bundled stub with official SQL driver'
+          git push origin HEAD:refs/heads/stage37-assistant-handoff-20260917
+      - name: State limits explicitly
+        run: |
+          echo 'STAGE51=REAL_DISPOSABLE_MYSQL_TEST_ONLY'
+          echo 'NORMAL_BUY_0X46=CODE_WIRED_NOT_REAL_GAME_VERIFIED'
+          echo 'USER_DB_WINDOWS_BOOT_CLIENT_RECONNECT=NOT_TESTED'
+          echo 'SALE_0X47=NOT_IMPLEMENTED'
+          echo 'GM_GRANT_AND_EXCHANGE_0X4F=UNCHANGED'

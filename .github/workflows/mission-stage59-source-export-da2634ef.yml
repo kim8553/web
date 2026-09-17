@@ -1,0 +1,38 @@
+name: Stage59 exact-source export da2634ef
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: ['.github/workflows/mission-stage59-source-export-da2634ef.yml']
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify source identity and archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_parent=330066378f9316fe396ce65b3c472af498b5fb27
+          actual_parent=$(git rev-parse HEAD^)
+          test "$actual_parent" = "$expected_parent"
+          head=$(git rev-parse HEAD)
+          tree=$(git rev-parse HEAD^{tree})
+          git archive --format=tar HEAD | gzip -n > "$RUNNER_TEMP/stage59-exact-repo.tar.gz"
+          printf 'head=%s\nparent=%s\ntree=%s\n' "$head" "$actual_parent" "$tree" > "$RUNNER_TEMP/PROVENANCE.txt"
+          (cd "$RUNNER_TEMP" && sha256sum stage59-exact-repo.tar.gz PROVENANCE.txt > MANIFEST.sha256)
+          cat "$RUNNER_TEMP/PROVENANCE.txt"
+          cat "$RUNNER_TEMP/MANIFEST.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage59-exact-source-da2634ef
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/stage59-exact-repo.tar.gz
+            ${{ runner.temp }}/PROVENANCE.txt
+            ${{ runner.temp }}/MANIFEST.sha256

@@ -185,18 +185,101 @@ func resolveDefaultCurrentShopExchangeBuyAuthority(request shopExchangeBuyReques
 	return resolveAuthorizedCurrentShopExchangeBuyAuthority(defaultShopINIPath, defaultExchangeItemINIPath, authority, request)
 }
 
+// currentShopExchangeFormAuthority is display-only authority for one exact-current
+// mode3 listing. It authenticates coordinates against shop.ini and reparses the
+// referenced ExchangeItem.ini row; it does not evaluate purchase conditions or
+// authorize any mutation.
+type currentShopExchangeFormAuthority struct {
+	Selection  currentShopExchangeBuySelection
+	Definition shopExchangeDefinition
+}
+
+func resolveCurrentShopExchangeFormAuthority(shopPath, exchangePath string, request shopExchangeFormRequest) (currentShopExchangeFormAuthority, bool, error) {
+	selection, ok, err := resolveCurrentShopExchangeBuySelection(shopPath, shopExchangeBuyRequest{
+		ShopID: request.ShopID, Page: request.Page, Position: request.Position, Count: 1,
+	})
+	if err != nil || !ok {
+		return currentShopExchangeFormAuthority{}, ok, err
+	}
+	definition, err := loadShopExchangeDefinition(exchangePath, selection.Item.exchangeData)
+	if err != nil {
+		return currentShopExchangeFormAuthority{}, false, err
+	}
+	return currentShopExchangeFormAuthority{Selection: selection, Definition: definition}, true, nil
+}
+
+func resolveDefaultCurrentShopExchangeFormAuthority(request shopExchangeFormRequest) (currentShopExchangeFormAuthority, bool, error) {
+	if err := requireFileSHA256(defaultShopINIPath, exactCurrentShopINISHA256); err != nil {
+		return currentShopExchangeFormAuthority{}, false, err
+	}
+	if err := requireFileSHA256(defaultExchangeItemINIPath, exactCurrentExchangeItemSHA256); err != nil {
+		return currentShopExchangeFormAuthority{}, false, err
+	}
+	return resolveCurrentShopExchangeFormAuthority(defaultShopINIPath, defaultExchangeItemINIPath, request)
+}
+
+// buildAuthorizedNoPreviewExchangeFormFrame opens only the exact-current subset
+// whose authored BindStatus disables the binding-preview branch entirely. For
+// BindStatus <= 0, exact-current form_exchange.lua bypasses ShowBind and
+// ExchangeBind presentation, so zero placeholders are inert on that proven
+// client path. BindStatus > 0 remains fail-closed until the authoritative
+// runtime derivation of ShowBind/ExchangeBind is proven.
+//
+// This helper is display-only: it does not authorize an exchange mutation.
+func buildAuthorizedNoPreviewExchangeFormFrame(authority currentShopExchangeFormAuthority, request shopExchangeFormRequest) ([]byte, bool, error) {
+	if authority.Definition.BindStatus > 0 {
+		return nil, false, nil
+	}
+	config, err := encodeShopExchangeConfig(authority.Definition, shopExchangeRuntimeBind{})
+	if err != nil {
+		return nil, false, err
+	}
+	frame, err := serverShopExchangeFormMessage(request, config)
+	if err != nil {
+		return nil, false, err
+	}
+	return frame, true, nil
+}
+
 // handleShopExchangeContract recognizes the exact current-client request
 // layouts without pretending that the server-side exchange implementation is
-// complete. The exact current InitCurExchangeData 11-field grammar is now
-// implemented separately. This handler still blocks before S2C 557 because
-// ShowBind and ExchangeBind are runtime response values not authored by current
-// ExchangeItem.ini, and their server-authoritative derivation is not yet proven.
+// complete. S2C 557 is enabled only for authenticated mode3 definitions whose
+// BindStatus <= 0, where exact-current Lua bypasses the ShowBind/ExchangeBind
+// preview branch. BindStatus > 0 remains fail-closed until those runtime values
+// have a proven server-authoritative derivation. The 0x4f mutation path remains
+// fail-closed independently.
 func handleShopExchangeContract(link sceneMessageConnection, player *playerActor, custom clientCustomMessage, remote string) (bool, error) {
 	if request, matched, err := parseShopExchangeFormRequest(custom); matched {
 		if err != nil {
 			return true, err
 		}
-		log.Printf("%s: current shop exchange form request view=%d bind=%d shop=%s page=%d pos=%d blocked: ShowBind/ExchangeBind server rule unresolved",
+		if link == nil {
+			return true, fmt.Errorf("shop exchange form requires active scene connection")
+		}
+		authority, authorized, loadErr := resolveDefaultCurrentShopExchangeFormAuthority(request)
+		if loadErr != nil {
+			log.Printf("%s: current shop exchange form request view=%d bind=%d shop=%s page=%d pos=%d blocked: exact-current shop/exchange authority unavailable: %v",
+				remote, request.ViewIdent, request.BindIndex, request.ShopID, request.Page, request.Position, loadErr)
+			return true, nil
+		}
+		if !authorized {
+			log.Printf("%s: current shop exchange form request view=%d bind=%d shop=%s page=%d pos=%d blocked: request is not an authenticated mode3 exchange listing",
+				remote, request.ViewIdent, request.BindIndex, request.ShopID, request.Page, request.Position)
+			return true, nil
+		}
+		frame, sendable, frameErr := buildAuthorizedNoPreviewExchangeFormFrame(authority, request)
+		if frameErr != nil {
+			return true, fmt.Errorf("build shop exchange form shop=%s page=%d pos=%d: %w", request.ShopID, request.Page, request.Position, frameErr)
+		}
+		if !sendable {
+			log.Printf("%s: current shop exchange form request view=%d bind=%d shop=%s page=%d pos=%d blocked: BindStatus preview requires unresolved ShowBind/ExchangeBind",
+				remote, request.ViewIdent, request.BindIndex, request.ShopID, request.Page, request.Position)
+			return true, nil
+		}
+		if writeErr := link.WriteFrame(frame); writeErr != nil {
+			return true, fmt.Errorf("write shop exchange form shop=%s page=%d pos=%d: %w", request.ShopID, request.Page, request.Position, writeErr)
+		}
+		log.Printf("%s: current shop exchange form sent view=%d bind=%d shop=%s page=%d pos=%d bind_preview=disabled",
 			remote, request.ViewIdent, request.BindIndex, request.ShopID, request.Page, request.Position)
 		return true, nil
 	}

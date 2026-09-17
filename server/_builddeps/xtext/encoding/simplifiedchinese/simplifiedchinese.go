@@ -10,8 +10,8 @@ type Encoder struct{}
 
 func (identityEncoding) NewDecoder() *Decoder { return &Decoder{} }
 func (identityEncoding) NewEncoder() *Encoder { return &Encoder{} }
-func (*Decoder) Reset()                  {}
-func (*Encoder) Reset()                  {}
+func (*Decoder) Reset()                       {}
+func (*Encoder) Reset()                       {}
 
 func cp(dst, src []byte) (int, int, error) {
 	n := copy(dst, src)

@@ -26,6 +26,13 @@ jobs:
           git diff -- server/cmd/protocol-probe/zz_recovered_overlay.go
           test "$(git diff --name-only | wc -l)" -eq 1
           test "$(git diff --name-only)" = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+      - name: Compile pinned identity-only decoder compatibility shim
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server/_builddeps/xtext
+          go test ./encoding/simplifiedchinese
+          echo 'NOTE: this compile check does NOT validate GBK text conversion'
       - name: Run isolated arithmetic boundary tests
         shell: bash
         run: |

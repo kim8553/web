@@ -270,11 +270,17 @@ func main() {
 		}
 		log.Printf("quest catalog ready definitions=%d path=%s", len(questCatalog), defaultQuestTaskRoot)
 	}
-	dropTable, err := loadDropTable(defaultDropTablePath)
+	dropCatalog, err := loadDropTable(defaultDropTablePath)
 	if err != nil {
-		log.Fatalf("load drop table: %v", err)
+		if errors.Is(err, os.ErrNotExist) {
+			dropCatalog = &dropTable{byDropID: make(map[string]*dropTableSection)}
+			log.Printf("drop table unavailable path=%s: %v; continuing with gift-box drop resolution disabled", defaultDropTablePath, err)
+		} else {
+			log.Fatalf("load drop table: %v", err)
+		}
+	} else {
+		log.Printf("drop table ready dropIDs=%d path=%s", len(dropCatalog.byDropID), defaultDropTablePath)
 	}
-	log.Printf("drop table ready dropIDs=%d path=%s", len(dropTable.byDropID), defaultDropTablePath)
 	gm := newGMHub()
 	if *gmListen != "" {
 		go serveGM(*gmListen, gm, itemCatalog, equipCatalog, store, stringNames)
@@ -290,7 +296,7 @@ func main() {
 			log.Print(err)
 			continue
 		}
-		go handle(conn, store, facultyStore, shortcutStore, bagStore, equipStore, jingmaiStore, currencyStore, qinggongStore, skillStore, fwzCardStore, itemCatalog, equipCatalog, dropTable, npcSchema, sceneRegistry, staticNPCs, npcFuncs, qingGongCatalog, float32(*npcRadius), *npcPatrolCount, int32(*demoDamage), int32(*starterSilver), switchDestination, patrolPathDir, gm)
+		go handle(conn, store, facultyStore, shortcutStore, bagStore, equipStore, jingmaiStore, currencyStore, qinggongStore, skillStore, fwzCardStore, itemCatalog, equipCatalog, dropCatalog, npcSchema, sceneRegistry, staticNPCs, npcFuncs, qingGongCatalog, float32(*npcRadius), *npcPatrolCount, int32(*demoDamage), int32(*starterSilver), switchDestination, patrolPathDir, gm)
 	}
 }
 func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, shortcutStore shortcutStoreIface, bagStore bagStoreIface, equipStore equipStoreIface, jingmaiStore jingMaiStoreIface, currencyStore currencyStoreIface, qinggongStore qingGongStoreIface, skillStore *skillGrantStore, fwzCardStore fwzCardStoreIface, itemCatalog *itemCatalog, equipCatalog *equipCatalog, dropTable *dropTable, npcSchema clientdata.Schema, sceneRegistry *sceneNPCRegistry, staticNPCs []npcSpawn, npcFuncs *npcfunc.Registry, qingGongCatalog *qinggong.Catalog, npcRadius float32, npcPatrolCount int, demoDamage int32, starterSilver int32, switchDestination *sceneDestination, patrolPathDir string, gm *gmHub) {

@@ -9,7 +9,6 @@ $exe = Join-Path $PSScriptRoot 'stage58-live-server.exe'
 $lister = Join-Path $PSScriptRoot 'loopback-lister.ps1'
 $logs = Join-Path $PSScriptRoot 'logs'
 $listerLogs = Join-Path $logs 'lister'
-$gameLog = Join-Path $logs 'game-19061.current.log'
 $runtimeLog = Join-Path $logs 'protocol-probe-live.log'
 
 if (-not (Test-Path $exe)) { throw "Missing stage58-live-server.exe: $exe" }
@@ -55,7 +54,7 @@ if ($listerOwners.Count -eq 0) {
 }
 
 $serverArgs = @('-listen','127.0.0.1:19061','-gm-listen','127.0.0.1:19062','-log-file',$runtimeLog)
-$serverProc = Start-Process -FilePath $exe -ArgumentList $serverArgs -WorkingDirectory $root -RedirectStandardOutput $gameLog -RedirectStandardError $gameLog -PassThru
+$serverProc = Start-Process -FilePath $exe -ArgumentList $serverArgs -WorkingDirectory $root -PassThru
 Write-Host "Started game service PID=$($serverProc.Id)"
 
 $deadline = (Get-Date).AddSeconds(20)
@@ -81,19 +80,19 @@ Write-Host "19062 GM          : $($p19062.Count -gt 0)"
 if ($serverProc.HasExited -or $p4000.Count -eq 0 -or $p19061.Count -eq 0 -or $p19062.Count -eq 0) {
     Write-Host ''
     Write-Host 'STAGE58_READY=NO'
-    Write-Host "Game log: $gameLog"
-    if (Test-Path $gameLog) {
-        Write-Host '--- last game log lines ---'
-        Get-Content $gameLog -Tail 30
+    Write-Host "Runtime log: $runtimeLog"
+    if (Test-Path $runtimeLog) {
+        Write-Host '--- last runtime log lines ---'
+        Get-Content $runtimeLog -Tail 30
     }
     throw 'Stage58 local service stack did not become ready. Do not launch the game client yet.'
 }
 
 Write-Host ''
 Write-Host 'STAGE58_READY=YES'
-Write-Host 'All three original local-service ports are listening. Keep this window and the server-list window open.'
+Write-Host 'All three original local-service ports are listening. Keep this window and the server-list/game windows open.'
 Write-Host 'This proves local listeners only; latest-client LIVE/E2E is still unverified until an actual client connects.'
-Write-Host "Game log: $gameLog"
+Write-Host "Runtime log: $runtimeLog"
 Write-Host ''
 Write-Host 'Press Enter only when you want this launcher window to close. It does not kill the server processes.'
 [void](Read-Host)

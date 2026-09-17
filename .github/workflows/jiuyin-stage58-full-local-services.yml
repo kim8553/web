@@ -1,0 +1,113 @@
+name: JIUYIN Stage58 Full Local Services
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - '.github/workflows/jiuyin-stage58-full-local-services.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+
+      - name: Verify original local-service contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $original = Get-Content -Raw 'server/启动本地九阴服务.bat'
+          foreach ($needle in @('127.0.0.1:4000','127.0.0.1:19061','127.0.0.1:19062','loopback-lister.ps1')) {
+            if (-not $original.Contains($needle)) { throw "original local-service contract missing: $needle" }
+          }
+          $lister = Get-Content -Raw 'server/loopback-lister.ps1'
+          if (-not $lister.Contains("'$svrlist #")) { throw 'original loopback server-list response missing' }
+          if (-not $lister.Contains('19061 0')) { throw 'original loopback list does not target game port 19061' }
+          Write-Host 'ORIGINAL_LOCAL_SERVICE_CONTRACT=PASS'
+
+      - name: Verify Stage58 launcher syntax and contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($script in @('tools/stage58-live-services/run-stage58-live-services.ps1','server/loopback-lister.ps1')) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors)
+            if ($errors.Count -ne 0) { $errors | Format-List | Out-String | Write-Host; throw "PowerShell parse failed: $script" }
+          }
+          $launcher = Get-Content -Raw 'tools/stage58-live-services/run-stage58-live-services.ps1'
+          foreach ($needle in @('4000','19061','19062','STAGE58_READY=YES','STAGE58_READY=NO','NINEYIN_SERVER_ROOT')) {
+            if (-not $launcher.Contains($needle)) { throw "Stage58 launcher contract missing: $needle" }
+          }
+          Write-Host 'STAGE58_LAUNCHER_STATIC=PASS'
+
+      - name: Verify retained startup and shop changes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $main = Get-Content -Raw 'server/cmd/protocol-probe/main.go'
+          foreach ($needle in @('continuing without optional GM display-name localization','continuing with gift-box drop resolution disabled')) {
+            if (-not $main.Contains($needle)) { throw "retained startup fix missing: $needle" }
+          }
+          $buy = Get-Content -Raw 'server/cmd/protocol-probe/latest_client_normal_shop_atomic_buy.go'
+          if (-not $buy.Contains('normalShopAtomicBuy')) { throw 'normal buy 0x46 implementation missing' }
+          Write-Host 'RETAINED_STAGE54_57_SOURCE=PASS'
+
+      - name: Compile Windows server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'compile test failed' }
+            go build -trimpath -o "$env:RUNNER_TEMP\stage58-live-server.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          } finally { Pop-Location }
+          Write-Host 'WINDOWS_COMPILE=PASS; USER_LIVE_E2E_NOT_RUN'
+
+      - name: Build Stage58 package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = "$env:RUNNER_TEMP\stage58-pkg"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          New-Item -ItemType Directory -Force -Path (Join-Path $pkg 'logs') | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\stage58-live-server.exe" $pkg
+          Copy-Item 'server/loopback-lister.ps1' $pkg
+          Copy-Item 'tools/stage58-live-services/run-stage58-live-services.ps1' $pkg
+          Copy-Item 'tools/stage58-live-services/RUN_STAGE58_LIVE.bat' $pkg
+          Copy-Item 'tools/stage58-live-services/README_KO.md' $pkg
+          $head = git rev-parse HEAD
+          $info = @(
+            'Stage58 full local services Windows test package',
+            "Source branch head: $head",
+            'Server lineage: user-supplied 9yin-go-server1.rar -> current kim8553/web Go source',
+            'Original local-service contract restored: list 4000 + game 19061 + GM 19062',
+            'loopback-lister.ps1 copied unchanged from server runtime source',
+            'Stage54 normal buy 0x46 JSON/MySQL persistence retained',
+            'Stage55/56/57 startup compatibility changes retained',
+            'Compile: PASS',
+            'User latest-client LIVE/E2E: NOT RUN'
+          )
+          [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $pkg -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $pkg 'SHA256SUMS.txt')
+          $zip = "$env:RUNNER_TEMP\STAGE58_9YIN_GO_SERVER1_FULL_LOCAL_SERVICES_WINDOWS_20260918.zip"
+          Compress-Archive -Path "$pkg\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage58-9yin-go-server1-full-local-services-windows
+          path: ${{ runner.temp }}/STAGE58_9YIN_GO_SERVER1_FULL_LOCAL_SERVICES_WINDOWS_20260918.zip
+          if-no-files-found: error
+          retention-days: 14

@@ -349,8 +349,38 @@ func handleShopExchangeContract(link sceneMessageConnection, player *playerActor
 				remote, request.ShopID, request.Page, request.Position, request.Count)
 			return true, nil
 		}
-		log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d authenticated config=%s exchange_data=%d leaves=%d blocked: condition acceptance/cost/bind/commit path unresolved",
-			remote, request.ShopID, request.Page, request.Position, request.Count, authorized.Selection.Item.configID, authorized.Selection.Item.exchangeData, len(authorized.Capability.Leaves))
+		// The 508 evaluator can describe the current player's condition roots,
+		// but those roots are not an exact purchase authorization: neither the
+		// native Condition/Condition2 acceptance rule nor an atomic player-state
+		// snapshot and transaction have been proven. Observe only; never grant.
+		conditionAuthority, conditionErr := loadDefaultCurrentShopConditionAuthority()
+		if conditionErr != nil || conditionAuthority == nil || conditionAuthority.catalog == nil || player == nil {
+			log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d blocked: condition observation unavailable: %v",
+				remote, request.ShopID, request.Page, request.Position, request.Count, conditionErr)
+			return true, nil
+		}
+		evaluator := exactCurrentConditionEvaluator{
+			catalog: conditionAuthority.catalog, player: player,
+			skillMaxTable: conditionAuthority.skillMaxTable,
+		}
+		details, supported, observationErr := evaluateExchangeConditionDetails(
+			authorized.Definition.Condition, authorized.Definition.Condition2,
+			authorized.Definition.Filters, conditionAuthority.catalog.resolve, evaluator.evaluate,
+		)
+		if observationErr != nil {
+			log.Printf("%s: current shop exchange buy request shop=%s exchange_data=%d blocked: condition observation error: %v",
+				remote, request.ShopID, authorized.Selection.Item.exchangeData, observationErr)
+			return true, nil
+		}
+		rootResults := make([]bool, len(details))
+		for i, detail := range details {
+			rootResults[i] = detail.Satisfied
+		}
+		observation := summarizeCurrentShopExchangeConditionResults(rootResults, supported)
+		log.Printf("%s: current shop exchange buy request shop=%s page=%d pos=%d count=%d authenticated config=%s exchange_data=%d leaves=%d roots=%d all_supported=%t unsatisfied_or_unresolved=%d blocked: native eligibility/cost/bind/commit path unresolved",
+			remote, request.ShopID, request.Page, request.Position, request.Count, authorized.Selection.Item.configID,
+			authorized.Selection.Item.exchangeData, len(authorized.Capability.Leaves), observation.RootCount,
+			observation.AllSupported, observation.UnsatisfiedOrUnresolved)
 		return true, nil
 	}
 	return false, nil

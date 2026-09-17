@@ -1,0 +1,37 @@
+name: JIUYIN Stage41 Exchange Shape Audit
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - tools/stage41_exchange_authority_shape_audit.py
+      - .github/workflows/jiuyin-stage41-exchange-shape-audit.yml
+      - recovery/CURRENT_EXCHANGE_0X4F_STAGE41_FIELD_SHAPE_AUDIT_20260917.md
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-synthetic-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate repeated keys, trailing delimiters, and fail-closed inputs
+        run: python3 -B tools/stage41_exchange_authority_shape_audit.py --self-test
+      - name: Require exact pinned current hashes from production source
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          import pathlib
+          import re
+          script = pathlib.Path('tools/stage41_exchange_authority_shape_audit.py')
+          spec = importlib.util.spec_from_file_location('stage41', script)
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          source = pathlib.Path('server/cmd/protocol-probe/latest_client_shop_condition_authority.go').read_text()
+          for name, constant in [('shop.ini', 'exactCurrentShopINISHA256'),
+                                 ('exchangeitem.ini', 'exactCurrentExchangeItemSHA256')]:
+              found = re.search(r'^\s*' + constant + r'\s*=\s*"([0-9a-f]{64})"', source, re.M)
+              if not found or found.group(1) != mod.HASHES[name]:
+                  raise SystemExit('SOURCE_HASH_DRIFT: ' + name)
+          print('CURRENT_SOURCE_HASHES_MATCH=PASS')
+          print('PRIVATE_REAL_PACKAGE_NOT_IN_ACTIONS=TRUE; REAL_PACKAGE_AUDIT_IN_ACTIONS=NOT_RUN')
+          PY

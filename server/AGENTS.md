@@ -1,8 +1,24 @@
 # Age of Wushu server reconstruction — repository instructions
 
-This repository is the editable Go-source implementation base. The original user-supplied
-`9yin-go-server1` archive is provenance only; do not rewrite history or claim it is the
-current Snail server implementation.
+This repository is the **continuing editable Go implementation descended from the user-supplied
+`9yin-go-server1.rar` server source base**. All server fixes, builds, and test-server packages must
+be produced from this source lineage (the current Git branch), not from an unrelated/older server
+folder or binary package. The original archive is provenance/source baseline; the current branch is
+the evolved editable implementation. Neither the archive nor this repository is authority for
+official Snail gameplay semantics.
+
+## Runtime/test-package baseline lock
+
+- Do **not** assume or hard-code an old runtime such as `D:\9yin_server`, V37/V45/V46/JYZJ, or any
+  other historical package as the server base.
+- A runnable test binary must be built from the current `server/cmd/protocol-probe` tree and run
+  against the user's actual extracted/evolved `9yin-go-server1` runtime root, supplied explicitly
+  through `NINEYIN_SERVER_ROOT` or a verified path.
+- Do not infer MySQL install paths, `mysql.env`, database directories, or credentials from historical
+  environments. Inspect only the current `9yin-go-server1` runtime/configuration or user-provided
+  current evidence.
+- If current-client resources are required but are intentionally absent from Git, report that exact
+  dependency. Never silently substitute resources from an older server package.
 
 ## Authority and evidence rules
 

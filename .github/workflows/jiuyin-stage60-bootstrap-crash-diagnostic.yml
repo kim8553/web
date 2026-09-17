@@ -5,7 +5,7 @@ on:
     branches: [stage37-assistant-handoff-20260917]
     paths:
       - 'server/cmd/protocol-probe/stage60_bootstrap_diagnostic.go'
-      - 'server/cmd/protocol-probe/stage60_bootstrap_diagnostic_test.go'
+      - 'server/internal/stage60diag/**'
       - 'tools/stage60-live-login-e2e/stage60_bootstrap_gate_patch.py'
       - 'tools/stage60-live-login-e2e/RUN_STAGE60_BOOTSTRAP_DIAG.bat'
       - '.github/workflows/jiuyin-stage60-bootstrap-crash-diagnostic.yml'
@@ -34,7 +34,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           python tools/stage60-live-login-e2e/stage60_bootstrap_gate_patch.py .
           if ($LASTEXITCODE -ne 0) { throw 'Stage60 bootstrap gate patch failed' }
-          gofmt -w server/cmd/protocol-probe/main.go server/cmd/protocol-probe/stage60_bootstrap_diagnostic.go server/cmd/protocol-probe/stage60_bootstrap_diagnostic_test.go
+          gofmt -w server/cmd/protocol-probe/main.go server/cmd/protocol-probe/stage60_bootstrap_diagnostic.go server/internal/stage60diag/gate.go server/internal/stage60diag/gate_test.go
           $main = Get-Content -Raw 'server/cmd/protocol-probe/main.go'
           foreach ($needle in @('STAGE60_BOOTSTRAP_GATE_HOLD','stage60SendPlayerSpawnGated','post-spawn output intentionally withheld for crash isolation')) {
             if (-not $main.Contains($needle)) { throw "diagnostic hook missing: $needle" }
@@ -72,13 +72,13 @@ jobs:
           } finally { Pop-Location }
           Write-Host 'STAGE60_SCENE_ENCODING_FIX_STILL_PASS'
 
-      - name: Run bootstrap gate targeted tests
+      - name: Run resource-free bootstrap gate tests
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           Push-Location server
           try {
-            go test ./cmd/protocol-probe -run '^TestStage60BootstrapGate' -count=1
+            go test ./internal/stage60diag -count=1
             if ($LASTEXITCODE -ne 0) { throw 'Stage60 bootstrap gate tests failed' }
           } finally { Pop-Location }
           Write-Host 'STAGE60_BOOTSTRAP_GATE_TESTS=PASS'
@@ -135,7 +135,7 @@ jobs:
             'Diagnostic changes no opcode/field semantics; it only suppresses already-existing sendPlayerSpawn writes after a selected frame count',
             'Gate range: 0..5; recommended first run: 3',
             'After the selected gate, later post-spawn output is intentionally withheld while the TCP read loop remains alive',
-            'Bootstrap gate targeted tests: PASS',
+            'Bootstrap gate resource-free tests: PASS',
             'Stage59 identity guard tests: PASS',
             'Windows compile/build: PASS',
             'LIVE crash boundary with this diagnostic build: NOT RUN'

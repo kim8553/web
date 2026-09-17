@@ -1,0 +1,74 @@
+name: Stage37 restored normal-shop pre-debit safety patch
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - '.github/workflows/stage37-restored-shop-guard-apply.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  verify-and-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Check exact source and preflight ordinary purchase without modifying other handlers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = stage37-restored-20260918
+          python3 tools/stage37_shop_purchase_guard_apply.py
+          test -z "$(gofmt -l server/cmd/protocol-probe/shop_purchase_guard.go server/cmd/protocol-probe/shop_purchase_guard_test.go)"
+          git diff --check
+          git diff --exit-code -- server/cmd/protocol-probe/shop_catalog.go
+          git diff --name-only | grep -Fx 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+      - name: Verify regression cases in isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server/cmd/protocol-probe
+          GO111MODULE=off go test -count=1 -v shop_purchase_guard.go shop_purchase_guard_test.go
+      - name: Resolve genuine dependencies in a temporary modfile
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+          go mod download -modfile=ci.real.mod
+      - name: Run existing Go tests, vet, protocol compile and Windows build
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go test -modfile=ci.real.mod -run '^TestCheckedOrdinaryShopTotal$' -count=1 ./cmd/protocol-probe
+          go test -modfile=ci.real.mod -c -o /tmp/stage37-restored-protocol.test ./cmd/protocol-probe
+          go vet -modfile=ci.real.mod ./...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o /tmp/stage37-restored-shop-guard.exe ./cmd/protocol-probe
+          file /tmp/stage37-restored-shop-guard.exe | grep -E 'PE32\+ executable.*x86-64'
+          echo 'SCOPED_TESTS=PASS PROTOCOL_COMPILE=PASS VET=PASS WINDOWS_BUILD=PASS FULL_PROTOCOL_RUNTIME=NOT_RUN LIVE_E2E=NOT_RUN'
+      - name: Commit only reviewed handler change, without force push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- server/cmd/protocol-probe/zz_recovered_overlay.go
+          test "$(git diff --cached --name-only)" = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+          git commit -m 'fix(shop): preflight reward and reject overflowing wallet debit'
+          git push origin HEAD:refs/heads/stage37-restored-20260918
+          echo "SHOP_GUARD_COMMIT=$(git rev-parse HEAD)"

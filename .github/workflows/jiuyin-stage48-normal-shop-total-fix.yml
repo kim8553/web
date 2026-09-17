@@ -39,12 +39,16 @@ jobs:
           set -euo pipefail
           cd server/cmd/protocol-probe
           GO111MODULE=off go test -race -count=1 -v latest_client_normal_shop_buy_guard.go latest_client_normal_shop_buy_guard_test.go
-      - name: Compile actual server package and run arithmetic test
+      - name: Compile actual server package without executing private-resource init
         shell: bash
         run: |
           set -euo pipefail
           cd server
-          go test ./cmd/protocol-probe -run '^TestNormalShopSafeTotal$' -count=1
+          go test -c -o "$RUNNER_TEMP/protocol-probe.test" ./cmd/protocol-probe
+          go build -o "$RUNNER_TEMP/protocol-probe" ./cmd/protocol-probe
+          test -s "$RUNNER_TEMP/protocol-probe.test"
+          test -s "$RUNNER_TEMP/protocol-probe"
+          echo 'COMPILE_ONLY=YES: no skill_new.ini or synthetic substitute was used'
       - name: Publish only tested production guard patch
         shell: bash
         run: |
@@ -59,6 +63,8 @@ jobs:
       - name: Scope disclosure
         run: |
           echo 'NORMAL_SHOP_BUY_TOTAL_BOUNDARY_ONLY=TESTED'
+          echo 'FULL_SERVER_PACKAGE=COMPILED_NOT_EXECUTED'
+          echo 'SKILL_NEW_INI_IN_PUBLIC_CHECKOUT=ABSENT'
           echo 'DECODER_IDENTITY_SHIM=NOT_REAL_GBK'
           echo 'GM_GRANT_AND_EXCHANGE_0X4F=UNCHANGED'
           echo 'SELL_HANDLER_AND_ATOMIC_TRANSACTION=NOT_IMPLEMENTED'

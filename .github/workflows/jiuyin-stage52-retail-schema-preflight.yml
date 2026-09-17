@@ -1,0 +1,66 @@
+name: JIUYIN Stage52 Retail Schema Preflight
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: [.github/workflows/jiuyin-stage52-retail-schema-preflight.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  schema-fixture:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: stage52-disposable-ci-only
+          MYSQL_DATABASE: jiuyin_stage52
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping --silent -h 127.0.0.1 -uroot -pstage52-disposable-ci-only"
+          --health-interval=5s --health-timeout=5s --health-retries=24
+    env:
+      NINEYIN_STAGE52_TEST_MYSQL_DSN: root:stage52-disposable-ci-only@tcp(127.0.0.1:3306)/jiuyin_stage52?parseTime=true
+      NINEYIN_STAGE52_DISPOSABLE: YES_DROP_STAGE52_TABLES
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check read-only production scope and formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l server/cmd/retail-schema-preflight/main.go server/cmd/retail-schema-preflight/main_test.go server/cmd/retail-schema-preflight/integration_test.go)"
+          if grep -nE '(\.Exec(Context)?\(|\.Up\(|DELETE FROM |INSERT INTO |UPDATE [a-zA-Z_]|CREATE TABLE |DROP TABLE |ALTER TABLE |RENAME TABLE )' server/cmd/retail-schema-preflight/main.go; then
+            echo 'FAIL: write operation appeared in production preflight'; exit 1
+          fi
+          if grep -q '^replace github.com/go-sql-driver/mysql' server/go.mod; then
+            echo 'FAIL: inert MySQL driver is still selected'; exit 1
+          fi
+          echo 'PREFLIGHT_PRODUCTION_SOURCE_READ_ONLY=PASS'
+      - name: Unit tests and real disposable MySQL PASS/BLOCKED cases
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go test -race -count=1 -v ./cmd/retail-schema-preflight
+          go test -race -count=1 -v -tags=mysql_integration ./cmd/retail-schema-preflight
+      - name: Compile schema preflight and actual server for Linux and Windows
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go build -o "$RUNNER_TEMP/retail-schema-preflight" ./cmd/retail-schema-preflight
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/retail-schema-preflight.exe" ./cmd/retail-schema-preflight
+          go test -c -o "$RUNNER_TEMP/protocol-probe.test" ./cmd/protocol-probe
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/protocol-probe.exe" ./cmd/protocol-probe
+          test -s "$RUNNER_TEMP/retail-schema-preflight"
+          test -s "$RUNNER_TEMP/retail-schema-preflight.exe"
+          test -s "$RUNNER_TEMP/protocol-probe.test"
+          test -s "$RUNNER_TEMP/protocol-probe.exe"
+          echo 'LINUX_WINDOWS_COMPILE_ONLY=PASS; USER_DB_AND_GAME_NOT_ACCESSED'
+      - name: Explicit limits
+        run: |
+          echo 'STAGE52=READ_ONLY_AUDITOR_TESTED_ON_DISPOSABLE_MYSQL_ONLY'
+          echo 'USER_NINEYIN_SCHEMA=NOT_CONNECTED'
+          echo 'USER_WINDOWS_BOOT_CLIENT_BUY_RECONNECT=NOT_RUN'
+          echo 'SALE_0X47=NOT_IMPLEMENTED; GM_AND_EXCHANGE_0X4F=DEFERRED'

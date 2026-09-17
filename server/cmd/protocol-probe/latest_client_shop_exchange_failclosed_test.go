@@ -89,3 +89,52 @@ func TestResolveCurrentShopExchangeBuySelectionReResolvesAuthoredMode3Row(t *tes
 		t.Fatalf("non-positive count accepted: ok=%t err=%v", ok, err)
 	}
 }
+
+func TestResolveAuthorizedCurrentShopExchangeBuyAuthorityRequiresSafeAuthenticatedProjection(t *testing.T) {
+	dir := t.TempDir()
+	shopPath := filepath.Join(dir, "shop.ini")
+	exchangePath := filepath.Join(dir, "exchangeitem.ini")
+	if err := os.WriteFile(shopPath, []byte("[shop_mode3]\nType=7\nPageInfo=all\n0=item_exchange,2,3,0,0,0,4,70123\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(exchangePath, []byte("[70123]\nType=2\nBindStatus=1\nItem=item_cost,2\nCondition=10\nCondition2=20\nFilters=20\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := shopExchangeBuyRequest{ShopID: "shop_mode3", Page: 0, Position: 5, Count: 2}
+	authority := &currentShopConditionAuthority{
+		definitions: map[int32]exchangeConditionSpec{
+			70123: {Condition: "10", Condition2: "20", Filters: "20"},
+		},
+		audit: shopExchangeConditionCapabilityAudit{ByExchangeData: map[int32]exchangeConditionCapability{
+			70123: {ExchangeData: 70123, Safe: true, Leaves: []int32{10, 20}},
+		}},
+	}
+
+	got, ok, err := resolveAuthorizedCurrentShopExchangeBuyAuthority(shopPath, exchangePath, authority, request)
+	if err != nil {
+		t.Fatalf("authorized resolve: %v", err)
+	}
+	if !ok {
+		t.Fatal("SAFE authenticated mode3 row was rejected")
+	}
+	if got.Selection.Item.configID != "item_exchange" || got.Selection.Item.exchangeData != 70123 {
+		t.Fatalf("selection=%+v", got.Selection.Item)
+	}
+	if got.Definition.BindStatus != 1 || got.Definition.Item != "item_cost,2" {
+		t.Fatalf("definition=%+v", got.Definition)
+	}
+	if !got.Capability.Safe || len(got.Capability.Leaves) != 2 {
+		t.Fatalf("capability=%+v", got.Capability)
+	}
+
+	authority.audit.ByExchangeData[70123] = exchangeConditionCapability{ExchangeData: 70123, Safe: false}
+	if _, ok, err := resolveAuthorizedCurrentShopExchangeBuyAuthority(shopPath, exchangePath, authority, request); err != nil || ok {
+		t.Fatalf("unsafe ExchangeData accepted: ok=%t err=%v", ok, err)
+	}
+
+	authority.audit.ByExchangeData[70123] = exchangeConditionCapability{ExchangeData: 70123, Safe: true}
+	authority.definitions[70123] = exchangeConditionSpec{Condition: "999", Condition2: "20", Filters: "20"}
+	if _, ok, err := resolveAuthorizedCurrentShopExchangeBuyAuthority(shopPath, exchangePath, authority, request); err == nil || ok {
+		t.Fatalf("projection drift accepted: ok=%t err=%v", ok, err)
+	}
+}

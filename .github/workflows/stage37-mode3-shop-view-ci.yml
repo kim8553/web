@@ -24,7 +24,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected_server_tree='35d97c02d9f2871dd332d8a25976580c05c1c5f7'
+          expected_server_tree='70083784bbedd6c71a020873bc761b64efe48580'
           actual_server_tree="$(git rev-parse HEAD:server)"
           printf 'expected_server_tree=%s\nactual_server_tree=%s\ncommit=%s\n' "$expected_server_tree" "$actual_server_tree" "$(git rev-parse HEAD)"
           test "$actual_server_tree" = "$expected_server_tree"

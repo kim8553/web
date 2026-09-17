@@ -46,11 +46,14 @@ func TestRetailSchemaPreflightDisposableMySQL(t *testing.T) {
 		`CREATE TABLE role_bag_items (role_id BIGINT UNSIGNED NOT NULL, seq INT NOT NULL, slot INT NOT NULL, config_id VARCHAR(128) NOT NULL, item_type INT NOT NULL, amount INT NOT NULL, view_id INT NOT NULL, name VARCHAR(128) NULL, equip_type VARCHAR(128) NULL, art_pack INT NULL, hardiness INT NULL, max_hardiness INT NULL, PRIMARY KEY(role_id,seq)) ENGINE=InnoDB`,
 		`CREATE TABLE schema_migrations (version BIGINT UNSIGNED PRIMARY KEY, checksum BINARY(32) NOT NULL) ENGINE=InnoDB`,
 		`INSERT INTO roles(role_id, account_id) VALUES (1,1)`,
-		`INSERT INTO role_currency(role_id, snapshot) VALUES (1,'{"silver":100,"gold":5,"silver_card":0,"silver_ticket":0}')`,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Bind JSON as bytes: avoid dialect-dependent SQL string escaping.
+	if _, err := db.ExecContext(ctx, "INSERT INTO role_currency(role_id, snapshot) VALUES (?, ?)", 1, []byte(`{"silver":100,"gold":5,"silver_card":0,"silver_ticket":0}`)); err != nil {
+		t.Fatal(err)
 	}
 	embedded, err := migrations.Embedded()
 	if err != nil || len(embedded) == 0 {

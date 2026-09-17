@@ -161,7 +161,7 @@ func inspect(ctx context.Context, db *sql.DB) (report, error) {
 			r.add("currency.coverage", "PASS", fmt.Sprintf("Currency rows present for all %d roles", total))
 		}
 		var invalid int64
-		if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM role_currency WHERE snapshot IS NULL OR JSON_VALID(snapshot)=0").Scan(&invalid); err != nil {
+		if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM role_currency WHERE snapshot IS NULL OR JSON_VALID(CAST(snapshot AS CHAR CHARACTER SET utf8mb4))=0").Scan(&invalid); err != nil {
 			return r, fmt.Errorf("read aggregate currency JSON validity failed")
 		}
 		if invalid != 0 {

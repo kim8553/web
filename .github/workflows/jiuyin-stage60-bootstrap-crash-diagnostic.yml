@@ -1,0 +1,158 @@
+name: JIUYIN Stage60 Scene Bootstrap Crash Diagnostic
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/cmd/protocol-probe/stage60_bootstrap_diagnostic.go'
+      - 'server/cmd/protocol-probe/stage60_bootstrap_diagnostic_test.go'
+      - 'tools/stage60-live-login-e2e/stage60_bootstrap_gate_patch.py'
+      - 'tools/stage60-live-login-e2e/RUN_STAGE60_BOOTSTRAP_DIAG.bat'
+      - '.github/workflows/jiuyin-stage60-bootstrap-crash-diagnostic.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-package:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache: false
+
+      - name: Apply narrow Stage60 bootstrap diagnostic hook
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          python tools/stage60-live-login-e2e/stage60_bootstrap_gate_patch.py .
+          if ($LASTEXITCODE -ne 0) { throw 'Stage60 bootstrap gate patch failed' }
+          gofmt -w server/cmd/protocol-probe/main.go server/cmd/protocol-probe/stage60_bootstrap_diagnostic.go server/cmd/protocol-probe/stage60_bootstrap_diagnostic_test.go
+          $main = Get-Content -Raw 'server/cmd/protocol-probe/main.go'
+          foreach ($needle in @('STAGE60_BOOTSTRAP_GATE_HOLD','stage60SendPlayerSpawnGated','post-spawn output intentionally withheld for crash isolation')) {
+            if (-not $main.Contains($needle)) { throw "diagnostic hook missing: $needle" }
+          }
+          Write-Host 'STAGE60_BOOTSTRAP_DIAGNOSTIC_HOOK=PASS'
+
+      - name: Verify launcher syntax and original service contract
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $original = Get-Content -Raw 'server/启动本地九阴服务.bat'
+          foreach ($needle in @('127.0.0.1:4000','127.0.0.1:19061','127.0.0.1:19062','loopback-lister.ps1')) {
+            if (-not $original.Contains($needle)) { throw "original local-service contract missing: $needle" }
+          }
+          $launcherPath = (Resolve-Path 'tools/stage60-live-login-e2e/run-stage60-live-services.ps1').Path
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile($launcherPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if (@($parseErrors).Count -gt 0) { throw "Stage60 launcher parse failed: $(@($parseErrors).Message -join '; ')" }
+          Write-Host 'STAGE60_LAUNCHER_AND_PORT_CONTRACT=PASS'
+
+      - name: Verify real x/text GBK dependency and exact Chengdu fixture
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $mod = Get-Content -Raw 'server/go.mod'
+          if ($mod -match 'replace\s+golang.org/x/text') { throw 'identity-only x/text shim is active again' }
+          Push-Location server
+          try {
+            $resolved = go list -m -f '{{.Path}} {{.Version}} {{if .Replace}}REPLACED={{.Replace.Path}}{{end}}' golang.org/x/text
+            Write-Host $resolved
+            if ($resolved -match 'REPLACED=') { throw "x/text unexpectedly replaced: $resolved" }
+            go test ./internal/clientdata -run '^TestLoadNPCCreatorOriginalChengduGatherNpcEncodingFixture$' -count=1
+            if ($LASTEXITCODE -ne 0) { throw 'exact Chengdu GatherNpc fixture failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_SCENE_ENCODING_FIX_STILL_PASS'
+
+      - name: Run bootstrap gate targeted tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test ./cmd/protocol-probe -run '^TestStage60BootstrapGate' -count=1
+            if ($LASTEXITCODE -ne 0) { throw 'Stage60 bootstrap gate tests failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_BOOTSTRAP_GATE_TESTS=PASS'
+
+      - name: Run Stage59 identity guard tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location 'server/internal/role'
+          try {
+            go test json_login_adoption.go json_m2_repository.go json_repository.go model.go mysql_repository.go repository.go zz_recovered_overlay.go json_login_adoption_test.go
+            if ($LASTEXITCODE -ne 0) { throw 'Stage59 JSON adoption tests failed' }
+          } finally { Pop-Location }
+          Push-Location 'server/cmd/protocol-probe'
+          try {
+            go test role_store.go runtime_paths.go latest_client_json_login_identity_adoption_test.go
+            if ($LASTEXITCODE -ne 0) { throw 'roleStore login-path test failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE59_IDENTITY_GUARDS_STILL_PASS'
+
+      - name: Compile and build Windows diagnostic server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Push-Location server
+          try {
+            go test -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'protocol package compile test failed' }
+            go build -trimpath -o "$env:RUNNER_TEMP\stage60-live-server.exe" ./cmd/protocol-probe
+            if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
+          } finally { Pop-Location }
+          Write-Host 'STAGE60_WINDOWS_DIAGNOSTIC_BUILD=PASS'
+
+      - name: Build Stage60 crash-isolation package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = "$env:RUNNER_TEMP\stage60-bootstrap-diag"
+          New-Item -ItemType Directory -Force -Path $pkg | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\stage60-live-server.exe" $pkg
+          Copy-Item 'server/loopback-lister.ps1' $pkg
+          Copy-Item 'tools/stage60-live-login-e2e/run-stage60-live-services.ps1' $pkg
+          Copy-Item 'tools/stage60-live-login-e2e/RUN_STAGE60_LIVE.bat' $pkg
+          Copy-Item 'tools/stage60-live-login-e2e/RUN_STAGE60_BOOTSTRAP_DIAG.bat' $pkg
+          Copy-Item 'tools/stage60-live-login-e2e/README_KO.md' $pkg
+          $head = git rev-parse HEAD
+          $info = @(
+            'Stage60 latest-client scene-bootstrap crash diagnostic package',
+            "Source branch head: $head",
+            'Server lineage: user-supplied 9yin-go-server1.rar -> current kim8553/web Go source',
+            'Prior LIVE result: list/login/role-list/choose-role PASS; PlayerEntry and player spawn chain reached; client forcibly closed before ClientReady',
+            'Server remained listening after client exit; roles.json SHA256 remained unchanged',
+            'Current confirmed scene-encoding/real-GBK fix retained',
+            'Diagnostic changes no opcode/field semantics; it only suppresses already-existing sendPlayerSpawn writes after a selected frame count',
+            'Gate range: 0..5; recommended first run: 3',
+            'After the selected gate, later post-spawn output is intentionally withheld while the TCP read loop remains alive',
+            'Bootstrap gate targeted tests: PASS',
+            'Stage59 identity guard tests: PASS',
+            'Windows compile/build: PASS',
+            'LIVE crash boundary with this diagnostic build: NOT RUN'
+          )
+          [IO.File]::WriteAllLines((Join-Path $pkg 'BUILD_INFO.txt'), $info, (New-Object Text.UTF8Encoding($false)))
+          Get-ChildItem $pkg -File | ForEach-Object {
+            $h = Get-FileHash $_.FullName -Algorithm SHA256
+            "$($h.Hash.ToLower())  $($_.Name)"
+          } | Set-Content -Encoding ascii (Join-Path $pkg 'SHA256SUMS.txt')
+          $zip = "$env:RUNNER_TEMP\STAGE60_9YIN_GO_SERVER1_BOOTSTRAP_CRASH_DIAGNOSTIC_WINDOWS_20260918.zip"
+          Compress-Archive -Path "$pkg\*" -DestinationPath $zip -CompressionLevel Optimal
+          Write-Host "SERVER_SHA256=$((Get-FileHash (Join-Path $pkg 'stage60-live-server.exe') -Algorithm SHA256).Hash.ToLower())"
+          Write-Host "PACKAGE_SHA256=$((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage60-9yin-go-server1-bootstrap-crash-diagnostic-windows
+          path: ${{ runner.temp }}/STAGE60_9YIN_GO_SERVER1_BOOTSTRAP_CRASH_DIAGNOSTIC_WINDOWS_20260918.zip
+          if-no-files-found: error
+          retention-days: 14

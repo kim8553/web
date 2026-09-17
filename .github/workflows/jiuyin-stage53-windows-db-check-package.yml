@@ -1,0 +1,78 @@
+name: JIUYIN Stage53 Windows DB Preflight Package
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: [.github/workflows/jiuyin-stage53-windows-db-check-package.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify preflight source is read-only and unit tests pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l server/cmd/retail-schema-preflight/*.go)"
+          if grep -nE '(\.Exec(Context)?\(|\.Up\(|DELETE FROM |INSERT INTO |UPDATE [a-zA-Z_]|CREATE TABLE |DROP TABLE |ALTER TABLE |RENAME TABLE )' server/cmd/retail-schema-preflight/main.go; then
+            echo 'FAIL: write operation in DB inspection executable'; exit 1
+          fi
+          cd server
+          go test -race -count=1 ./cmd/retail-schema-preflight
+          go test -c -o "$RUNNER_TEMP/protocol-probe.test" ./cmd/protocol-probe
+      - name: Build dedicated Windows diagnostic and server compile only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          mkdir -p "$RUNNER_TEMP/stage53-package"
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/stage53-package/retail-schema-preflight.exe" ./cmd/retail-schema-preflight
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/protocol-probe.exe" ./cmd/protocol-probe
+          test -s "$RUNNER_TEMP/stage53-package/retail-schema-preflight.exe"
+          test -s "$RUNNER_TEMP/protocol-probe.exe"
+          file "$RUNNER_TEMP/stage53-package/retail-schema-preflight.exe" | grep -E 'PE32\+.*x86-64'
+          cp ../tools/stage53-retail-db-check/run-stage53-preflight.ps1 "$RUNNER_TEMP/stage53-package/"
+          cp ../tools/stage53-retail-db-check/README_KO.md "$RUNNER_TEMP/stage53-package/"
+          cd "$RUNNER_TEMP/stage53-package"
+          sha256sum retail-schema-preflight.exe run-stage53-preflight.ps1 README_KO.md > SHA256SUMS.txt
+          zip -9 -q "$RUNNER_TEMP/stage53-windows-db-check.zip" retail-schema-preflight.exe run-stage53-preflight.ps1 README_KO.md SHA256SUMS.txt
+          unzip -l "$RUNNER_TEMP/stage53-windows-db-check.zip"
+          echo 'WINDOWS_DIAGNOSTIC_AND_SERVER_COMPILE=PASS; NO USER DATABASE CONNECTED'
+      - name: Upload clean diagnostic tools only
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage53-windows-db-check
+          path: ${{ runner.temp }}/stage53-windows-db-check.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Explicit limitations
+        run: |
+          echo 'STAGE53_PACKAGE=COMPILED_ONLY'
+          echo 'USER_DB_BACKUP_AND_SCHEMA=NOT_VERIFIED'
+          echo 'USER_WINDOWS_GAME_BUY_RECONNECT=NOT_RUN'
+          echo 'SALE_0X47=NOT_IMPLEMENTED; GM_GRANT_AND_EXCHANGE_0X4F=DEFERRED'
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile and smoke-test diagnostic without real credentials or DB
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\stage53-fixture" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\stage53-empty-server" | Out-Null
+          Push-Location server
+          try {
+            go test ./cmd/retail-schema-preflight
+            if ($LASTEXITCODE -ne 0) { throw 'Go diagnostic unit test failed' }
+            go build -o "$env:RUNNER_TEMP\stage53-fixture\retail-schema-preflight.exe" ./cmd/retail-schema-preflight
+            if ($LASTEXITCODE -ne 0) { throw 'Windows diagnostic build failed' }
+          } finally { Pop-Location }
+          Copy-Item tools/stage53-retail-db-check/run-stage53-preflight.ps1 "$env:RUNNER_TEMP\stage53-fixture\"
+          $env:NINEYIN_MYSQL_DSN = ''
+          $output = & powershell -NoProfile -NonInteractive -File "$env:RUNNER_TEMP\stage53-fixture\run-stage53-preflight.ps1" -ServerRoot "$env:RUNNER_TEMP\stage53-empty-server" 2>&1
+          if ($LASTEXITCODE -ne 2 -or (($output | Out-String) -notmatch 'BLOCKED: no local NINEYIN_MYSQL_DSN')) { throw 'Missing DSN did not fail closed' }
+          if (Test-Path "$env:RUNNER_TEMP\stage53-fixture\stage53_report.json") { throw 'Unexpected report without DB' }
+          Write-Host 'WINDOWS_NO_DSN_FAIL_CLOSED=PASS; USER_DB_NOT_ACCESSED'

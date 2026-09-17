@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"github.com/local/9yin-go-server/internal/auth"
 	"github.com/local/9yin-go-server/internal/role"
@@ -35,6 +36,15 @@ func (store *roleStore) Close() error {
 }
 func (store *roleStore) login(ctx context.Context, key role.AccountKey, passwordCT []byte) (role.Account, *role.RoleSnapshot, error) {
 	account, err := store.accounts.FindByKey(ctx, key)
+	if errors.Is(err, role.ErrNotFound) {
+		if repository, ok := store.accounts.(*role.JSONRepository); ok {
+			var adopted bool
+			account, adopted, err = repository.AdoptSoleUnverifiedLoginAccount(ctx, key, passwordCT)
+			if err == nil && !adopted {
+				err = role.ErrNotFound
+			}
+		}
+	}
 	if err != nil {
 		return role.Account{}, nil, err
 	}

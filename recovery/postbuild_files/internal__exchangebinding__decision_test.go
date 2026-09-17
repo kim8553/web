@@ -35,3 +35,27 @@ func TestDecisionExplicitBoundAndUnbound(t *testing.T) {
 		})
 	}
 }
+
+func TestFromMaterialDerivedBoundTrueIsAuthoritativeBound(t *testing.T) {
+	decision := FromMaterialDerivedBound(true)
+	if !decision.Known() {
+		t.Fatal("bound material consumption must produce a known bound decision")
+	}
+	got, err := decision.Require()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 1 {
+		t.Fatalf("status=%d want=1", got)
+	}
+}
+
+func TestFromMaterialDerivedBoundFalseStaysUnknown(t *testing.T) {
+	decision := FromMaterialDerivedBound(false)
+	if decision.Known() {
+		t.Fatal("all-unbound consumed materials do not prove final unbound status")
+	}
+	if _, err := decision.Require(); err == nil {
+		t.Fatal("unresolved authored/base binding precedence must fail closed")
+	}
+}

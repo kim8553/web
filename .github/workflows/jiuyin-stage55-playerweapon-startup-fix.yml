@@ -20,39 +20,28 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $path = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
           $text = Get-Content -Raw $path
-          $old = @'
-          weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
-          if weaponErr != nil {
-              return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
-          }
-          catalog.weaponModels = weaponModels
-          heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
-          if heldErr != nil {
-              return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
-          }
-          catalog.weaponHeld = heldModes
+          $pattern = '(?ms)^\s*weaponModels, weaponErr := loadPlayerWeaponModels\(defaultPlayerWeaponDir\)\r?\n\s*if weaponErr != nil \{\r?\n\s*return nil, fmt\.Errorf\("load playerweapon models: %w", weaponErr\)\r?\n\s*\}\r?\n\s*catalog\.weaponModels = weaponModels\r?\n\s*heldModes, heldErr := loadWeaponHeldModes\(defaultPlayerWeaponDir\)\r?\n\s*if heldErr != nil \{\r?\n\s*return nil, fmt\.Errorf\("load playerweapon held modes: %w", heldErr\)\r?\n\s*\}\r?\n\s*catalog\.weaponHeld = heldModes\r?\n'
+          $replacement = @'
+          	catalog.weaponModels = make(map[string]string)
+          	catalog.weaponHeld = make(map[string]string)
+          	if _, statErr := os.Stat(defaultPlayerWeaponDir); statErr == nil {
+          		weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
+          		if weaponErr != nil {
+          			return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
+          		}
+          		catalog.weaponModels = weaponModels
+          		heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
+          		if heldErr != nil {
+          			return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
+          		}
+          		catalog.weaponHeld = heldModes
+          	} else if !os.IsNotExist(statErr) {
+          		return nil, fmt.Errorf("stat playerweapon directory: %w", statErr)
+          	}
           '@
-          $new = @'
-          catalog.weaponModels = make(map[string]string)
-          catalog.weaponHeld = make(map[string]string)
-          if _, statErr := os.Stat(defaultPlayerWeaponDir); statErr == nil {
-              weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
-              if weaponErr != nil {
-                  return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
-              }
-              catalog.weaponModels = weaponModels
-              heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
-              if heldErr != nil {
-                  return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
-              }
-              catalog.weaponHeld = heldModes
-          } else if !os.IsNotExist(statErr) {
-              return nil, fmt.Errorf("stat playerweapon directory: %w", statErr)
-          }
-          '@
-          if (-not $text.Contains($old)) { throw 'expected Stage54 playerweapon block not found' }
-          $text = $text.Replace($old, $new)
-          [IO.File]::WriteAllText((Resolve-Path $path), $text, (New-Object Text.UTF8Encoding($false)))
+          $patched = [regex]::Replace($text, $pattern, $replacement, 1)
+          if ($patched -eq $text) { throw 'expected Stage54 playerweapon block not found by regex' }
+          [IO.File]::WriteAllText((Resolve-Path $path), $patched, (New-Object Text.UTF8Encoding($false)))
           & gofmt -w $path
           if ($LASTEXITCODE -ne 0) { throw 'gofmt failed' }
           $after = Get-Content -Raw $path

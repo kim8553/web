@@ -1,0 +1,31 @@
+name: JIUYIN Stage60 Offline Source Verification
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - '.github/workflows/jiuyin-stage60-source-offline-verify.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: stage37-assistant-handoff-20260917
+      - name: Pack exact corrected server source without client or user data
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rev-parse HEAD > STAGE60_SOURCE_COMMIT.txt
+          tar -czf "$RUNNER_TEMP/stage60-source.tar.gz" --exclude='server/resources' --exclude='server/logs' --exclude='server/build' server STAGE60_SOURCE_COMMIT.txt
+          tar -tzf "$RUNNER_TEMP/stage60-source.tar.gz" | grep -qx 'server/go.mod'
+          echo 'STAGE60_SOURCE_EXPORT=PASS'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage60-corrected-server-source-offline
+          path: ${{ runner.temp }}/stage60-source.tar.gz
+          if-no-files-found: error
+          retention-days: 3

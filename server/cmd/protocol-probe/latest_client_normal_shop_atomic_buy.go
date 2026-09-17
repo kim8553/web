@@ -75,8 +75,8 @@ func normalShopFrameForCurrency(value normalShopPersistedCurrency) ([]byte, erro
 // commit for the native no-DSN runtime. No actor/client-visible state changes
 // occur until persistence succeeds.
 func normalShopAtomicBuy(link sceneMessageConnection, player *playerActor, world *sceneLifecycle,
-	itemCatalog *itemCatalog, equipCatalog *equipCatalog, bagStore bagStoreIface,
-	currencyStore currencyStoreIface, roleID role.RoleID, custom clientCustomMessage,
+	itemCatalog *itemCatalog, equipCatalog *equipCatalog, bagBackend bagStoreIface,
+	currencyBackend currencyStoreIface, roleID role.RoleID, custom clientCustomMessage,
 	remote string) (bool, error) {
 	if len(custom.Values) != 5 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != 0x46 {
 		return false, nil
@@ -99,11 +99,11 @@ func normalShopAtomicBuy(link sceneMessageConnection, player *playerActor, world
 		return true, nil
 	}
 
-	bagSQL, bagSQLOK := bagStore.(*mysqlBagStore)
-	currencySQL, currencySQLOK := currencyStore.(*mysqlCurrencyStore)
+	bagSQL, bagSQLOK := bagBackend.(*mysqlBagStore)
+	currencySQL, currencySQLOK := currencyBackend.(*mysqlCurrencyStore)
 	mysqlMode := bagSQLOK && currencySQLOK && bagSQL != nil && currencySQL != nil && bagSQL.db != nil && bagSQL.db == currencySQL.db
-	bagJSON, bagJSONOK := bagStore.(*bagStore)
-	currencyJSON, currencyJSONOK := currencyStore.(*currencyStore)
+	bagJSON, bagJSONOK := bagBackend.(*bagStore)
+	currencyJSON, currencyJSONOK := currencyBackend.(*currencyStore)
 	jsonMode := bagJSONOK && currencyJSONOK && bagJSON != nil && currencyJSON != nil
 	if !mysqlMode && !jsonMode {
 		log.Printf("%s: normal buy blocked: bag/currency stores are not one supported backend", remote)

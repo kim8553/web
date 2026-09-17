@@ -9,7 +9,7 @@ $exe = Join-Path $PSScriptRoot 'stage58-live-server.exe'
 $lister = Join-Path $PSScriptRoot 'loopback-lister.ps1'
 $logs = Join-Path $PSScriptRoot 'logs'
 $listerLogs = Join-Path $logs 'lister'
-$runtimeLog = Join-Path $logs 'protocol-probe-live.log'
+$runtimeLog = Join-Path $root 'artifacts\local\logs\protocol-probe-live.log'
 
 if (-not (Test-Path $exe)) { throw "Missing stage58-live-server.exe: $exe" }
 if (-not (Test-Path $lister)) { throw "Missing loopback-lister.ps1: $lister" }
@@ -58,7 +58,9 @@ if ($listerOwners.Count -eq 0) {
     Write-Host "Server-list port 4000 is already listening; reusing existing listener PID(s): $($listerOwners -join ',')"
 }
 
-$serverArgs = @('-listen','127.0.0.1:19061','-gm-listen','127.0.0.1:19062','-log-file',(Quote-ChildArg $runtimeLog))
+# Do not pass a path-valued -log-file argument through Start-Process. The server already
+# defaults to <NINEYIN_SERVER_ROOT>\artifacts\local\logs\protocol-probe-live.log.
+$serverArgs = @('-listen','127.0.0.1:19061','-gm-listen','127.0.0.1:19062')
 $serverProc = Start-Process -FilePath $exe -ArgumentList $serverArgs -WorkingDirectory $root -PassThru
 Write-Host "Started game service PID=$($serverProc.Id)"
 

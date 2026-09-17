@@ -1,0 +1,41 @@
+name: JIUYIN Stage37 Exchange 0x4F Verify
+
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - 'server/**'
+      - '.github/workflows/jiuyin-stage37-exchange4f-verify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-exchange-guard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.2'
+          cache: false
+      - name: Exchange 0x4F preflight regressions
+        run: go test ./cmd/protocol-probe -run 'TestCurrentShopExchangeBuy(WireRejectsMalformedTypedRequests|PreflightRejectsUnauthoredCoordinatesAndDefinitionDrift)$' -count=1
+      - name: Go regression suite
+        run: go test ./...
+      - name: Go vet
+        run: go vet ./...
+      - name: Exchange 0x4F race regressions
+        run: go test -race ./cmd/protocol-probe -run 'TestCurrentShopExchangeBuy(WireRejectsMalformedTypedRequests|PreflightRejectsUnauthoredCoordinatesAndDefinitionDrift)$' -count=1
+      - name: Windows amd64 cross-build
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p build
+          go build -trimpath -o build/9yin-game-native-menu.exe ./cmd/protocol-probe

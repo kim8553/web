@@ -1,0 +1,43 @@
+name: JIUYIN Stage49 Normal Shop MySQL Atomic Primitive
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths:
+      - server/cmd/protocol-probe/latest_client_normal_shop_mysql_atomic.go
+      - server/cmd/protocol-probe/latest_client_normal_shop_mysql_atomic_test.go
+      - .github/workflows/jiuyin-stage49-normal-shop-mysql-atomic-primitive.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  atomic-primitive-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Go formatting and run isolated SQL transaction tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l server/cmd/protocol-probe/latest_client_normal_shop_mysql_atomic.go server/cmd/protocol-probe/latest_client_normal_shop_mysql_atomic_test.go)"
+          cd server/cmd/protocol-probe
+          GO111MODULE=off go test -race -count=1 -v latest_client_normal_shop_mysql_atomic.go latest_client_normal_shop_mysql_atomic_test.go
+      - name: Compile real protocol-probe package without running private-resource init
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd server
+          go test -c -o "$RUNNER_TEMP/stage49-protocol-probe.test" ./cmd/protocol-probe
+          go build -o "$RUNNER_TEMP/stage49-protocol-probe-linux" ./cmd/protocol-probe
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/stage49-protocol-probe-windows.exe" ./cmd/protocol-probe
+          test -s "$RUNNER_TEMP/stage49-protocol-probe.test"
+          test -s "$RUNNER_TEMP/stage49-protocol-probe-linux"
+          test -s "$RUNNER_TEMP/stage49-protocol-probe-windows.exe"
+      - name: Declare exact verification scope
+        run: |
+          echo 'MYSQL_ATOMIC_SNAPSHOT_PRIMITIVE=UNIT_TESTED_WITH_FAKE_SQL_DRIVER'
+          echo 'MYSQL_SERVER_TRANSACTION=NOT_LIVE_TESTED'
+          echo 'PURCHASE_HANDLER_INTEGRATION=NOT_DONE'
+          echo 'JSON_ATOMIC_PURCHASE=NOT_DONE'
+          echo 'GM_GRANT_AND_0X4F_EXCHANGE=UNCHANGED'
+          echo 'WINDOWS_BINARY=CROSS_COMPILED_NOT_BOOTED'
+          echo 'NORMAL_BUY_SELL_RECONNECT=NOT_LIVE_TESTED'

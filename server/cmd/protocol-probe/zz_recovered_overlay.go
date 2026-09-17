@@ -975,16 +975,22 @@ func loadEquipCatalog(path string) (*equipCatalog, error) {
 	}
 	catalog.artModels = models
 	catalog.artActionSets = actionSets
-	weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
-	if weaponErr != nil {
-		return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
+	catalog.weaponModels = make(map[string]string)
+	catalog.weaponHeld = make(map[string]string)
+	if _, statErr := os.Stat(defaultPlayerWeaponDir); statErr == nil {
+		weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
+		if weaponErr != nil {
+			return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
+		}
+		catalog.weaponModels = weaponModels
+		heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
+		if heldErr != nil {
+			return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
+		}
+		catalog.weaponHeld = heldModes
+	} else if !os.IsNotExist(statErr) {
+		return nil, fmt.Errorf("stat playerweapon directory: %w", statErr)
 	}
-	catalog.weaponModels = weaponModels
-	heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
-	if heldErr != nil {
-		return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
-	}
-	catalog.weaponHeld = heldModes
 	return catalog, nil
 }
 func (e *equipCatalog) Lookup(configID string) (equipItem, bool) {

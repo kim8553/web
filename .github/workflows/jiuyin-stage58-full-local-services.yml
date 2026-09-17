@@ -42,10 +42,44 @@ jobs:
             if ($errors.Count -ne 0) { $errors | Format-List | Out-String | Write-Host; throw "PowerShell parse failed: $script" }
           }
           $launcher = Get-Content -Raw 'tools/stage58-live-services/run-stage58-live-services.ps1'
-          foreach ($needle in @('4000','19061','19062','STAGE58_READY=YES','STAGE58_READY=NO','NINEYIN_SERVER_ROOT')) {
+          foreach ($needle in @('4000','19061','19062','STAGE58_READY=YES','STAGE58_READY=NO','NINEYIN_SERVER_ROOT','Quote-ChildArg')) {
             if (-not $launcher.Contains($needle)) { throw "Stage58 launcher contract missing: $needle" }
           }
           Write-Host 'STAGE58_LAUNCHER_STATIC=PASS'
+
+      - name: Exercise lister from a path containing spaces
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $spaceRoot = Join-Path $env:RUNNER_TEMP 'stage58 path with spaces'
+          $outDir = Join-Path $spaceRoot 'lister output with spaces'
+          New-Item -ItemType Directory -Force -Path $spaceRoot,$outDir | Out-Null
+          $listerPath = Join-Path $spaceRoot 'loopback-lister.ps1'
+          Copy-Item 'server/loopback-lister.ps1' $listerPath
+          $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',('"' + $listerPath + '"'),'-Port','4017','-OutputDir',('"' + $outDir + '"'))
+          $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -WorkingDirectory $spaceRoot -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(10)
+            do {
+              Start-Sleep -Milliseconds 250
+              $ready = @(Get-NetTCPConnection -State Listen -LocalPort 4017 -ErrorAction SilentlyContinue).Count -gt 0
+            } while (-not $ready -and -not $proc.HasExited -and (Get-Date) -lt $deadline)
+            if (-not $ready) { throw 'lister did not listen from spaced path' }
+            $client = [Net.Sockets.TcpClient]::new('127.0.0.1',4017)
+            try {
+              $stream = $client.GetStream()
+              $request = [Text.Encoding]::ASCII.GetBytes("probe`r`n")
+              $stream.Write($request,0,$request.Length)
+              $buf = New-Object byte[] 4096
+              $count = $stream.Read($buf,0,$buf.Length)
+              $response = [Text.Encoding]::ASCII.GetString($buf,0,$count)
+              if (-not $response.Contains('127.0.0.1 19061 0')) { throw "unexpected lister response: $response" }
+            } finally { $client.Dispose() }
+            if (-not (Test-Path (Join-Path $outDir 'request.bin'))) { throw 'spaced output-dir request capture missing' }
+            Write-Host 'SPACED_PATH_LISTER_RUNTIME=PASS'
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }
 
       - name: Verify retained startup and shop changes
         shell: pwsh
@@ -70,7 +104,13 @@ jobs:
             go build -trimpath -o "$env:RUNNER_TEMP\stage58-live-server.exe" ./cmd/protocol-probe
             if ($LASTEXITCODE -ne 0) { throw 'Windows build failed' }
           } finally { Pop-Location }
-          Write-Host 'WINDOWS_COMPILE=PASS; USER_LIVE_E2E_NOT_RUN'
+          $helpDir = Join-Path $env:RUNNER_TEMP 'stage58 server arg path with spaces'
+          New-Item -ItemType Directory -Force -Path $helpDir | Out-Null
+          $helpLog = Join-Path $helpDir 'runtime log with spaces.log'
+          $helpArgs = @('-log-file',('"' + $helpLog + '"'),'-h')
+          $helpProc = Start-Process -FilePath "$env:RUNNER_TEMP\stage58-live-server.exe" -ArgumentList $helpArgs -Wait -PassThru
+          if ($helpProc.ExitCode -ne 0) { throw "server spaced-path argument probe failed exit=$($helpProc.ExitCode)" }
+          Write-Host 'WINDOWS_COMPILE=PASS; SPACED_SERVER_ARG=PASS; USER_LIVE_E2E_NOT_RUN'
 
       - name: Build Stage58 package
         shell: pwsh
@@ -91,6 +131,8 @@ jobs:
             'Server lineage: user-supplied 9yin-go-server1.rar -> current kim8553/web Go source',
             'Original local-service contract restored: list 4000 + game 19061 + GM 19062',
             'loopback-lister.ps1 copied unchanged from server runtime source',
+            'Spaced-path lister launch: PASS',
+            'Spaced-path server argument probe: PASS',
             'Stage54 normal buy 0x46 JSON/MySQL persistence retained',
             'Stage55/56/57 startup compatibility changes retained',
             'Compile: PASS',

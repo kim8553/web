@@ -7,10 +7,10 @@ import (
 
 func TestCheckedOrdinaryShopTotal(t *testing.T) {
 	cases := []struct {
-		name          string
-		price, count  int32
-		want          int64
-		invalid       bool
+		name         string
+		price, count int32
+		want         int64
+		invalid      bool
 	}{
 		{name: "one", price: 42, count: 1, want: 42},
 		{name: "multiple", price: 200, count: 99, want: 19800},

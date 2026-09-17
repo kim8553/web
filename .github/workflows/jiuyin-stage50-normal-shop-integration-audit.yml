@@ -1,0 +1,34 @@
+name: JIUYIN Stage50 Normal Shop Integration Audit
+on:
+  push:
+    branches: [stage37-assistant-handoff-20260917]
+    paths: [.github/workflows/jiuyin-stage50-normal-shop-integration-audit.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print bounded evidence for purchase integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- CURRENT SHA ---'; git rev-parse HEAD
+          echo '--- DECLARATIONS ---'
+          rg -n --glob '*.go' '^type (bagItem|bagStoreIface|currencyStoreIface|shopCatalogItem|serverViewSpec) struct|^type (bagStoreIface|currencyStoreIface) interface|^func persistBagEquip|^func starterBagViews|^func bagItemProps|^func \(.*\) setSilver\(' server/cmd/protocol-probe | head -65 || true
+          echo '--- SHOP SESSION LIFECYCLE ---'
+          rg -n 'activeShop|currentShopExchangeSessionAllows|handleShopBuyCustom' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/latest_client_shop_exchange_session_lifecycle.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -65 || true
+          echo '--- BAG LIMIT / SLOT ---'
+          rg -n 'BaseCap|MaxAmount|nextBagSlot|bagViewForViewID|assignMissingBagSlotsLocked' server/cmd/protocol-probe/messages.go server/cmd/protocol-probe/player_actor.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -85 || true
+          echo '--- PERSISTENCE CALL SITES ---'
+          rg -n 'persistBagEquip\(|currencyStore\.Save\(|bagStore\.Save\(' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go | head -85 || true
+          echo '--- DECLARATION CONTEXT ---'
+          for pattern in '^type bagItem struct' '^type bagStoreIface interface' '^type currencyStoreIface interface' '^func persistBagEquip' '^func starterBagViews'; do
+            result="$(rg -n --glob '*.go' "$pattern" server/cmd/protocol-probe | head -1 || true)"
+            if test -n "$result"; then
+              file="${result%%:*}"; part="${result#*:}"; line="${part%%:*}"; from=$((line>3?line-3:1)); to=$((line+42)); echo "FILE=$file LINES=$from:$to"; sed -n "${from},${to}p" "$file";
+            fi
+          done
+          echo 'NO PRIVATE RESOURCES PRINTED: SOURCE STRUCTURE ONLY'

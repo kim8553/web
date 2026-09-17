@@ -7,6 +7,7 @@ on:
       - 'server/go.mod'
       - 'server/go.sum'
       - 'server/internal/stage60diag/quicklz_wire_test.go'
+      - 'server/cmd/protocol-probe/stage60_actual_bootstrap_wire_test.go'
       - '.github/workflows/jiuyin-stage60-quicklz-verified.yml'
   workflow_dispatch:
 
@@ -52,6 +53,9 @@ jobs:
         working-directory: server
         run: |
           $ErrorActionPreference = 'Stop'
+          # The true un-gated spawn regression was executed with an isolated copy of
+          # original user resources on Linux. It is compiled here but cannot be
+          # executed on this runner without those resources.
           go test -mod=mod -c -o "$env:RUNNER_TEMP\protocol-probe.test.exe" ./cmd/protocol-probe
           if ($LASTEXITCODE -ne 0) { throw 'Server package test compile FAILED' }
           go build -mod=mod -trimpath -o "$env:RUNNER_TEMP\stage60-live-server.exe" ./cmd/protocol-probe

@@ -27,12 +27,19 @@ jobs:
         with:
           go-version: '1.26.5'
           cache: false
-      - name: Check source-locked candidate without committing game code
+      - name: Check only remaining source-locked overlay candidate
         run: |
           set -euo pipefail
           python3 tools/stage37_shop_writer_lock_apply.py
-          gofmt -w server/internal/shopbuyatomic/checked.go server/internal/shopbuyatomic/checked_bag_test.go server/internal/shopbuyatomic/checked_mysql_integration_test.go server/internal/shopbuyatomic/role_lock_test.go server/cmd/protocol-probe/zz_recovered_overlay.go
+          gofmt -w server/cmd/protocol-probe/zz_recovered_overlay.go server/internal/shopbuyatomic/role_lock_test.go
           git diff --check
+          python3 - <<'PY'
+          import subprocess
+          changed=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          if changed != {'server/cmd/protocol-probe/zz_recovered_overlay.go'}:
+              raise SystemExit(f'UNEXPECTED_PATCH_PATHS={changed}')
+          print('SHOP_WRITER_LOCK_SCOPE=PASS')
+          PY
           git diff --stat
       - name: Verify temporary candidate against isolated MySQL and Windows build
         working-directory: server
@@ -51,4 +58,4 @@ jobs:
           go test -modfile=ci.real.mod -c -o /tmp/shop-writer-lock.test ./cmd/protocol-probe
           go vet -modfile=ci.real.mod ./...
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o /tmp/shop-writer-lock.exe ./cmd/protocol-probe
-          echo 'CANDIDATE_ROLE_LOCK=PASS DISPOSABLE_MYSQL=PASS GO_TEST=PASS PROTOCOL_COMPILE=PASS VET=PASS WINDOWS_BUILD=PASS SOURCE_COMMIT=NOT_DONE CLIENT_LIVE=NOT_RUN'
+          echo 'OVERLAY_CANDIDATE=PASS DISPOSABLE_MYSQL=PASS GO_TEST=PASS PROTOCOL_COMPILE=PASS VET=PASS WINDOWS_BUILD=PASS OVERLAY_SOURCE_COMMIT=NOT_DONE CLIENT_LIVE=NOT_RUN'

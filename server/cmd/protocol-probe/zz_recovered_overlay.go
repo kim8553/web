@@ -1392,6 +1392,7 @@ func handleDeleteItemCustom(link sceneMessageConnection, player *playerActor, ba
 	if amount <= 0 {
 		amount = int32(^uint32(0) >> 1)
 	}
+	startingBag := player.bagSnapshot()
 	item, remaining, consumed, ok := player.decrementBagItem(uint16(srcView), srcPos, amount)
 	if !ok {
 		log.Printf("%s: DELETEITEM source empty view=%d pos=%d", remote, srcView, srcPos)
@@ -1407,13 +1408,15 @@ func handleDeleteItemCustom(link sceneMessageConnection, player *playerActor, ba
 			return true, fmt.Errorf("encode partial delete: %w", err)
 		}
 	}
+	// Persist before publishing the existing frame: rejecting an already-stale
+	// actor bag must not also tell the client that an item was deleted.
+	if err := persistBagMutationChecked(bagStore, roleID, startingBag, player.bagSnapshot()); err != nil {
+		player.restoreBag(startingBag)
+		log.Printf("%s: reject DELETEITEM after bag changed: %v", remote, err)
+		return true, nil
+	}
 	if err := link.WriteFrame(frame); err != nil {
 		return true, fmt.Errorf("write delete item: %w", err)
-	}
-	if bagStore != nil {
-		if err := bagStore.Save(roleID, player.bagSnapshot()); err != nil {
-			log.Printf("persist bag after delete: %v", err)
-		}
 	}
 	if consumed {
 		log.Printf("%s: deleted item %s view=%d pos=%d amount=%d (stack cleared)", remote, item.ConfigID, srcView, srcPos, amount)

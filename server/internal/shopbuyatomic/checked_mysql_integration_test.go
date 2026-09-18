@@ -192,4 +192,64 @@ VALUES (?,0,1,'old_item',100,1,1)`, concurrentRole); err != nil {
 	if wallet["silver"] != 100 {
 		t.Fatalf("rejected purchase altered silver=%d", wallet["silver"])
 	}
+
+	// Reverse order: a purchase commits first; an older bag-only snapshot
+	// must NOT delete the purchased item or overwrite the committed bag.
+	const reverseRole uint64 = 880003
+	if _, err := db.Exec("INSERT INTO roles(role_id) VALUES (?)", reverseRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO role_currency(role_id,snapshot) VALUES (?,?)", reverseRole, before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO role_bag_items(role_id,seq,slot,config_id,item_type,amount,view_id)
+VALUES (?,0,1,'old_item',100,1,1)`, reverseRole); err != nil {
+		t.Fatal(err)
+	}
+	original := []Row{{Slot: 1, ConfigID: "old_item", ItemType: 100, Amount: 1, ViewID: 1}}
+	purchased := []Row{original[0], {Slot: 2, ConfigID: "new_item", ItemType: 100, Amount: 1, ViewID: 1}}
+	if err := SaveCheckedBag(purchaseDB, reverseRole, purchased, original, before, after); err != nil {
+		t.Fatalf("reverse purchase commit: %v", err)
+	}
+	staleWriter := []Row{{Slot: 1, ConfigID: "old_item", ItemType: 100, Amount: 2, ViewID: 1}}
+	if err := SaveBagChecked(db, reverseRole, staleWriter, original); err == nil || !strings.Contains(err.Error(), "bag changed") {
+		t.Fatalf("stale bag-only writer after committed purchase was not rejected: %v", err)
+	}
+	var persistedCount int
+	if err := reopened.QueryRow("SELECT COUNT(*) FROM role_bag_items WHERE role_id=?", reverseRole).Scan(&persistedCount); err != nil {
+		t.Fatal(err)
+	}
+	if persistedCount != 2 {
+		t.Fatalf("stale writer erased purchased bag row: count=%d", persistedCount)
+	}
+	var bought string
+	if err := reopened.QueryRow("SELECT config_id FROM role_bag_items WHERE role_id=? AND seq=1", reverseRole).Scan(&bought); err != nil {
+		t.Fatal(err)
+	}
+	if bought != "new_item" {
+		t.Fatalf("stale writer erased purchased item: %q", bought)
+	}
+	var reverseWalletJSON []byte
+	if err := reopened.QueryRow("SELECT snapshot FROM role_currency WHERE role_id=?", reverseRole).Scan(&reverseWalletJSON); err != nil {
+		t.Fatal(err)
+	}
+	var reverseWallet map[string]int64
+	if err := json.Unmarshal(reverseWalletJSON, &reverseWallet); err != nil {
+		t.Fatal(err)
+	}
+	if reverseWallet["silver"] != 70 {
+		t.Fatalf("bag-only rejection changed committed wallet: %d", reverseWallet["silver"])
+	}
+	// A writer that actually read the new bag may still update it normally.
+	fresh := []Row{{Slot: 1, ConfigID: "old_item", ItemType: 100, Amount: 2, ViewID: 1}, purchased[1]}
+	if err := SaveBagChecked(db, reverseRole, fresh, purchased); err != nil {
+		t.Fatalf("fresh bag-only writer rejected: %v", err)
+	}
+	var freshAmount int
+	if err := reopened.QueryRow("SELECT amount FROM role_bag_items WHERE role_id=? AND seq=0", reverseRole).Scan(&freshAmount); err != nil {
+		t.Fatal(err)
+	}
+	if freshAmount != 2 {
+		t.Fatalf("fresh writer amount=%d, want 2", freshAmount)
+	}
 }

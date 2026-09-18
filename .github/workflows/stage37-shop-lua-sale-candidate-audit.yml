@@ -6,6 +6,8 @@ on:
     paths:
       - server/tools/audit_client_lua_sale_candidates.py
       - server/tools/test_audit_client_lua_sale_candidates.py
+      - server/tools/audit_client_lua_shop_short_constants.py
+      - server/tools/test_audit_client_lua_shop_short_constants.py
       - .github/workflows/stage37-shop-lua-sale-candidate-audit.yml
   workflow_dispatch:
 
@@ -18,5 +20,5 @@ jobs:
         with:
           python-version: '3.11'
       - name: Audit only synthetic PCK/LuaQ fixtures; never use private client assets
-        run: python3 -m unittest -v test_audit_client_lua_sale_candidates.py
+        run: python3 -m unittest -v test_audit_client_lua_sale_candidates.py test_audit_client_lua_shop_short_constants.py
         working-directory: server/tools

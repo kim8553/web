@@ -1,0 +1,37 @@
+name: Temporary verified nullable shop metadata publication 2ba93cb5
+on:
+  push:
+    branches: [mission/shop-null-metadata-2ba93cb5]
+    paths: ['.github/workflows/mission-shop-null-publish-2ba93cb5.yml']
+permissions:
+  contents: write
+jobs:
+  publish-exact-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mission/shop-null-metadata-2ba93cb5
+          fetch-depth: 0
+      - name: Verify exact patch, base and resulting blobs before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show HEAD:tools/mission-shop-null-metadata-2ba93cb5.patch > /tmp/shop-null-metadata.patch
+          printf '%s  %s\n' a61b65144a139a15829ce6e279c090021d254947ef3cc62fa67a66bb376586a4 /tmp/shop-null-metadata.patch | sha256sum --check --status
+          git checkout --detach 67b75098cb07baf2a307cc3a7a8d2472e5c388e8
+          test "$(git rev-parse HEAD^{tree})" = 96d3119f81d737f4e3101bce7f9f8903b47797ab
+          git apply --check --index /tmp/shop-null-metadata.patch
+          git apply --index /tmp/shop-null-metadata.patch
+          git diff --cached --check
+          test "$(git ls-files -s server/internal/shopbuyatomic/checked.go | awk '{print $2}')" = 71565a9393f4c415e7688e9fe0adf23e5ecda190
+          test "$(git ls-files -s server/internal/shopbuyatomic/checked_mysql_integration_test.go | awk '{print $2}')" = 02689b3cd7208abc2e895be8ac198b456b0f4301
+          test "$(git ls-files -s server/internal/shopbuyatomic/checked_nullable_zero_test.go | awk '{print $2}')" = 246bacba843e690e1d931aae6aaaf07b6a933233
+          test "$(git ls-files -s server/docs/SHOP_PURCHASE_NULL_EMPTY_METADATA_COMPAT_20260918.md | awk '{print $2}')" = 8dc3246e15235b59200c7efff2b97cb5eff193f1
+          test "$(git ls-remote --heads origin stage37-restored-20260918 | cut -f1)" = 67b75098cb07baf2a307cc3a7a8d2472e5c388e8
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(shop): accept SQL empty and zero bag metadata during checked purchase'
+          git push origin HEAD:refs/heads/stage37-restored-20260918
+          echo "PUBLISHED_NULL_METADATA_COMMIT=$(git rev-parse HEAD)"
+          echo "RESULT_TREE=$(git rev-parse HEAD^{tree})"

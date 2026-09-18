@@ -1,0 +1,25 @@
+name: Stage37 share PCK shop index boundary audit
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - server/tools/audit_share_shop_pck.py
+      - .github/workflows/stage37-share-shop-index-boundary.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  read-only-source-audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate read-only PCK0 audit source and synthetic failure cases
+        working-directory: server
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/audit_share_shop_pck.py
+          python3 tools/audit_share_shop_pck.py --self-test
+          echo 'PCK0_AUDIT_SYNTHETIC=PASS REAL_SHARE_PACKAGE=NOT_IN_CI INDEX_PATH_MAPPING=NOT_VERIFIED LIVE_E2E=NOT_RUN'

@@ -141,6 +141,20 @@ func sceneCreatorPaths(creatorDir string) ([]string, error) {
 	manifestPath := filepath.Join(creatorDir, "file.ini")
 	manifest, readErr := os.ReadFile(manifestPath)
 	if readErr == nil {
+		// The client manifest may spell an XML name with different case than
+		// the actual resource file. Resolve against the directory entries so
+		// behavior does not depend on the host filesystem's case sensitivity.
+		entries, dirErr := os.ReadDir(creatorDir)
+		if dirErr != nil {
+			return nil, fmt.Errorf("list scene creator directory %s: %w", creatorDir, dirErr)
+		}
+		actualNames := make(map[string][]string, len(entries))
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				key := strings.ToLower(entry.Name())
+				actualNames[key] = append(actualNames[key], entry.Name())
+			}
+		}
 		seen := make(map[string]struct{})
 		var creatorPaths []string
 		for _, line := range strings.Split(string(manifest), "\n") {
@@ -152,15 +166,26 @@ func sceneCreatorPaths(creatorDir string) ([]string, error) {
 				continue
 			}
 			path := filepath.Join(creatorDir, rawName)
-			key := strings.ToLower(filepath.Clean(path))
-			if _, duplicate := seen[key]; duplicate {
-				continue
+			_, statErr := os.Stat(path)
+			if errors.Is(statErr, os.ErrNotExist) && filepath.Base(rawName) == rawName {
+				matches := actualNames[strings.ToLower(rawName)]
+				if len(matches) > 1 {
+					return nil, fmt.Errorf("scene creator manifest %s declares ambiguous filename %q: %q", manifestPath, rawName, matches)
+				}
+				if len(matches) == 1 {
+					path = filepath.Join(creatorDir, matches[0])
+					_, statErr = os.Stat(path)
+				}
 			}
-			if _, statErr := os.Stat(path); statErr != nil {
+			if statErr != nil {
 				if errors.Is(statErr, os.ErrNotExist) {
 					continue
 				}
 				return nil, fmt.Errorf("scene creator manifest %s declares %s: %w", manifestPath, rawName, statErr)
+			}
+			key := strings.ToLower(filepath.Clean(path))
+			if _, duplicate := seen[key]; duplicate {
+				continue
 			}
 			seen[key] = struct{}{}
 			creatorPaths = append(creatorPaths, path)

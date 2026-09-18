@@ -1,0 +1,27 @@
+name: Stage37 ordinary shop sale evidence audit
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - .github/workflows/stage37-ordinary-shop-sell-evidence-audit.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Find exact ordinary NPC sell evidence in current restored source
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v grep
+          echo '=== ORDINARY SHOP SELL AND BUYBACK REFERENCES ==='
+          grep -R -n -i -E -C 2 --include='*.go' --include='*.lua' --include='*.md' --include='*.txt' 'shop.?sell|sell.?item|sell.?shop|custom.?sell|buy.?back|回购|出售|售卖|CLIENT_CUSTOMMSG_SELL|shop.?buy' server/cmd/protocol-probe server/internal server/spec 2>/dev/null | head -n 350 || test "${PIPESTATUS[0]}" -eq 1
+          echo '=== CLIENT LUA AND SELL-LIKE FILENAMES (PATH ONLY) ==='
+          find server -type f \( -iname '*form_shop*' -o -iname '*sell*' -o -iname '*buyback*' -o -iname '*shop*lua*' \) -print | head -n 100
+          echo '=== SHOP CUSTOM HANDLER REGISTRATION ==='
+          grep -R -n -E -C 3 --include='*.go' 'handleShopBuyCustom\(|handleShopExchangeContract\(' server/cmd/protocol-probe | head -n 100 || test "${PIPESTATUS[0]}" -eq 1
+          echo 'EVIDENCE_AUDIT_EXECUTED=YES NO_RUNTIME_OR_GAMEPLAY_SOURCE_CHANGES=YES CLIENT_LIVE=NOT_RUN'

@@ -30,18 +30,15 @@ jobs:
         with:
           go-version: '1.26.5'
           cache: false
-      - name: Verify latest tested purchase source and pre-existing launcher
+      - name: Pin original shop gameplay source; keep previous launcher
         shell: bash
         run: |
           set -euo pipefail
-          # git show --format=%P is empty under fetch-depth=1; raw object
-          # retains the authoritative parent identity even in shallow clones.
-          git cat-file -p HEAD | grep -Fx 'parent 698c0df44e2201b91aa7dc7f5f4510171bf1bb96'
           test "$(git hash-object server/cmd/protocol-probe/zz_recovered_overlay.go)" = 'a249c70c92ff4c476ada08016ddac80deccd3d63'
           test -f 'server/启动本地九阴服务.bat'
           test -f server/loopback-lister.ps1
-          echo "NPC_BUY_KIT_PIN=PASS head=$(git rev-parse HEAD) original=698c0df44e2201b91aa7dc7f5f4510171bf1bb96"
-      - name: Verify focused purchase tests, disposable MySQL, vet and Windows build
+          echo "SHOP_LIVE_KIT_SOURCE=PASS workflow_head=$(git rev-parse HEAD) gameplay_blob=a249c70c92ff4c476ada08016ddac80deccd3d63"
+      - name: Test disposable MySQL and existing purchase paths; vet; compile Windows x64
         shell: bash
         working-directory: server
         env:
@@ -50,20 +47,19 @@ jobs:
           set -euo pipefail
           cp go.mod ci.real.mod
           cp go.sum ci.real.sum
-          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
-            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          for module in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$module"
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
           test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           python3 - <<'PY'
           from pathlib import Path
-          path=Path('cmd/protocol-probe/skill_catalog.go')
-          text=path.read_text()
+          p=Path('cmd/protocol-probe/skill_catalog.go')
+          s=p.read_text()
           old='var installedCombatSkillCatalog = mustLoadCombatSkillCatalog()'
-          new='var installedCombatSkillCatalog = &combatSkillCatalog{levelOne: make(map[string]combatSkillDefinition)}'
-          if text.count(old)!=1: raise SystemExit('Unrecognized combat initializer; actual client skill_new.ini is not in CI')
-          path.write_text(text.replace(old,new,1))
+          if s.count(old)!=1: raise SystemExit('Unrecognized skill initializer')
+          p.write_text(s.replace(old,'var installedCombatSkillCatalog = &combatSkillCatalog{levelOne: make(map[string]combatSkillDefinition)}',1))
           PY
           JIUYIN_TEST_SHOP_MYSQL_CI=1 go test -modfile=ci.real.mod -count=1 -v -run '^TestOrdinaryShopDualConflictResyncRealMySQL$' ./cmd/protocol-probe
           JIUYIN_TEST_SHOP_MYSQL_CI=0 go test -modfile=ci.real.mod -count=1 -v -run '^TestOrdinaryShop(DualConflict|BagConflict|WalletConflict|PurchaseReentry)' ./cmd/protocol-probe
@@ -76,8 +72,8 @@ jobs:
           file ../stage37-npc-buy-live-kit/9yin-game-native-menu.exe | grep -E 'PE32\+ executable.*x86-64'
           test "$(git hash-object cmd/protocol-probe/zz_recovered_overlay.go)" = 'a249c70c92ff4c476ada08016ddac80deccd3d63'
           git diff --exit-code -- cmd/protocol-probe/zz_recovered_overlay.go cmd/protocol-probe/skill_catalog.go
-          echo 'NPC_BUY_KIT_TESTS=PASS MYSQL_CI=PASS VET=PASS WIN64_BUILD=PASS CLIENT_LIVE=NOT_RUN USER_MYSQL=NOT_RUN'
-      - name: Generate checksum, provenance and safe local test instructions
+          echo 'SHOP_LIVE_KIT=PASS MYSQL_CI=PASS VET=PASS WINDOWS_BUILD=PASS USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'
+      - name: Package verified binary, checksum, and safe local test guide
         shell: bash
         run: |
           set -euo pipefail
@@ -86,43 +82,35 @@ jobs:
           {
             echo 'Repository: https://github.com/kim8553/web'
             echo 'Branch: stage37-restored-20260918'
-            echo 'Latest gameplay fix: 698c0df44e2201b91aa7dc7f5f4510171bf1bb96'
-            echo "Build workflow commit: $(git -C .. rev-parse HEAD)"
-            echo 'Shop handler git blob: a249c70c92ff4c476ada08016ddac80deccd3d63'
-            echo "Go toolchain: $(go version)"
-            echo 'Target: windows/amd64, CGO_ENABLED=0'
-            echo 'Unit and disposable MySQL: passed only if artifact is uploaded'
-            echo 'Current-client in-game, user MySQL, and reconnect E2E: NOT RUN'
-            echo 'Client files, resources, database and personal logs: NOT INCLUDED'
+            echo 'Last gameplay fix: 698c0df44e2201b91aa7dc7f5f4510171bf1bb96'
+            echo "Exact build commit: $(git -C .. rev-parse HEAD)"
+            echo 'Shop gameplay blob: a249c70c92ff4c476ada08016ddac80deccd3d63'
+            echo "Compiler: $(go version)"
+            echo 'Target: Windows amd64 / CGO disabled'
+            echo 'Disposable CI tests and vet: PASS; user MySQL and real client E2E: NOT RUN'
+            echo 'Client, resources, database, personal files: NOT INCLUDED'
           } > BUILD_PROVENANCE.txt
           cat > READ_FIRST_KO.txt <<'EOF'
-          구음진경 Stage37 NPC 일반 상점 구매 실게임 확인용 (완성 서버 패키지가 아님)
+          구음진경 NPC 일반 상점 구매 확인용 Windows x64 서버 EXE입니다. 완성 서버 통합 패키지는 아닙니다.
+          클라이언트/DLL/resources/DB/캐릭터 데이터는 포함하지 않으며, 사용자 PC 게임 검증은 아직 실행하지 않았습니다.
 
-          이 EXE는 GitHub stage37-restored-20260918 브랜치의 구매/충돌 복구 소스로 만든 Windows x64 서버입니다.
-          클라이언트, DLL, resources, MySQL, 계정/캐릭터 데이터는 포함하지 않습니다. 사용자 PC에서 실제 게임 성공은 아직 미검증입니다.
+          1. 기존 서버를 정상 종료하고 서버 폴더와 MySQL DB를 먼저 백업하세요.
+          2. 기존 서버 폴더에 启动本地九阴服务.bat, loopback-lister.ps1, resources\modern\share, data\roles.json이 실제 있는지 확인하세요.
+             없으면 구버전 자료나 가짜 파일로 채우지 마세요.
+          3. 기존 서버 폴더의 9yin-game-native-menu.exe를 백업하고 ZIP 안의 동명 EXE만 그 자리에 복사하세요.
+             resources/data/DB/DLL이나 다른 실행 파일을 덮어쓰지 마세요. 같은 서버 두 개를 동시에 실행하지 마세요.
+          4. PowerShell의 Get-FileHash .\9yin-game-native-menu.exe -Algorithm SHA256 결과를 SHA256SUMS.txt와 비교하세요.
+          5. 기존 启动本地九阴服务.bat로 실행하세요. 기존 스크립트의 게임 19061 / GM 19062 설정을 그대로 사용합니다.
+          6. 최신 클라이언트로 접속해 일반 NPC 상점의 일반 가격 상품 한 개를 딱 한 번 구매하세요.
+             전/후 아이템 수량·가방 슬롯·재화 잔액을 기록하고, 실패 시 같은 구매를 반복하지 마세요.
+          7. 정상 로그아웃 후 재접속해 위 세 항목을 비교하세요. 문제가 있다면 실패 단계와 비식별화한 로그·화면을 공유하세요.
+             기존 배치 파일의 로그 대상은 logs\protocol-probe-live.log, logs\game-19061.current.log입니다. 실제 생성 여부를 확인하세요.
 
-          1. 현재 서버를 정상 종료하고, 기존 서버 폴더 전체와 MySQL DB를 별도로 백업하세요.
-          2. 기존 서버 폴더에서 '启动本地九阴服务.bat', 'loopback-lister.ps1', 'resources\\modern\\share', 'data\\roles.json'이 실제로 있는지 확인하세요.
-             없으면 임의의 파일이나 구버전 자료로 채우지 말고 기존 서버 설치 상태를 먼저 확인하세요.
-          3. 기존 서버 폴더의 9yin-game-native-menu.exe를 이름을 바꿔 백업한 다음, 이 ZIP의 동명 EXE만 같은 위치에 복사하세요.
-             resources, data, DLL, DB 스키마는 이 ZIP으로 덮어쓰지 마세요. 다른 EXE가 이미 실행 중이면 병행 실행하지 마세요.
-          4. PowerShell에서 해당 폴더로 이동해 'Get-FileHash .\\9yin-game-native-menu.exe -Algorithm SHA256' 결과가 SHA256SUMS.txt와 일치하는지 확인하세요.
-          5. 기존 '启动本地九阴服务.bat'로 서버를 시작하세요. 게임 서비스 포트 19061과 GM 웹 19062는 기존 스크립트 설정을 사용합니다.
-             이미 연결된 최신 클라이언트/리소스/본인 DB 설정을 유지하고, 구버전 리소스를 혼합하지 마세요.
-          6. 일반 NPC 상점에서 교환/GM 기능이 아닌, 이미 가격이 명시된 일반 상품 1개만 구매하세요.
-             구매 전과 직후: 캐릭터 가방 아이템 수량·슬롯·재화 잔액을 화면에서 기록하세요.
-             구매가 실패했으면 같은 버튼을 연속 클릭하지 말고 서버 로그와 증상을 확인하세요.
-          7. 게임에서 정상 로그아웃 후 동일 캐릭터로 재접속해 아이템 수량·슬롯·재화가 유지되는지 비교하세요.
-             문제가 있으면 서버 시작/구매/재접속 단계 중 어디에서 발생했는지 적고, 계정·IP·토큰·DB 비밀번호를 제거한 로그와 스크린샷을 전달하세요.
-             기존 배치 파일의 로그 경로는 logs\\protocol-probe-live.log 및 logs\\game-19061.current.log이며 실제 생성 여부를 먼저 확인하세요.
-
-          판정: 이 파일의 빌드/자동 테스트 PASS는 실제 클라이언트 구매·재접속 PASS가 아닙니다.
-          NPC 일반 판매, GM 아이템 지급, 아이템 교환은 이 테스트의 대상이 아닙니다.
+          CI 빌드/테스트 성공은 실제 최신 클라이언트 구매·재접속 성공이 아닙니다.
+          NPC 판매, GM 아이템 지급, 아이템 교환은 테스트 범위가 아닙니다.
           EOF
-          test -s SHA256SUMS.txt
-          test -s BUILD_PROVENANCE.txt
-          test -s READ_FIRST_KO.txt
-          echo 'NPC_BUY_LIVE_KIT_CONTENTS=PASS'
+          test -s SHA256SUMS.txt && test -s BUILD_PROVENANCE.txt && test -s READ_FIRST_KO.txt
+          echo 'SHOP_LIVE_KIT_CONTENTS=PASS'
           cat SHA256SUMS.txt
       - uses: actions/upload-artifact@v4
         with:

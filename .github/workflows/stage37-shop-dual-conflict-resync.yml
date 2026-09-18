@@ -28,7 +28,7 @@ jobs:
         with:
           go-version: '1.26.5'
           cache: false
-      - name: Patch only already-verified NPC purchase wallet-conflict branch
+      - name: Patch only verified NPC purchase wallet-conflict branch
         shell: bash
         run: |
           set -euo pipefail
@@ -37,11 +37,12 @@ jobs:
           git diff --check
           python3 - <<'PY'
           import subprocess
-          path='server/cmd/protocol-probe/zz_recovered_overlay.go'
+          gameplay='server/cmd/protocol-probe/zz_recovered_overlay.go'
+          permitted={gameplay} | {f'server/cmd/protocol-probe/shop_purchase_dual_conflict_{suffix}' for suffix in ('resync.go','resync_test.go','mysql_test.go')}
           actual=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
-          if actual!={path}:
-              raise SystemExit(f'REFUSE_UNEXPECTED_GAMEPLAY_SCOPE {actual}')
-          changes=subprocess.check_output(['git','diff','--numstat','--',path],text=True).strip().split('\t')
+          if gameplay not in actual or not actual.issubset(permitted):
+              raise SystemExit(f'REFUSE_UNEXPECTED_SCOPE {actual}')
+          changes=subprocess.check_output(['git','diff','--numstat','--',gameplay],text=True).strip().split('\t')
           if int(changes[0])>8 or int(changes[1])>3:
               raise SystemExit(f'REFUSE_WIDE_GAMEPLAY_DIFF {changes}')
           print('SHOP_DUAL_CONFLICT_SCOPE=PASS GM_AND_EXCHANGE=UNCHANGED')
@@ -62,8 +63,8 @@ jobs:
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
-          # Actual latest-client skill_new.ini is not in CI. Bypass ONLY its
-          # unrelated eager combat initialization for focused test execution.
+          # skill_new.ini absent on CI; bypass unrelated eager combat init for
+          # focused test ONLY, then restore real source before cross-build.
           test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           python3 - <<'PY'
           from pathlib import Path
@@ -93,9 +94,10 @@ jobs:
           git add -- server/cmd/protocol-probe/zz_recovered_overlay.go server/cmd/protocol-probe/shop_purchase_dual_conflict_resync.go server/cmd/protocol-probe/shop_purchase_dual_conflict_resync_test.go server/cmd/protocol-probe/shop_purchase_dual_conflict_mysql_test.go
           python3 - <<'PY'
           import subprocess
+          gameplay='server/cmd/protocol-probe/zz_recovered_overlay.go'
+          permitted={gameplay} | {f'server/cmd/protocol-probe/shop_purchase_dual_conflict_{suffix}' for suffix in ('resync.go','resync_test.go','mysql_test.go')}
           staged=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
-          permitted={'server/cmd/protocol-probe/zz_recovered_overlay.go','server/cmd/protocol-probe/shop_purchase_dual_conflict_resync.go','server/cmd/protocol-probe/shop_purchase_dual_conflict_resync_test.go','server/cmd/protocol-probe/shop_purchase_dual_conflict_mysql_test.go'}
-          if 'server/cmd/protocol-probe/zz_recovered_overlay.go' not in staged or not staged.issubset(permitted):
+          if gameplay not in staged or not staged.issubset(permitted):
               raise SystemExit(f'REFUSE_STAGED_SCOPE {staged}')
           print('SHOP_DUAL_CONFLICT_PUBLISH_SCOPE=PASS')
           PY

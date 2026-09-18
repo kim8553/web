@@ -9,6 +9,23 @@ import (
 	"reflect"
 )
 
+// LockRoleForBagWrite serializes participating bag writes for an existing
+// migrated role. A role row exists even when the bag or wallet is empty.
+// This lock alone does not prove a legacy caller's snapshot is fresh.
+func LockRoleForBagWrite(ctx context.Context, tx *sql.Tx, roleID uint64) error {
+	if tx == nil || roleID == 0 {
+		return errors.New("shop bag: missing transaction or role")
+	}
+	var lockedID uint64
+	if err := tx.QueryRowContext(ctx, "SELECT role_id FROM roles WHERE role_id = ? FOR UPDATE", roleID).Scan(&lockedID); err != nil {
+		return fmt.Errorf("lock role for bag write: %w", err)
+	}
+	if lockedID != roleID {
+		return errors.New("shop bag: locked wrong role")
+	}
+	return nil
+}
+
 // SaveChecked retains the wallet-only check for existing callers. Purchases
 // with a known starting bag must use SaveCheckedBag instead.
 func SaveChecked(db *sql.DB, roleID uint64, rows []Row, expectedJSON, nextJSON []byte) error {
@@ -81,6 +98,11 @@ func saveChecked(db *sql.DB, roleID uint64, rows, expectedBag []Row, checkBag bo
 		return fmt.Errorf("begin checked shop purchase: %w", err)
 	}
 	defer tx.Rollback()
+	if checkBag {
+		if err := LockRoleForBagWrite(ctx, tx, roleID); err != nil {
+			return err
+		}
+	}
 	var storedJSON []byte
 	err = tx.QueryRowContext(ctx, "SELECT snapshot FROM role_currency WHERE role_id = ? FOR UPDATE", roleID).Scan(&storedJSON)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

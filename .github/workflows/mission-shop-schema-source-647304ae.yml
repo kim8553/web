@@ -1,34 +1,67 @@
-name: Temporary shop schema exact-source delta 647304ae
+name: Temporary shop structure readonly SQL CI 647304ae
 on:
   push:
     branches: [mission/shop-schema-647304ae]
 permissions:
   contents: read
 jobs:
-  exact-source-delta:
+  audit-disposable-mysql:
     runs-on: ubuntu-24.04
+    services:
+      mysql84:
+        image: mysql:8.4
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
+          MYSQL_DATABASE: shop_atomic_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -uroot"
+          --health-interval=5s --health-timeout=5s --health-retries=30
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 223e3264d5a994c73ec86fd93b3f978dc09c7ed7
-          fetch-depth: 0
+          ref: 614139e7875b98b3b239b746599bd1021e219055
           persist-credentials: false
-      - name: Verify source and transport byte-exact delta
+      - name: Execute read-only audit on disposable schema and deliberately mismatched fixtures
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = 223e3264d5a994c73ec86fd93b3f978dc09c7ed7
-          test "$(git rev-parse HEAD^{tree})" = 01cc06f5bb1b1f9deca6b7161c63bd61d5ec0a35
-          test "$(git rev-parse a8a26edfa22422a6a6d3e5d7874453cacfcebc42^{tree})" = 3862612d3eb3cbbffd496601cccb2acd8651af25
-          mkdir -p "$RUNNER_TEMP/source-delta"
-          git diff --binary --no-ext-diff --no-textconv a8a26edfa22422a6a6d3e5d7874453cacfcebc42 223e3264d5a994c73ec86fd93b3f978dc09c7ed7 > "$RUNNER_TEMP/source-delta/exact.patch"
-          (cd "$RUNNER_TEMP/source-delta" && sha256sum exact.patch > exact.patch.sha256)
-          printf '%s\n' 'BASE=a8a26edfa22422a6a6d3e5d7874453cacfcebc42' 'BASE_TREE=3862612d3eb3cbbffd496601cccb2acd8651af25' 'HEAD=223e3264d5a994c73ec86fd93b3f978dc09c7ed7' 'HEAD_TREE=01cc06f5bb1b1f9deca6b7161c63bd61d5ec0a35' > "$RUNNER_TEMP/source-delta/IDENTITY.txt"
-          cat "$RUNNER_TEMP/source-delta/IDENTITY.txt"
-          cat "$RUNNER_TEMP/source-delta/exact.patch.sha256"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: shop-schema-source-delta-647304ae
-          path: ${{ runner.temp }}/source-delta/
-          retention-days: 1
-          if-no-files-found: error
+          test "$(git rev-parse HEAD)" = 614139e7875b98b3b239b746599bd1021e219055
+          test "$(git rev-parse HEAD^{tree})" = 96e49dbac217750364f4c042976c1f47514b1e11
+          cid="$(docker ps -q --filter 'ancestor=mysql:8.4' | head -n1)"
+          test -n "$cid"
+          docker exec -i "$cid" mysql -uroot -D shop_atomic_ci <<'SQL'
+          CREATE TABLE roles (role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY) ENGINE=InnoDB;
+          CREATE TABLE role_bag_items (
+            role_id BIGINT UNSIGNED NOT NULL, seq BIGINT NOT NULL, slot INT NOT NULL,
+            config_id VARCHAR(255) NOT NULL, item_type INT NOT NULL, amount INT NOT NULL,
+            view_id INT NOT NULL, name TEXT NULL, equip_type TEXT NULL, art_pack INT NULL,
+            hardiness INT NULL, max_hardiness INT NULL, PRIMARY KEY (role_id,seq)
+          ) ENGINE=InnoDB;
+          CREATE TABLE role_currency (role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+            snapshot JSON NOT NULL) ENGINE=InnoDB;
+          CREATE TABLE schema_migrations (version BIGINT UNSIGNED NOT NULL,
+            name VARCHAR(128) NOT NULL, checksum BINARY(32) NOT NULL,
+            PRIMARY KEY (version)) ENGINE=InnoDB;
+          SQL
+          docker exec -i "$cid" mysql -uroot -D shop_atomic_ci --batch --raw < server/tools/check-shop-db-columns-readonly.sql > "$RUNNER_TEMP/baseline.tsv"
+          grep -Fq $'shop_atomic_ci\tMETADATA_ONLY_NOT_LIVE_VERIFIED' "$RUNNER_TEMP/baseline.tsv"
+          grep -Fq $'role_bag_items\tINNODB' "$RUNNER_TEMP/baseline.tsv"
+          grep -Fq $'role_currency\tINNODB' "$RUNNER_TEMP/baseline.tsv"
+          grep -Fq $'role_bag_items\trole_id,seq\trole_id,seq\tEXPECTED_PRIMARY_KEY' "$RUNNER_TEMP/baseline.tsv"
+          grep -Fq $'role_currency\tsnapshot\tjson\tMATCH_REFERENCE' "$RUNNER_TEMP/baseline.tsv"
+          grep -Fq $'schema_migrations\tchecksum\tbinary32\tMATCH_REFERENCE' "$RUNNER_TEMP/baseline.tsv"
+          if grep -Fq 'MISSING_COLUMN' "$RUNNER_TEMP/baseline.tsv"; then echo 'baseline unexpectedly missing required column'; exit 1; fi
+          docker exec -i "$cid" mysql -uroot -D shop_atomic_ci <<'SQL'
+          ALTER TABLE role_currency ENGINE=MyISAM;
+          ALTER TABLE role_bag_items DROP PRIMARY KEY, ADD PRIMARY KEY(seq,role_id);
+          ALTER TABLE role_bag_items DROP COLUMN max_hardiness;
+          SQL
+          docker exec -i "$cid" mysql -uroot -D shop_atomic_ci --batch --raw < server/tools/check-shop-db-columns-readonly.sql > "$RUNNER_TEMP/mismatch.tsv"
+          grep -Fq $'role_currency\tREVIEW_NON_INNODB_ENGINE' "$RUNNER_TEMP/mismatch.tsv"
+          grep -Fq $'role_bag_items\trole_id,seq\tseq,role_id\tDIFFERENT_PRIMARY_KEY' "$RUNNER_TEMP/mismatch.tsv"
+          grep -Fq $'role_bag_items\tmax_hardiness\tinteger\tMISSING_COLUMN' "$RUNNER_TEMP/mismatch.tsv"
+          docker exec -i "$cid" mysql -uroot --batch --raw < server/tools/check-shop-db-columns-readonly.sql > "$RUNNER_TEMP/no-database.tsv"
+          grep -Fq 'NO_DATABASE_SELECTED' "$RUNNER_TEMP/no-database.tsv"
+          echo 'READ_ONLY_SHOP_SCHEMA_MYSQL84=PASS BASELINE=PASS ENGINE_PK_MISSING_COLUMN=DETECTED NO_DATABASE=DETECTED USER_DB=NOT_TOUCHED LIVE_E2E=NOT_RUN'

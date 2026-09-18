@@ -16,6 +16,8 @@
 ## 실행 검증 및 남은 한계
 
 - 수정 **전** 새 회귀 `TestSaveCheckedBagAcceptsOmittedZeroWalletFields`: `ErrWalletChanged`로 실패함을 기록했다. 수정 **후** `internal/shopbuyatomic` 테스트, 비프로토콜 20개 패키지, 프로토콜 패키지 컴파일, `go vet ./...`, Windows amd64 PE32+ 빌드가 격리 작업 트리에서 성공했다. Go 모듈 의존성은 기존 CI 방식의 별도 `ci.real.mod` + 검증된 임시 vendor로 공급했으며 저장소의 `go.mod`를 변경하지 않았다.
-- `checked_mysql_integration_test.go`의 기존 일회용 `shop_atomic_ci` 테스트에 생략형 재화로 구매한 뒤 별도 MySQL 연결에서 가방·재화 재조회하는 사례를 추가했다. **이 일회용 MySQL 테스트는 CI 결과를 확인하기 전까지 PASS로 간주하지 않는다.**
+- 코드·회귀 테스트·MySQL 통합 테스트를 실제 작업 브랜치에 올린 커밋은 [`26bee68bb21ee2a8cb32838fb7466b6aa022383d`](https://github.com/kim8553/web/commit/26bee68bb21ee2a8cb32838fb7466b6aa022383d)이다. 원본 부모 커밋 `a8a26edfa22422a6a6d3e5d7874453cacfcebc42`, 결과 Git tree `1716545180f28ff8535c7725e01fd7359480e80f`을 재조회해 확인했다.
+- `checked_mysql_integration_test.go`의 기존 일회용 `shop_atomic_ci` 테스트에 생략형 재화로 구매한 뒤 별도 MySQL 연결에서 가방·재화 재조회하는 사례를 추가했다. **격리 MySQL 8.4.11 기반 CI [35349155141](https://github.com/kim8553/web/actions/runs/35349155141)는 정확히 코드 커밋 `26bee68...`을 체크아웃하고 Git tree까지 검증한 뒤 `TestSaveCheckedRealMySQLReconnectAndRollback` 및 관련 패키지 회귀 테스트를 실제 실행하여 SUCCESS를 기록했다.** 사용자 PC DB가 아니라 CI 전용 `shop_atomic_ci` 스키마에서만 검증했다.
+- CI 검증 워크플로를 영구적으로 작업 브랜치에 추가하려던 첫 시도는 GitHub App 토큰의 `workflows` 권한 부족으로 푸시 거부되었다. 따라서 영구 워크플로 변경은 제외하고 **코드·테스트·문서만** 정확한 결과 tree를 검증하여 게시했다. 일회용 CI는 별도 임시 브랜치의 제한된 읽기 권한으로 실행했다. 최초 실패를 성공이라고 보고하지 않는다.
 - Drive `nineyin` 폴더에 `role_bag_items.ibd`, `role_currency.ibd`가 있는 것은 확인했으나 `.ibd` 파일명만으로 열 형식, 인덱스, 트랜잭션 엔진, **사용자 PC 현재 스키마**는 알 수 없다. `tools/check-shop-db-columns-readonly.sql`은 컬럼 존재만 검사하므로 모든 DB 호환성을 증명하지 않는다. 사용자 `nineyin` DB 읽기/쓰기·초기화·자동 마이그레이션은 하지 않았다.
 - 실제 클라이언트 접속·상점 구매·재접속 유지 LIVE/E2E, 판매 요청 형식, 클라이언트 PCK 활성 스트림 및 사용자 PC 실제 DB는 **미검증**이다. 이전 로그인·맵 진입 정상 ZIP도 수정하지 않았다.

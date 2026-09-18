@@ -88,7 +88,7 @@ jobs:
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
-          NINEYIN_ALLOW_SCHEMA_MIGRATIONS= go test -modfile=ci.real.mod -count=1 -v ./migrations
+          JIUYIN_TEST_MIGRATION_MYSQL_CI=1 NINEYIN_ALLOW_SCHEMA_MIGRATIONS= go test -modfile=ci.real.mod -count=1 -v ./migrations
           test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           python3 - <<'PY'
           from pathlib import Path

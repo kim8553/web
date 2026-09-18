@@ -4,7 +4,7 @@ from pathlib import Path
 import subprocess
 
 path = Path('server/cmd/protocol-probe/zz_recovered_overlay.go')
-expected_blob = '8a241f18ef0e31e40388977d416851699f6ae81d'
+expected_blob = '282a20af6a2efe63090c9f6622bfca598fef54e7'
 actual = subprocess.check_output(['git', 'hash-object', str(path)], text=True).strip()
 if actual != expected_blob:
     raise SystemExit(f'REFUSE_CHANGED_GAMEPLAY_SOURCE expected={expected_blob} actual={actual}')

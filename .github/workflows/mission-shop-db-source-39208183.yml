@@ -1,0 +1,36 @@
+name: Temporary shop DB source transport 39208183
+on:
+  push:
+    branches:
+      - mission/shop-db-source-39208183
+    paths:
+      - .github/workflows/mission-shop-db-source-39208183.yml
+permissions:
+  contents: read
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: a8a26edfa22422a6a6d3e5d7874453cacfcebc42
+          persist-credentials: false
+      - name: Verify source and archive tracked files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = a8a26edfa22422a6a6d3e5d7874453cacfcebc42
+          git archive --format=tar.gz --output=shop-db-exact-source.tar.gz HEAD
+          printf '%s\n' 'a8a26edfa22422a6a6d3e5d7874453cacfcebc42' > shop-db-source-sha.txt
+          sha256sum shop-db-exact-source.tar.gz > shop-db-exact-source.sha256
+          cat shop-db-exact-source.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shop-db-exact-source-39208183
+          path: |
+            shop-db-exact-source.tar.gz
+            shop-db-source-sha.txt
+            shop-db-exact-source.sha256
+          retention-days: 1
+          if-no-files-found: error

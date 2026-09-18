@@ -1,0 +1,104 @@
+name: Stage37 ordinary NPC purchase simultaneous wallet and bag conflict
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths: [.github/workflows/stage37-shop-dual-conflict-resync.yml]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  dual-conflict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: shopci_root_only
+          MYSQL_DATABASE: shop_atomic_ci
+          MYSQL_USER: shopci
+          MYSQL_PASSWORD: shopci_pw
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -pshopci_root_only"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Patch only already-verified NPC purchase wallet-conflict branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/stage37_shop_dual_conflict_apply.py
+          gofmt -w server/cmd/protocol-probe/zz_recovered_overlay.go server/cmd/protocol-probe/shop_purchase_dual_conflict_resync.go server/cmd/protocol-probe/shop_purchase_dual_conflict_resync_test.go server/cmd/protocol-probe/shop_purchase_dual_conflict_mysql_test.go
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+          path='server/cmd/protocol-probe/zz_recovered_overlay.go'
+          actual=set(subprocess.check_output(['git','diff','--name-only'],text=True).splitlines())
+          if actual!={path}:
+              raise SystemExit(f'REFUSE_UNEXPECTED_GAMEPLAY_SCOPE {actual}')
+          changes=subprocess.check_output(['git','diff','--numstat','--',path],text=True).strip().split('\t')
+          if int(changes[0])>8 or int(changes[1])>3:
+              raise SystemExit(f'REFUSE_WIDE_GAMEPLAY_DIFF {changes}')
+          print('SHOP_DUAL_CONFLICT_SCOPE=PASS GM_AND_EXCHANGE=UNCHANGED')
+          PY
+          git diff --stat
+      - name: Test dual conflict using disposable MySQL, vet, and cross-build
+        working-directory: server
+        shell: bash
+        env:
+          JIUYIN_TEST_SHOP_MYSQL_CI: '1'
+          JIUYIN_TEST_SHOP_MYSQL_DSN: 'shopci:shopci_pw@tcp(127.0.0.1:3306)/shop_atomic_ci?parseTime=true'
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+          # Actual latest-client skill_new.ini is not in CI. Bypass ONLY its
+          # unrelated eager combat initialization for focused test execution.
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('cmd/protocol-probe/skill_catalog.go')
+          text=path.read_text()
+          old='var installedCombatSkillCatalog = mustLoadCombatSkillCatalog()'
+          new='var installedCombatSkillCatalog = &combatSkillCatalog{levelOne: make(map[string]combatSkillDefinition)}'
+          if text.count(old)!=1:
+              raise SystemExit('unexpected combat initializer; do not invent skill_new.ini')
+          path.write_text(text.replace(old,new,1))
+          PY
+          go test -modfile=ci.real.mod -count=1 -v -run '^TestOrdinaryShopDualConflict' ./cmd/protocol-probe
+          git restore -- cmd/protocol-probe/skill_catalog.go
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
+          JIUYIN_TEST_SHOP_MYSQL_CI=0 go test -modfile=ci.real.mod -count=1 ./internal/shopbuyatomic
+          go vet -modfile=ci.real.mod ./...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o /tmp/stage37-shop-dual-conflict.exe ./cmd/protocol-probe
+          file /tmp/stage37-shop-dual-conflict.exe | grep -E 'PE32\+ executable.*x86-64'
+          echo 'NPC_BUY_DUAL_CONFLICT=PASS WALLET_AND_BAG_REPLAY=PASS FAILED_REWARD=NONE OTHER_SESSION_STATE=PRESERVED USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN VET=PASS WINDOWS_BUILD=PASS'
+      - name: Publish only tested ordinary NPC purchase handler change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- server/cmd/protocol-probe/zz_recovered_overlay.go server/cmd/protocol-probe/shop_purchase_dual_conflict_resync.go server/cmd/protocol-probe/shop_purchase_dual_conflict_resync_test.go server/cmd/protocol-probe/shop_purchase_dual_conflict_mysql_test.go
+          python3 - <<'PY'
+          import subprocess
+          staged=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          permitted={'server/cmd/protocol-probe/zz_recovered_overlay.go','server/cmd/protocol-probe/shop_purchase_dual_conflict_resync.go','server/cmd/protocol-probe/shop_purchase_dual_conflict_resync_test.go','server/cmd/protocol-probe/shop_purchase_dual_conflict_mysql_test.go'}
+          if 'server/cmd/protocol-probe/zz_recovered_overlay.go' not in staged or not staged.issubset(permitted):
+              raise SystemExit(f'REFUSE_STAGED_SCOPE {staged}')
+          print('SHOP_DUAL_CONFLICT_PUBLISH_SCOPE=PASS')
+          PY
+          git commit -m 'fix(shop): reconcile bag alongside wallet after stale NPC purchase'
+          git push origin HEAD:refs/heads/stage37-restored-20260918
+          git rev-parse HEAD

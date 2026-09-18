@@ -35,7 +35,7 @@ func TestSaveBagCheckedTransaction(t *testing.T) {
 			if tc.bagReadErr != nil {
 				bagRead.WillReturnError(tc.bagReadErr)
 			} else {
-				bagRead.WillReturnRows(sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id"}).AddRow(tc.stored.Slot, tc.stored.ConfigID, tc.stored.ItemType, tc.stored.Amount, tc.stored.ViewID))
+				bagRead.WillReturnRows(sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id", "name", "equip_type", "art_pack", "hardiness", "max_hardiness"}).AddRow(tc.stored.Slot, tc.stored.ConfigID, tc.stored.ItemType, tc.stored.Amount, tc.stored.ViewID, tc.stored.Name, tc.stored.EquipType, tc.stored.ArtPack, tc.stored.Hardiness, tc.stored.MaxHardiness))
 			}
 			if !tc.wantErr || tc.insertErr != nil {
 				mock.ExpectExec("DELETE FROM role_bag_items").WithArgs(uint64(7)).WillReturnResult(sqlmock.NewResult(0, 1))

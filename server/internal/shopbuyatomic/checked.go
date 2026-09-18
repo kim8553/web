@@ -57,6 +57,25 @@ func sameBagIdentity(a, b Row) bool {
 		reflect.DeepEqual(a.MaxHardiness, b.MaxHardiness)
 }
 
+// The actor decodes role_currency.snapshot into a struct: omitted fields load
+// as zero and are serialized explicitly in its pre-purchase snapshot. Accept
+// that representational difference, but reject changed nonzero values and
+// unexpected persisted keys so a purchase cannot silently discard currency.
+func sameWalletValues(stored, expected map[string]int64) bool {
+	for key, value := range stored {
+		want, known := expected[key]
+		if !known || want != value {
+			return false
+		}
+	}
+	for key, value := range expected {
+		if _, present := stored[key]; !present && value != 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // Check every field that a checked bag rewrite persists. Checking only the
 // first five allows a concurrent durability/name update to be overwritten by
 // an otherwise valid shop purchase or bag move.
@@ -153,7 +172,7 @@ func saveChecked(db *sql.DB, roleID uint64, rows, expectedBag []Row, checkBag bo
 		if decodeErr := json.Unmarshal(storedJSON, &stored); decodeErr != nil || stored == nil {
 			return fmt.Errorf("decode locked shop wallet: %v", decodeErr)
 		}
-		if !reflect.DeepEqual(stored, expected) {
+		if !sameWalletValues(stored, expected) {
 			return fmt.Errorf("%w; reload before retrying", ErrWalletChanged)
 		}
 	}

@@ -252,4 +252,39 @@ VALUES (?,0,1,'old_item',100,1,1)`, reverseRole); err != nil {
 	if freshAmount != 2 {
 		t.Fatalf("fresh writer amount=%d, want 2", freshAmount)
 	}
+
+	// An older wallet snapshot may omit the actor's three zero-valued
+	// currencies. Check the actual purchase transaction and reload through
+	// another MySQL connection, not just a mocked JSON comparison.
+	const sparseWalletRole uint64 = 880004
+	if _, err := db.Exec("INSERT INTO roles(role_id) VALUES (?)", sparseWalletRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO role_currency(role_id,snapshot) VALUES (?,?)", sparseWalletRole, []byte(`{"silver":100}`)); err != nil {
+		t.Fatal(err)
+	}
+	sparseBefore := []byte(`{"silver":100,"gold":0,"silver_card":0,"silver_ticket":0}`)
+	sparseAfter := []byte(`{"silver":90,"gold":0,"silver_card":0,"silver_ticket":0}`)
+	sparseItem := Row{Slot: 1, ConfigID: "sparse_wallet_purchase", ItemType: 100, Amount: 1, ViewID: 1}
+	if err := SaveCheckedBag(db, sparseWalletRole, []Row{sparseItem}, nil, sparseBefore, sparseAfter); err != nil {
+		t.Fatalf("purchase using sparse legacy wallet: %v", err)
+	}
+	var savedSparseWallet []byte
+	if err := reopened.QueryRow("SELECT snapshot FROM role_currency WHERE role_id=?", sparseWalletRole).Scan(&savedSparseWallet); err != nil {
+		t.Fatal(err)
+	}
+	var reloadedSparseWallet map[string]int64
+	if err := json.Unmarshal(savedSparseWallet, &reloadedSparseWallet); err != nil {
+		t.Fatal(err)
+	}
+	if len(reloadedSparseWallet) != 4 || reloadedSparseWallet["silver"] != 90 || reloadedSparseWallet["gold"] != 0 || reloadedSparseWallet["silver_card"] != 0 || reloadedSparseWallet["silver_ticket"] != 0 {
+		t.Fatalf("reloaded sparse purchase wallet=%s, want equivalent %s", savedSparseWallet, sparseAfter)
+	}
+	var sparseItemID string
+	if err := reopened.QueryRow("SELECT config_id FROM role_bag_items WHERE role_id=?", sparseWalletRole).Scan(&sparseItemID); err != nil {
+		t.Fatal(err)
+	}
+	if sparseItemID != sparseItem.ConfigID {
+		t.Fatalf("reloaded sparse purchase item=%q, want %q", sparseItemID, sparseItem.ConfigID)
+	}
 }

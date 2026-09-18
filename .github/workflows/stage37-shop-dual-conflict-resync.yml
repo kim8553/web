@@ -2,7 +2,7 @@ name: Stage37 ordinary NPC purchase simultaneous wallet and bag conflict
 on:
   push:
     branches: [stage37-restored-20260918]
-    paths: [.github/workflows/stage37-shop-dual-conflict-resync.yml]
+    paths: [.github/workflows/stage37-shop-dual-conflict-resync.yml, tools/stage37_shop_dual_conflict_apply.py]
   workflow_dispatch:
 permissions:
   contents: write
@@ -63,8 +63,8 @@ jobs:
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
-          # skill_new.ini absent on CI; bypass unrelated eager combat init for
-          # focused test ONLY, then restore real source before cross-build.
+          # skill_new.ini absent on CI: bypass unrelated eager combat init ONLY
+          # for focused unit/MySQL tests, restore actual source before build.
           test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           python3 - <<'PY'
           from pathlib import Path

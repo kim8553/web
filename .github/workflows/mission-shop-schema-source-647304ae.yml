@@ -1,0 +1,34 @@
+name: Temporary shop schema exact-source delta 647304ae
+on:
+  push:
+    branches: [mission/shop-schema-647304ae]
+permissions:
+  contents: read
+jobs:
+  exact-source-delta:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 223e3264d5a994c73ec86fd93b3f978dc09c7ed7
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify source and transport byte-exact delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 223e3264d5a994c73ec86fd93b3f978dc09c7ed7
+          test "$(git rev-parse HEAD^{tree})" = 01cc06f5bb1b1f9deca6b7161c63bd61d5ec0a35
+          test "$(git rev-parse a8a26edfa22422a6a6d3e5d7874453cacfcebc42^{tree})" = 3862612d3eb3cbbffd496601cccb2acd8651af25
+          mkdir -p "$RUNNER_TEMP/source-delta"
+          git diff --binary --no-ext-diff --no-textconv a8a26edfa22422a6a6d3e5d7874453cacfcebc42 223e3264d5a994c73ec86fd93b3f978dc09c7ed7 > "$RUNNER_TEMP/source-delta/exact.patch"
+          (cd "$RUNNER_TEMP/source-delta" && sha256sum exact.patch > exact.patch.sha256)
+          printf '%s\n' 'BASE=a8a26edfa22422a6a6d3e5d7874453cacfcebc42' 'BASE_TREE=3862612d3eb3cbbffd496601cccb2acd8651af25' 'HEAD=223e3264d5a994c73ec86fd93b3f978dc09c7ed7' 'HEAD_TREE=01cc06f5bb1b1f9deca6b7161c63bd61d5ec0a35' > "$RUNNER_TEMP/source-delta/IDENTITY.txt"
+          cat "$RUNNER_TEMP/source-delta/IDENTITY.txt"
+          cat "$RUNNER_TEMP/source-delta/exact.patch.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shop-schema-source-delta-647304ae
+          path: ${{ runner.temp }}/source-delta/
+          retention-days: 1
+          if-no-files-found: error

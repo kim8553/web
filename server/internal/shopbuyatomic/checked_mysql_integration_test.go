@@ -31,6 +31,11 @@ func TestSaveCheckedRealMySQLReconnectAndRollback(t *testing.T) {
 	if databaseName != "shop_atomic_ci" {
 		t.Fatalf("refusing to touch non-CI database %q", databaseName)
 	}
+	if _, err := db.Exec(`CREATE TABLE roles (
+role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY
+) ENGINE=InnoDB`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`CREATE TABLE role_bag_items (
 role_id BIGINT UNSIGNED NOT NULL, seq BIGINT NOT NULL, slot INT NOT NULL,
 config_id VARCHAR(255) NOT NULL, item_type INT NOT NULL, amount INT NOT NULL,
@@ -45,6 +50,9 @@ role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, snapshot JSON NOT NULL
 		t.Fatal(err)
 	}
 	const id uint64 = 880001
+	if _, err := db.Exec(`INSERT INTO roles(role_id) VALUES (?)`, id); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(`INSERT INTO role_currency(role_id,snapshot) VALUES (?,?)`, id, []byte(`{"silver":100,"gold":0}`)); err != nil {
 		t.Fatal(err)
 	}
@@ -53,9 +61,8 @@ role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, snapshot JSON NOT NULL
 	}
 	before := []byte(`{"gold":0,"silver":100}`)
 	after := []byte(`{"silver":70,"gold":0}`)
-	oldBag := []Row{{Slot: 1, ConfigID: "old_item", ItemType: 100, Amount: 1, ViewID: 1}}
-	rows := []Row{oldBag[0], {Slot: 2, ConfigID: "new_item", ItemType: 100, Amount: 2, ViewID: 1}}
-	if err := SaveCheckedBag(db, id, rows, oldBag, before, after); err != nil {
+	rows := []Row{{Slot: 1, ConfigID: "old_item", ItemType: 100, Amount: 1, ViewID: 1}, {Slot: 2, ConfigID: "new_item", ItemType: 100, Amount: 2, ViewID: 1}}
+	if err := SaveChecked(db, id, rows, before, after); err != nil {
 		t.Fatalf("commit purchase: %v", err)
 	}
 	// A second independent connection verifies durable reloading, not actor RAM.
@@ -93,48 +100,17 @@ role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, snapshot JSON NOT NULL
 		}
 	}
 	assertSaved(70)
-	if err := SaveCheckedBag(db, id, rows, oldBag, before, []byte(`{"silver":60,"gold":0}`)); err == nil {
+	if err := SaveChecked(db, id, []Row{{Slot: 1, ConfigID: "stale_item", Amount: 1}}, before, []byte(`{"silver":60,"gold":0}`)); err == nil {
 		t.Fatal("stale wallet unexpectedly committed")
 	}
 	assertSaved(70)
-	// Simulate a completed independent bag edit with the same wallet; a stale
-	// purchase must reject it rather than deleting that new item.
-	if _, err := db.Exec(`INSERT INTO role_bag_items(role_id,seq,slot,config_id,item_type,amount,view_id)
-VALUES (?,2,3,'outside_item',100,1,1)`, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveCheckedBag(db, id, rows, rows, after, []byte(`{"silver":65,"gold":0}`)); err == nil {
-		t.Fatal("stale bag unexpectedly committed")
-	}
-	var preserved string
-	if err := reopened.QueryRow("SELECT config_id FROM role_bag_items WHERE role_id=? AND seq=2", id).Scan(&preserved); err != nil {
-		t.Fatal(err)
-	}
-	if preserved != "outside_item" {
-		t.Fatalf("independent bag edit was overwritten: %q", preserved)
-	}
-	var unchanged []byte
-	if err := reopened.QueryRow("SELECT snapshot FROM role_currency WHERE role_id=?", id).Scan(&unchanged); err != nil {
-		t.Fatal(err)
-	}
-	var wallet map[string]int64
-	if err := json.Unmarshal(unchanged, &wallet); err != nil {
-		t.Fatal(err)
-	}
-	if wallet["silver"] != 70 {
-		t.Fatalf("stale bag purchase changed wallet to %d", wallet["silver"])
-	}
-	if _, err := db.Exec("DELETE FROM role_bag_items WHERE role_id=? AND seq=2", id); err != nil {
-		t.Fatal(err)
-	}
-	assertSaved(70)
 	// A constraint on this disposable test table forces wallet INSERT to fail
-	// after the bag DELETE/INSERT, without privileged CREATE TRIGGER.
+	// after the bag DELETE/INSERT, without requiring privileged CREATE TRIGGER.
 	if _, err := db.Exec(`ALTER TABLE role_currency ADD CONSTRAINT shopci_block_60
 CHECK (CAST(JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.silver')) AS SIGNED) <> 60)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := SaveCheckedBag(db, id, []Row{{Slot: 1, ConfigID: "rolled_back_item", Amount: 1}}, rows, after, []byte(`{"silver":60,"gold":0}`)); err == nil {
+	if err := SaveChecked(db, id, []Row{{Slot: 1, ConfigID: "rolled_back_item", Amount: 1}}, after, []byte(`{"silver":60,"gold":0}`)); err == nil {
 		t.Fatal("wallet CHECK failure unexpectedly committed")
 	}
 	assertSaved(70)

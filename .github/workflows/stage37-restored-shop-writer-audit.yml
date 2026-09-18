@@ -10,14 +10,35 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Enumerate real bag and wallet writers and shop sell handlers
+      - name: Enumerate actual bag and wallet writers and shop sell handlers
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== bag/wallet writer definitions and calls ==='
-          rg -n 'bagStore\.Save|currencyStore\.Save|persistBag\(|persistCurrency\(|mysqlBagStore|role_bag_items|handleShopSell|shop sell|decrementBagItem\(|restoreBag\(|addBagItem\(' server/cmd/protocol-probe --glob '*.go' | head -180 || true
-          echo '=== MySQL store implementation paths ==='
-          rg -n 'func \([^)]*mysql(Bag|Currency)Store\).*Save|func \([^)]*mysql(Bag|Currency)Store\).*Load|func \([^)]*mysql(Bag|Currency)Store\).*Save' server --glob '*.go' || true
-          echo '=== persistence callsite boundaries ==='
-          rg -n -C 5 'persistBag\(|persistCurrency\(|bagStore\.Save\(|currencyStore\.Save\(' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go server/cmd/protocol-probe/gm_panel.go | head -270 || true
-          echo 'SHOP_WRITER_AUDIT=COMPLETE NO_GAMEPLAY_CHANGES=YES'
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root=Path('server/cmd/protocol-probe')
+          needles=re.compile(r'bagStore\.Save|currencyStore\.Save|persistBag\(|persistCurrency\(|mysqlBagStore|role_bag_items|handleShopSell|shop sell|decrementBagItem\(|restoreBag\(|addBagItem\(')
+          print('=== all writer definitions and calls ===')
+          count=0
+          for path in sorted(root.glob('*.go')):
+              for no,line in enumerate(path.read_text().splitlines(),1):
+                  if needles.search(line):
+                      print(f'{path}:{no}:{line.strip()[:250]}')
+                      count+=1
+          if count == 0:
+              raise SystemExit('ERROR: no writer callsites found')
+          print('=== persistence contexts ===')
+          boundary=re.compile(r'persistBag\(|persistCurrency\(|bagStore\.Save\(|currencyStore\.Save\(')
+          for path in (root/'main.go',root/'zz_recovered_overlay.go',root/'gm_panel.go'):
+              lines=path.read_text().splitlines()
+              seen=set()
+              for idx,line in enumerate(lines):
+                  if boundary.search(line):
+                      for j in range(max(0,idx-3),min(len(lines),idx+5)):
+                          if j not in seen:
+                              print(f'{path}:{j+1}:{lines[j][:220]}')
+                              seen.add(j)
+                      print('---')
+          print(f'SHOP_WRITER_AUDIT=COMPLETE MATCHES={count} NO_GAMEPLAY_CHANGES=YES')
+          PY

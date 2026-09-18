@@ -95,10 +95,14 @@ FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC FOR UPDATE`, roleID)
 			&name, &equipType, &artPack, &hardiness, &maxHardiness); err != nil {
 			return fmt.Errorf("read locked shop bag row %d: %w", index, err)
 		}
-		if name.Valid {
+		// mysqlBagStore.Load cannot distinguish NULL from an empty string;
+		// ordinaryShopBagRows persists both as NULL. Compare the same
+		// representation so pre-existing explicit empty strings do not
+		// reject an otherwise unchanged purchase or checked bag move.
+		if name.Valid && name.String != "" {
 			actual.Name = name.String
 		}
-		if equipType.Valid {
+		if equipType.Valid && equipType.String != "" {
 			actual.EquipType = equipType.String
 		}
 		for _, field := range []struct {
@@ -115,6 +119,11 @@ FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC FOR UPDATE`, roleID)
 			}
 			if field.value.Int64 < math.MinInt32 || field.value.Int64 > math.MaxInt32 {
 				return fmt.Errorf("%w at row %d: %s out of int32 range", ErrBagChanged, index, field.name)
+			}
+			// mysqlBagStore.Load also collapses SQL NULL and numeric 0,
+			// while nullableInt32 serializes both as NULL.
+			if field.value.Int64 == 0 {
+				continue
 			}
 			*field.dest = int32(field.value.Int64)
 		}

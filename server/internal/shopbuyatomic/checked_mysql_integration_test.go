@@ -287,4 +287,55 @@ VALUES (?,0,1,'old_item',100,1,1)`, reverseRole); err != nil {
 	if sparseItemID != sparseItem.ConfigID {
 		t.Fatalf("reloaded sparse purchase item=%q, want %q", sparseItemID, sparseItem.ConfigID)
 	}
+
+	// The legacy bag loader maps both SQL NULL and explicit empty/zero
+	// metadata to the same actor values. Verify the production checked
+	// purchase against explicit stored empties, then re-read from a separate
+	// SQL connection to prove that the normalized result was committed.
+	const emptyMetadataRole uint64 = 880005
+	if _, err := db.Exec("INSERT INTO roles(role_id) VALUES (?)", emptyMetadataRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO role_currency(role_id,snapshot) VALUES (?,?)", emptyMetadataRole, before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO role_bag_items
+(role_id,seq,slot,config_id,item_type,amount,view_id,name,equip_type,art_pack,hardiness,max_hardiness)
+VALUES (?,0,1,'explicit_empty',100,1,1,'','',0,0,0)`, emptyMetadataRole); err != nil {
+		t.Fatal(err)
+	}
+	emptyOriginal := Row{Slot: 1, ConfigID: "explicit_empty", ItemType: 100, Amount: 1, ViewID: 1}
+	emptyBought := Row{Slot: 2, ConfigID: "bought_after_empty", ItemType: 100, Amount: 1, ViewID: 1}
+	if err := SaveCheckedBag(db, emptyMetadataRole, []Row{emptyOriginal, emptyBought}, []Row{emptyOriginal}, before, after); err != nil {
+		t.Fatalf("explicit SQL empty metadata incorrectly blocks purchase: %v", err)
+	}
+	var emptyName, emptyEquip sql.NullString
+	var emptyArt, emptyHardiness, emptyMaxHardiness sql.NullInt64
+	if err := reopened.QueryRow(`SELECT name,equip_type,art_pack,hardiness,max_hardiness
+FROM role_bag_items WHERE role_id=? AND seq=0`, emptyMetadataRole).
+		Scan(&emptyName, &emptyEquip, &emptyArt, &emptyHardiness, &emptyMaxHardiness); err != nil {
+		t.Fatal(err)
+	}
+	if emptyName.Valid || emptyEquip.Valid || emptyArt.Valid || emptyHardiness.Valid || emptyMaxHardiness.Valid {
+		t.Fatalf("normalized empty metadata should persist as NULL: name=%v equip=%v art=%v hardiness=%v max=%v",
+			emptyName, emptyEquip, emptyArt, emptyHardiness, emptyMaxHardiness)
+	}
+	var boughtAfterEmpty string
+	if err := reopened.QueryRow("SELECT config_id FROM role_bag_items WHERE role_id=? AND seq=1", emptyMetadataRole).Scan(&boughtAfterEmpty); err != nil {
+		t.Fatal(err)
+	}
+	if boughtAfterEmpty != emptyBought.ConfigID {
+		t.Fatalf("purchase reward not durably saved: got %q", boughtAfterEmpty)
+	}
+	var emptyWallet []byte
+	if err := reopened.QueryRow("SELECT snapshot FROM role_currency WHERE role_id=?", emptyMetadataRole).Scan(&emptyWallet); err != nil {
+		t.Fatal(err)
+	}
+	var emptyWalletValues map[string]int64
+	if err := json.Unmarshal(emptyWallet, &emptyWalletValues); err != nil {
+		t.Fatal(err)
+	}
+	if emptyWalletValues["silver"] != 70 {
+		t.Fatalf("purchase wallet not durably charged: got %s", emptyWallet)
+	}
 }

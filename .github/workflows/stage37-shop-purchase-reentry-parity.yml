@@ -17,7 +17,7 @@ jobs:
         with:
           go-version: '1.26.5'
           cache: false
-      - name: Test only ordinary purchase and reconnect parity with real Go dependencies
+      - name: Test ordinary purchase wire parity without private combat skill data
         shell: bash
         working-directory: server
         run: |
@@ -29,8 +29,25 @@ jobs:
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
+          # The real production file is restored before vet/build; this temporary,
+          # SHA-locked test-only substitution disables an unrelated eager combat
+          # initializer requiring a private skill_new.ini. It does not fabricate
+          # client catalog content, and the ordinary shop code remains unchanged.
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
+          python3 - <<'PY'
+          from pathlib import Path
+          path=Path('cmd/protocol-probe/skill_catalog.go')
+          text=path.read_text()
+          old='var installedCombatSkillCatalog = mustLoadCombatSkillCatalog()'
+          new='var installedCombatSkillCatalog = &combatSkillCatalog{levelOne: make(map[string]combatSkillDefinition)}'
+          if text.count(old)!=1:
+              raise SystemExit('unexpected combat initializer; no test-only patch applied')
+          path.write_text(text.replace(old,new,1))
+          PY
           go test -modfile=ci.real.mod -count=1 -v -run '^TestOrdinaryShop(PurchaseFrameMatchesReconnectReplay|WalletFrameMatchesActorReload)$' ./cmd/protocol-probe
+          git restore -- cmd/protocol-probe/skill_catalog.go
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           go vet -modfile=ci.real.mod ./...
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o /tmp/shop-purchase-reentry.exe ./cmd/protocol-probe
           file /tmp/shop-purchase-reentry.exe | grep -E 'PE32\+ executable.*x86-64'
-          echo 'ORDINARY_SHOP_WIRE_PARITY=PASS VET=PASS WINDOWS_BUILD=PASS REAL_CLIENT_LIVE=NOT_RUN USER_MYSQL=NOT_RUN'
+          echo 'ORDINARY_SHOP_WIRE_PARITY=PASS COMBAT_INIT=TEST_ONLY_STUB PRODUCTION_COMBAT_SOURCE=RESTORED VET=PASS WINDOWS_BUILD=PASS REAL_CLIENT_LIVE=NOT_RUN USER_MYSQL=NOT_RUN'

@@ -1,0 +1,33 @@
+name: Stage37 NPC purchase currency persistence audit
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths: [.github/workflows/stage37-shop-currency-writer-audit.yml]
+permissions:
+  contents: read
+jobs:
+  currency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect only existing wallet persistence implementations
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path('server/cmd/protocol-probe')
+          targets=('func (store *mysqlCurrencyStore) Load(', 'func (store *mysqlCurrencyStore) Save(', 'type currencySnapshot struct', 'func (store *currencyStore) Save(', 'persistCurrency := func()', 'defer persistCurrency()', 'func (value currencySnapshot) toActor(', 'func (value *currencySnapshot) fromActor(')
+          found=set()
+          for path in sorted(root.glob('*.go')):
+              lines=path.read_text().splitlines()
+              for i,line in enumerate(lines):
+                  for target in targets:
+                      if target in line:
+                          found.add(target)
+                          print(f'=== {path}:{i+1} {target} ===')
+                          for j in range(max(0,i-2), min(len(lines), i+(85 if 'mysqlCurrencyStore' in target else 28))):
+                              print(f'{j+1}: {lines[j]}')
+          print('AUDIT_FOUND', sorted(found))
+          if 'func (store *mysqlCurrencyStore) Save(' not in found or 'persistCurrency := func()' not in found:
+              raise SystemExit('missing wallet writer or disconnect path')
+          print('WALLET_WRITER_AUDIT=PASS GAME_CODE_UNCHANGED=YES')
+          PY

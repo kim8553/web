@@ -6,8 +6,10 @@ current Snail server implementation.
 
 ## Authority and evidence rules
 
+- **Read `docs/USER_AUTHORITY_AND_WORK_RULES_20260918.md` before further reconstruction:** it pins the user-confirmed `9yin-go-server1.rar` lineage, exact latest user-supplied BIN64 hashes, verified Google Drive `res` folder, working login/map-entry ZIP, DB safety boundary, and the unresolved `FxGameLogic.dll` hash mismatch in the older authority document. Do not silently resolve that mismatch by assuming binary identity.
 - Current-client behavior/protocol authority is limited to the exact current Snail client
-  binaries and same-client Lua/resources recorded in `docs/CURRENT_AUTHORITY.md`.
+  binaries and same-client Lua/resources recorded in `docs/CURRENT_AUTHORITY.md`, as
+  qualified by the newer verified user-upload hashes in `docs/USER_AUTHORITY_AND_WORK_RULES_20260918.md`.
 - The exact `fee2df...` Go server binary is a later implementation reference and reverse-
   engineering target. It is not authority for official Snail gameplay semantics.
 - Never import gameplay behavior merely because an older V37/V45/V46/JYZJ server did it.
@@ -17,6 +19,7 @@ current Snail server implementation.
 
 ## Development workflow
 
+- Preserve the user-confirmed working login/map-entry path and existing item/shop systems. Locate needed current-client files proactively in the verified Google Drive `res` folder; confirm each file's content and version before drawing behavioral conclusions. Work on actual confirmed defects, not a replay of previously completed stages.
 - Prefer small, evidence-backed changes with tests.
 - Keep observer/instrumentation changes non-semantic: no packet mutation, no game-state writes,
   no transport-key mutation, no handler-result changes.
@@ -25,6 +28,7 @@ current Snail server implementation.
   explicitly requires a versioned fixture.
 - Before publication, run `go test ./...` and the Windows amd64 build when the environment
   supports dependency retrieval. Report unavailable checks as unavailable, not PASS.
+- Never reset or mutate the user's MySQL schema/data, enable schema migrations, or publish credentials without an audited backup and explicit approval. Use read-only DB inspection first.
 
 ## Luna / GitHub continuity
 

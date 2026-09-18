@@ -43,16 +43,18 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM Current Go main invokes migrations.Runner.Up at MySQL startup. Do not allow
-REM an unreviewed schema rewrite on an existing user database. This flag only
-REM unlocks this launcher; it does not alter the Go migration behavior.
-if /I not "%NINEYIN_ALLOW_SCHEMA_MIGRATIONS%"=="YES" (
-  echo ERROR: MySQL schema migrations have NOT been authorized.
-  echo The current Go binary automatically runs migrations on startup.
-  echo Do not enable migrations without schema review, an independent backup and approval.
+REM The current Go runner only verifies existing migration checksums when
+REM NINEYIN_ALLOW_SCHEMA_MIGRATIONS is not exactly YES. Never authorize DDL
+REM from this launcher, including when mysql.env or the parent shell sets YES.
+if /I "%NINEYIN_ALLOW_SCHEMA_MIGRATIONS%"=="YES" (
+  echo ERROR: migration authorization YES detected; this safe launcher will not execute schema changes.
+  echo Review your existing mysql.env separately. It has not been changed.
   pause
   exit /b 1
 )
+set "NINEYIN_ALLOW_SCHEMA_MIGRATIONS=NO"
+REM Go VerifyApplied will STOP without changing the DB if the migration ledger
+REM is missing or mismatched. This is not a full schema compatibility audit.
 if not exist "%LOGDIR%" mkdir "%LOGDIR%"
 
 powershell.exe -NoProfile -Command "$listeners = @(Get-NetTCPConnection -State Listen -LocalPort 19061,19062 -ErrorAction SilentlyContinue); if ($listeners.Count -eq 0) { exit 0 }; $owners = @($listeners.OwningProcess | Sort-Object -Unique); if ($owners.Count -eq 1) { $process = Get-CimInstance Win32_Process -Filter ('ProcessId=' + $owners[0]); if ($process.ExecutablePath -and [IO.Path]::GetFullPath($process.ExecutablePath) -eq [IO.Path]::GetFullPath($env:SERVER)) { exit 2 } }; exit 1"

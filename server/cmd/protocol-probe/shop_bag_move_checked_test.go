@@ -50,7 +50,7 @@ func TestShopAdjacentBagMoveCrossViewSwapKeepsSourceSlot(t *testing.T) {
 	want := [][3]uint16{{0x19, 2, 5}, {0x18, 2, 5}, {0x18, 121, 9}}
 	for i, frame := range link.frames {
 		if len(frame) < 5 || uint16(frame[0]) != want[i][0] || binary.LittleEndian.Uint16(frame[1:3]) != want[i][1] || binary.LittleEndian.Uint16(frame[3:5]) != want[i][2] {
-			t.Fatalf("frame[%d] header=%x, want command=%d view=%d slot=%d", i, frame, want[i][0], want[i][1], want[i][2])
+			t.Fatalf("frame[%d] header=%x, want command=%d view=%d slot=%d", i, frame, want[i][0], frame[0], want[i][1], want[i][2])
 		}
 	}
 }
@@ -71,10 +71,10 @@ func TestShopAdjacentBagMoveRejectsStaleBagBeforePublishing(t *testing.T) {
 	mock.ExpectQuery("SELECT role_id FROM roles").WithArgs(uint64(71)).WillReturnRows(
 		sqlmock.NewRows([]string{"role_id"}).AddRow(uint64(71)))
 	mock.ExpectQuery("SELECT slot, config_id, item_type, amount, view_id").WithArgs(uint64(71)).WillReturnRows(
-		sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id"}).
-			AddRow(5, "move_source", 100, 1, 1).
-			AddRow(9, "move_occupant", 100, 2, 2).
-			AddRow(10, "new_purchase", 100, 1, 1))
+		sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id", "name", "equip_type", "art_pack", "hardiness", "max_hardiness"}).
+			AddRow(5, "move_source", 100, 1, 1, nil, nil, nil, nil, nil).
+			AddRow(9, "move_occupant", 100, 2, 2, nil, nil, nil, nil, nil).
+			AddRow(10, "new_purchase", 100, 1, 1, nil, nil, nil, nil, nil))
 	mock.ExpectRollback()
 	// A nil connection makes premature frame publication fail immediately.
 	handled, err := applyBagMove(nil, player, &mysqlBagStore{db: db}, role.RoleID(71), 2, 5, 121, 9, "stale-move-test")

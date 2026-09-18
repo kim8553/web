@@ -1,0 +1,41 @@
+diff --git a/server/cmd/protocol-probe/zz_recovered_overlay.go b/server/cmd/protocol-probe/zz_recovered_overlay.go
+index a249c70..ec375f9 100644
+--- a/server/cmd/protocol-probe/zz_recovered_overlay.go
++++ b/server/cmd/protocol-probe/zz_recovered_overlay.go
+@@ -1467,6 +1467,10 @@ func handleUseItemCustom(link sceneMessageConnection, player *playerActor, itemC
+ 	return applyUseConsumable(link, player, itemCatalog, equipCatalog, dropTable, bagStore, fwzCardStore, roleID, uint16(srcView), srcPos, item, remote)
+ }
+ func applyUseBuffItem(link sceneMessageConnection, player *playerActor, bagStore bagStoreIface, roleID role.RoleID, srcView uint16, srcPos int32, item bagItem, remote string) (bool, error) {
++	if item.FuncBuffer != "buf_ride_yufeng" {
++		log.Printf("%s: USEITEM buff item %s FuncBuffer=%s has no verified handler; inventory unchanged (view=%d pos=%d)", remote, item.ConfigID, item.FuncBuffer, srcView, srcPos)
++		return true, nil
++	}
+ 	updated, remaining, consumed, ok := player.decrementBagItem(srcView, srcPos, 1)
+ 	if !ok {
+ 		log.Printf("%s: USEITEM buff item %s source vanished view=%d pos=%d", remote, item.ConfigID, srcView, srcPos)
+@@ -1482,12 +1486,8 @@ func applyUseBuffItem(link sceneMessageConnection, player *playerActor, bagStore
+ 		}
+ 		frames = append(frames, row)
+ 	}
+-	if item.FuncBuffer == "buff_ride_yufeng" {
+-		if buffFrame := player.startYufengReady(time.Now()); buffFrame != nil {
+-			frames = append(frames, buffFrame)
+-		}
+-	} else {
+-		log.Printf("%s: USEITEM buff item %s FuncBuffer=%s not wired yet (view=%d pos=%d)", remote, item.ConfigID, item.FuncBuffer, srcView, srcPos)
++	if buffFrame := player.startYufengReady(time.Now()); buffFrame != nil {
++		frames = append(frames, buffFrame)
+ 	}
+ 	if err := writeFrames(link, frames...); err != nil {
+ 		return true, err
+@@ -1513,8 +1513,8 @@ func applyUseConsumable(link sceneMessageConnection, player *playerActor, itemCa
+ 		return openGiftBox(link, player, itemCatalog, equipCatalog, dropTable, bagStore, roleID, srcView, srcPos, item, boxDropID, remote)
+ 	}
+ 	isPotion := item.ItemType == 1 || item.ItemType == 2 || item.ItemType == 11 || item.ItemType == 12
+-	if !isPotion && item.ToolUseEffect == "" && item.FuncBuffer == "" {
+-		log.Printf("%s: USEITEM item %s type=%d not a supported consumable (view=%d pos=%d)", remote, item.ConfigID, item.ItemType, srcView, srcPos)
++	if !isPotion && item.FuncBuffer == "" {
++		log.Printf("%s: USEITEM item %s type=%d ToolUseEffect=%q has no verified use handler; inventory unchanged (view=%d pos=%d)", remote, item.ConfigID, item.ItemType, item.ToolUseEffect, srcView, srcPos)
+ 		return true, nil
+ 	}
+ 	if item.FuncBuffer != "" {

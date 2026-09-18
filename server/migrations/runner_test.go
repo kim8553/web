@@ -33,6 +33,7 @@ func TestEmbeddedMigrationContainsNormalizedSchemaAndAtomicCutover(t *testing.T)
 }
 
 func TestRunnerRejectsChangedAppliedMigrationUnderLock(t *testing.T) {
+	t.Setenv("NINEYIN_ALLOW_SCHEMA_MIGRATIONS", "YES")
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +61,7 @@ func TestRunnerRejectsChangedAppliedMigrationUnderLock(t *testing.T) {
 }
 
 func TestRunnerFailsWhenAdvisoryLockIsUnavailable(t *testing.T) {
+	t.Setenv("NINEYIN_ALLOW_SCHEMA_MIGRATIONS", "YES")
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)

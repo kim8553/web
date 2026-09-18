@@ -40,17 +40,22 @@ jobs:
           }
           Write-Host 'MISSING_RESOURCE_AND_DSN_REPRO=PASS'
           exit 0
-      - name: Assert launcher checks resources before migration-authorization gate
+      - name: Assert launcher rejects DDL and forces read-only verification after preflight
         shell: pwsh
         run: |
           $launcher = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'server/启动本地九阴服务.bat') -Raw
+          $runner = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'server/migrations/runner.go') -Raw
           $preflight = $launcher.IndexOf('"%PREFLIGHT%" -Root')
-          $migration = $launcher.IndexOf('if /I not "%NINEYIN_ALLOW_SCHEMA_MIGRATIONS%"')
-          if ($preflight -lt 0 -or $migration -le $preflight) { throw 'Unsafe launcher gating order' }
+          $rejectDDL = $launcher.IndexOf('if /I "%NINEYIN_ALLOW_SCHEMA_MIGRATIONS%"=="YES" (')
+          $forceReadOnly = $launcher.IndexOf('set "NINEYIN_ALLOW_SCHEMA_MIGRATIONS=NO"')
+          $start = $launcher.IndexOf('start "Nine Yin Game 19061"')
+          if ($preflight -lt 0 -or $rejectDDL -le $preflight -or $forceReadOnly -le $rejectDDL -or $start -le $forceReadOnly) { throw 'Unsafe launcher gating order' }
+          if ($launcher.Contains('if /I not "%NINEYIN_ALLOW_SCHEMA_MIGRATIONS%"')) { throw 'Obsolete mutating migration approval gate remains' }
+          if (-not $runner.Contains('os.Getenv("NINEYIN_ALLOW_SCHEMA_MIGRATIONS") != "YES"') -or -not $runner.Contains('return runner.VerifyApplied(ctx)')) { throw 'Go runner read-only contract changed' }
           foreach ($needle in @('NINEYIN_SERVER_ROOT=%ROOT%', 'mysql.env', 'if not defined NINEYIN_MYSQL_DSN')) {
             if (-not $launcher.Contains($needle)) { throw "Missing launcher setting: $needle" }
           }
-          Write-Host 'LAUNCHER_ROOT_DSN_MIGRATION_GATE=PASS'
+          Write-Host 'LAUNCHER_READONLY_DB_GATE=PASS LIVE_E2E=NOT_RUN'
   isolated-shop-and-win64:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -88,6 +93,7 @@ jobs:
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
+          GOPROXY=off JIUYIN_TEST_SHOP_MYSQL_CI=0 go test -modfile=ci.real.mod -count=1 -v ./internal/launchsafety
           JIUYIN_TEST_MIGRATION_MYSQL_CI=1 NINEYIN_ALLOW_SCHEMA_MIGRATIONS= go test -modfile=ci.real.mod -count=1 -v ./migrations
           test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           python3 - <<'PY'
@@ -107,4 +113,4 @@ jobs:
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o "$RUNNER_TEMP/9yin-resource-audit-win64.exe" ./cmd/protocol-probe
           file "$RUNNER_TEMP/9yin-resource-audit-win64.exe" | grep -E 'PE32\+ executable.*x86-64'
           git diff --exit-code -- cmd/protocol-probe/zz_recovered_overlay.go cmd/protocol-probe/skill_catalog.go
-          echo 'MIGRATION_READ_ONLY_TESTS=PASS MYSQL_ISOLATED=PASS SHOP_REGRESSION=PASS GO_VET=PASS WIN64_BUILD=PASS SERVER_START=NOT_RUN USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'
+          echo 'LAUNCHER_CONTRACT=PASS MIGRATION_READ_ONLY_TESTS=PASS MYSQL_ISOLATED=PASS SHOP_REGRESSION=PASS GO_VET=PASS WIN64_BUILD=PASS SERVER_START=NOT_RUN USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'

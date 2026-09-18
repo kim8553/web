@@ -17,10 +17,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          command -v grep
           echo '=== BAG STORE SAVE CALLS ==='
-          rg -n -C 7 'bagStore\.Save\(|persistBagMutationChecked\(|\.Save\(roleID, .*bag|SaveCheckedBag\(|SaveBagChecked\(|LockRoleForBagWrite\(' server/cmd/protocol-probe server/internal/shopbuyatomic || true
+          grep -R -n -E -C 5 --include='*.go' 'bagStore\.Save\(|persistBagMutationChecked\(|\.Save\(roleID, .*bag|SaveCheckedBag\(|SaveBagChecked\(|LockRoleForBagWrite\(' server/cmd/protocol-probe server/internal/shopbuyatomic || test "$?" -eq 1
           echo '=== BAG MUTATION METHODS AND SHOP SELL ==='
-          rg -n -C 4 'takeBagItem\(|decrementBagItem\(|arrangeBagView\(|addBagItem\(|restoreBag\(|handleShopSell|shop sell|shop_sell|SellItem|SellItemToShop' server/cmd/protocol-probe | head -n 620 || true
+          grep -R -n -E -C 3 --include='*.go' 'takeBagItem\(|decrementBagItem\(|arrangeBagView\(|addBagItem\(|restoreBag\(|handleShopSell|shop sell|shop_sell|SellItem|SellItemToShop' server/cmd/protocol-probe | head -n 500 || test "${PIPESTATUS[0]}" -eq 1
           echo '=== SHOP-RELATED FILENAME LIST ==='
           find server/cmd/protocol-probe server/internal/shopbuyatomic -maxdepth 1 -type f -iname '*shop*' -printf '%p\n' | sort
-          echo 'AUDIT_ONLY=PASS SOURCE_CHANGED=NO USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'
+          echo 'AUDIT_COMMANDS_EXECUTED=PASS SOURCE_CHANGED=NO USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'

@@ -1,0 +1,66 @@
+name: Stage37 shop arrange before publish guard
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - .github/workflows/stage37-shop-arrange-before-publish.yml
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  arrange-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Patch only audited ARANGEITEM, run scoped test, vet and Windows build, then commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/stage37_shop_arrange_guard_apply.py
+          git diff --check
+          git diff -- server/cmd/protocol-probe/zz_recovered_overlay.go
+          cd server
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+          # Only the isolated unit test bypasses the unrelated eager initializer
+          # requiring a private, exact-current skill_new.ini. Never commit stub.
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('cmd/protocol-probe/skill_catalog.go')
+          text = path.read_text()
+          old = 'var installedCombatSkillCatalog = mustLoadCombatSkillCatalog()'
+          new = 'var installedCombatSkillCatalog = &combatSkillCatalog{levelOne: make(map[string]combatSkillDefinition)}'
+          if text.count(old) != 1:
+              raise SystemExit('refuse unknown combat catalog initializer')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          go test -modfile=ci.real.mod -count=1 -v -run '^TestShopAdjacentArrangeRejectsStaleBagBeforePublishing$' ./cmd/protocol-probe
+          git restore -- cmd/protocol-probe/skill_catalog.go
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
+          go test -modfile=ci.real.mod -count=1 ./internal/shopbuyatomic
+          go vet -modfile=ci.real.mod ./...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o /tmp/shop-arrange-guard.exe ./cmd/protocol-probe
+          file /tmp/shop-arrange-guard.exe | grep -E 'PE32\+ executable.*x86-64'
+          cd ..
+          git diff --check
+          test "$(git diff --name-only | wc -l)" -eq 1
+          test "$(git diff --name-only)" = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add server/cmd/protocol-probe/zz_recovered_overlay.go
+          git commit -m 'fix(shop): persist checked bag arrangement before publishing frames'
+          git push origin HEAD:stage37-restored-20260918
+          echo 'ARRANGE_STALE_REJECTION=PASS ACTOR_ROLLBACK=PASS NO_PRECOMMIT_FRAMES=PASS ATOMIC_PACKAGE=PASS VET=PASS WINDOWS_BUILD=PASS PRODUCTION_COMBAT_SOURCE=RESTORED USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'

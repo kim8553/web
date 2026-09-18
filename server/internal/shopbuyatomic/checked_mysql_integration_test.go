@@ -1,10 +1,13 @@
 package shopbuyatomic
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -114,4 +117,79 @@ CHECK (CAST(JSON_UNQUOTE(JSON_EXTRACT(snapshot, '$.silver')) AS SIGNED) <> 60)`)
 		t.Fatal("wallet CHECK failure unexpectedly committed")
 	}
 	assertSaved(70)
+
+	// Reproduce a bag-only writer racing a purchase on TWO independent SQL
+	// connections. The legacy writer owns the role lock until it commits;
+	// the purchase must then see its changed bag and reject stale actor data.
+	const concurrentRole uint64 = 880002
+	if _, err := db.Exec("INSERT INTO roles(role_id) VALUES (?)", concurrentRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO role_currency(role_id,snapshot) VALUES (?,?)", concurrentRole, before); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO role_bag_items(role_id,seq,slot,config_id,item_type,amount,view_id)
+VALUES (?,0,1,'old_item',100,1,1)`, concurrentRole); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Rollback()
+	if err := LockRoleForBagWrite(context.Background(), writer, concurrentRole); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Exec("UPDATE role_bag_items SET amount=2 WHERE role_id=?", concurrentRole); err != nil {
+		t.Fatal(err)
+	}
+	purchaseDB, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer purchaseDB.Close()
+	started := make(chan struct{})
+	finished := make(chan error, 1)
+	go func() {
+		close(started)
+		finished <- SaveCheckedBag(purchaseDB, concurrentRole,
+			[]Row{{Slot: 1, ConfigID: "old_item", ItemType: 100, Amount: 1, ViewID: 1}, {Slot: 2, ConfigID: "new_item", ItemType: 100, Amount: 1, ViewID: 1}},
+			[]Row{{Slot: 1, ConfigID: "old_item", ItemType: 100, Amount: 1, ViewID: 1}},
+			before, []byte(`{"silver":90,"gold":0}`))
+	}()
+	<-started
+	select {
+	case premature := <-finished:
+		t.Fatalf("purchase completed while another writer held role lock: %v", premature)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := writer.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case purchaseErr := <-finished:
+		if purchaseErr == nil || !strings.Contains(purchaseErr.Error(), "bag changed") {
+			t.Fatalf("stale purchase after competing writer: %v", purchaseErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("purchase did not finish after competing writer committed")
+	}
+	var savedAmount int
+	if err := reopened.QueryRow("SELECT amount FROM role_bag_items WHERE role_id=?", concurrentRole).Scan(&savedAmount); err != nil {
+		t.Fatal(err)
+	}
+	if savedAmount != 2 {
+		t.Fatalf("competing writer item amount=%d, want 2", savedAmount)
+	}
+	var savedWallet []byte
+	if err := reopened.QueryRow("SELECT snapshot FROM role_currency WHERE role_id=?", concurrentRole).Scan(&savedWallet); err != nil {
+		t.Fatal(err)
+	}
+	var wallet map[string]int64
+	if err := json.Unmarshal(savedWallet, &wallet); err != nil {
+		t.Fatal(err)
+	}
+	if wallet["silver"] != 100 {
+		t.Fatalf("rejected purchase altered silver=%d", wallet["silver"])
+	}
 }

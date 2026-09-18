@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -12,8 +13,8 @@ import (
 )
 
 // This test may only run against the disposable shop_atomic_ci database.
-// It exercises the existing normal purchase transaction, a second independent
-// connection's newer wallet, then the original actor's disconnect persistence.
+// It exercises a normal purchase, independent connection currency updates,
+// and the original actor's unchanged and then changed disconnect persistence.
 func TestOrdinaryShopPurchaseLogoutPreservesNewerMySQLWallet(t *testing.T) {
 	if os.Getenv("JIUYIN_TEST_SHOP_MYSQL_CI") != "1" {
 		t.Skip("isolated shop MySQL CI not enabled")
@@ -74,12 +75,33 @@ snapshot JSON NOT NULL) ENGINE=InnoDB`,
 	if err := shopbuyatomic.SaveCheckedBag(db, roleID, purchaseBag, nil, beforeJSON, purchasedJSON); err != nil {
 		t.Fatalf("persist ordinary purchase: %v", err)
 	}
-
 	independent, err := sql.Open("mysql", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer independent.Close()
+	readWallet := func() currencySnapshot {
+		t.Helper()
+		var raw []byte
+		if err := independent.QueryRow(`SELECT snapshot FROM role_currency WHERE role_id=?`, roleID).Scan(&raw); err != nil {
+			t.Fatal(err)
+		}
+		var saved currencySnapshot
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			t.Fatal(err)
+		}
+		return saved
+	}
+	checkBag := func() {
+		t.Helper()
+		var configID string
+		if err := independent.QueryRow(`SELECT config_id FROM role_bag_items WHERE role_id=?`, roleID).Scan(&configID); err != nil {
+			t.Fatal(err)
+		}
+		if configID != purchaseBag[0].ConfigID {
+			t.Fatalf("purchase bag lost on logout: %q", configID)
+		}
+	}
 	if _, err := independent.Exec(`UPDATE role_currency SET snapshot=? WHERE role_id=?`, newerJSON, roleID); err != nil {
 		t.Fatalf("independent wallet update: %v", err)
 	}
@@ -89,22 +111,33 @@ snapshot JSON NOT NULL) ENGINE=InnoDB`,
 	if err := persistDeferredShopCurrency(&mysqlCurrencyStore{db: db}, role.RoleID(roleID), actor); err != nil {
 		t.Fatalf("disconnect after committed purchase: %v", err)
 	}
-	var raw []byte
-	if err := independent.QueryRow(`SELECT snapshot FROM role_currency WHERE role_id=?`, roleID).Scan(&raw); err != nil {
+	if saved := readWallet(); saved != newer {
+		t.Fatalf("unchanged stale logout clobbered newer wallet: got=%+v want=%+v", saved, newer)
+	}
+	checkBag()
+
+	// Even after a local change, the stale session must not overwrite a newer
+	// wallet committed through a second independent connection.
+	actor.setSilver(69)
+	err = persistDeferredShopCurrency(&mysqlCurrencyStore{db: db}, role.RoleID(roleID), actor)
+	if err == nil || !strings.Contains(err.Error(), "wallet changed") {
+		t.Fatalf("expected stale changed-wallet refusal, got %v", err)
+	}
+	if saved := readWallet(); saved != newer {
+		t.Fatalf("changed stale logout clobbered newer wallet: got=%+v want=%+v", saved, newer)
+	}
+	checkBag()
+
+	// A changed wallet DOES persist when the independent DB still contains the
+	// last committed purchase snapshot; the bag must remain intact.
+	if _, err := independent.Exec(`UPDATE role_currency SET snapshot=? WHERE role_id=?`, purchasedJSON, roleID); err != nil {
 		t.Fatal(err)
 	}
-	var saved currencySnapshot
-	if err := json.Unmarshal(raw, &saved); err != nil {
-		t.Fatal(err)
+	if err := persistDeferredShopCurrency(&mysqlCurrencyStore{db: db}, role.RoleID(roleID), actor); err != nil {
+		t.Fatalf("fresh changed wallet must persist: %v", err)
 	}
-	if saved != newer {
-		t.Fatalf("stale purchase logout clobbered newer wallet: got=%+v want=%+v", saved, newer)
+	if saved := readWallet(); saved.Silver != 69 || saved.Gold != 0 || saved.SilverCard != 0 || saved.SilverTicket != 0 {
+		t.Fatalf("fresh logout wallet not persisted: %+v", saved)
 	}
-	var configID string
-	if err := independent.QueryRow(`SELECT config_id FROM role_bag_items WHERE role_id=?`, roleID).Scan(&configID); err != nil {
-		t.Fatal(err)
-	}
-	if configID != purchaseBag[0].ConfigID {
-		t.Fatalf("purchase bag lost on logout: %q", configID)
-	}
+	checkBag()
 }

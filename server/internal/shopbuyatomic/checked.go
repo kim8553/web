@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 )
 
@@ -50,13 +51,17 @@ func SaveCheckedBag(db *sql.DB, roleID uint64, nextRows, expectedBag []Row, expe
 }
 
 func sameBagIdentity(a, b Row) bool {
-	return a.Slot == b.Slot && a.ConfigID == b.ConfigID && a.ItemType == b.ItemType && a.Amount == b.Amount && a.ViewID == b.ViewID
+	return a.Slot == b.Slot && a.ConfigID == b.ConfigID && a.ItemType == b.ItemType && a.Amount == b.Amount && a.ViewID == b.ViewID &&
+		reflect.DeepEqual(a.Name, b.Name) && reflect.DeepEqual(a.EquipType, b.EquipType) &&
+		reflect.DeepEqual(a.ArtPack, b.ArtPack) && reflect.DeepEqual(a.Hardiness, b.Hardiness) &&
+		reflect.DeepEqual(a.MaxHardiness, b.MaxHardiness)
 }
 
-// The five fields below come directly from the existing mysqlBagStore.Load
-// projection and are not enriched by item/equipment catalog lookups.
+// Check every field that a checked bag rewrite persists. Checking only the
+// first five allows a concurrent durability/name update to be overwritten by
+// an otherwise valid shop purchase or bag move.
 func checkLockedBag(ctx context.Context, tx *sql.Tx, roleID uint64, expected []Row) error {
-	stored, err := tx.QueryContext(ctx, `SELECT slot, config_id, item_type, amount, view_id
+	stored, err := tx.QueryContext(ctx, `SELECT slot, config_id, item_type, amount, view_id, name, equip_type, art_pack, hardiness, max_hardiness
 FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC FOR UPDATE`, roleID)
 	if err != nil {
 		return fmt.Errorf("lock shop bag: %w", err)
@@ -65,8 +70,34 @@ FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC FOR UPDATE`, roleID)
 	index := 0
 	for stored.Next() {
 		var actual Row
-		if err := stored.Scan(&actual.Slot, &actual.ConfigID, &actual.ItemType, &actual.Amount, &actual.ViewID); err != nil {
+		var name, equipType sql.NullString
+		var artPack, hardiness, maxHardiness sql.NullInt64
+		if err := stored.Scan(&actual.Slot, &actual.ConfigID, &actual.ItemType, &actual.Amount, &actual.ViewID,
+			&name, &equipType, &artPack, &hardiness, &maxHardiness); err != nil {
 			return fmt.Errorf("read locked shop bag row %d: %w", index, err)
+		}
+		if name.Valid {
+			actual.Name = name.String
+		}
+		if equipType.Valid {
+			actual.EquipType = equipType.String
+		}
+		for _, field := range []struct {
+			name  string
+			value sql.NullInt64
+			dest  *any
+		}{
+			{"art_pack", artPack, &actual.ArtPack},
+			{"hardiness", hardiness, &actual.Hardiness},
+			{"max_hardiness", maxHardiness, &actual.MaxHardiness},
+		} {
+			if !field.value.Valid {
+				continue
+			}
+			if field.value.Int64 < math.MinInt32 || field.value.Int64 > math.MaxInt32 {
+				return fmt.Errorf("%w at row %d: %s out of int32 range", ErrBagChanged, index, field.name)
+			}
+			*field.dest = int32(field.value.Int64)
 		}
 		if index >= len(expected) || !sameBagIdentity(actual, expected[index]) {
 			return fmt.Errorf("%w at row %d; reload before retrying", ErrBagChanged, index)

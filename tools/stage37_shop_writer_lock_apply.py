@@ -55,11 +55,8 @@ patch('server/cmd/protocol-probe/zz_recovered_overlay.go', '308c7714307c8eff8f03
 patch('server/internal/shopbuyatomic/checked_bag_test.go', '074c63917da4f0b3e46bbe1aedb1dca2e6627a14', [
     ('\t\t\tmock.ExpectBegin()\n\t\t\tmock.ExpectQuery("SELECT snapshot FROM role_currency")',
      '\t\t\tmock.ExpectBegin()\n\t\t\tmock.ExpectQuery("SELECT role_id FROM roles").WithArgs(uint64(7)).WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow(uint64(7)))\n\t\t\tmock.ExpectQuery("SELECT snapshot FROM role_currency")'),
-    ('\nfunc TestSaveCheckedBagIdentity(t *testing.T) {',
-     '''
-func TestSaveCheckedBagIdentity(t *testing.T) {'''),
 ])
-patch('server/internal/shopbuyatomic/checked_mysql_integration_test.go', '4a0a186dd0f4be38b0c05df0073540dac859519c', [
+patch('server/internal/shopbuyatomic/checked_mysql_integration_test.go', '6fda258f10e4d1d24af887a2c856806f048be204', [
     ('\tif _, err := db.Exec(`CREATE TABLE role_bag_items (',
      '\tif _, err := db.Exec(`CREATE TABLE roles (role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY) ENGINE=InnoDB`); err != nil {\n\t\tt.Fatal(err)\n\t}\n\tif _, err := db.Exec(`CREATE TABLE role_bag_items ('),
     ('\tconst id uint64 = 880001\n\tif _, err := db.Exec(`INSERT INTO role_currency',

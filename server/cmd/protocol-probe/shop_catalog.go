@@ -33,6 +33,9 @@ func loadShopCatalogSection(path, shopID string) ([]shopCatalogItem, int32, int3
 	pageCount := int32(0)
 	maxPageKey := int32(-1)
 	items := make([]shopCatalogItem, 0, 10)
+	// One client grid coordinate identifies one item. Duplicate authored rows
+	// must not silently resolve to the first item or reuse a view object ID.
+	occupied := make(map[[2]int32]string)
 	scanner := bufio.NewScanner(file)
 	lineNumber := 0
 	for scanner.Scan() {
@@ -126,6 +129,11 @@ func loadShopCatalogSection(path, shopID string) ([]shopCatalogItem, int32, int3
 		if configID == "" || amount <= 0 || price < 0 {
 			return nil, 0, 0, fmt.Errorf("shop %s line %d: invalid item config=%q amount=%d price=%d", shopID, lineNumber, configID, amount, price)
 		}
+		coordinate := [2]int32{page, position}
+		if previous, exists := occupied[coordinate]; exists {
+			return nil, 0, 0, fmt.Errorf("shop %s line %d: duplicate page=%d position=%d for item %q (already %q)", shopID, lineNumber, page, position, configID, previous)
+		}
+		occupied[coordinate] = configID
 		items = append(items, shopCatalogItem{configID: configID, amount: amount, priceMode: priceMode, price: price, page: page, position: position, exchangeData: exchangeData})
 		if page > maxPageKey {
 			maxPageKey = page

@@ -1,0 +1,243 @@
+diff --git a/.github/workflows/stage37-shop-sparse-wallet-db-ci.yml b/.github/workflows/stage37-shop-sparse-wallet-db-ci.yml
+new file mode 100644
+index 0000000..d19aac2
+--- /dev/null
++++ b/.github/workflows/stage37-shop-sparse-wallet-db-ci.yml
+@@ -0,0 +1,52 @@
++name: Stage37 shop sparse wallet disposable MySQL regression
++on:
++  push:
++    branches: [stage37-restored-20260918]
++    paths:
++      - 'server/internal/shopbuyatomic/**'
++      - '.github/workflows/stage37-shop-sparse-wallet-db-ci.yml'
++  workflow_dispatch:
++permissions:
++  contents: read
++jobs:
++  sparse-wallet-db:
++    runs-on: ubuntu-latest
++    timeout-minutes: 30
++    services:
++      mysql:
++        image: mysql:8.4
++        env:
++          MYSQL_ROOT_PASSWORD: shopci_root_only
++          MYSQL_DATABASE: shop_atomic_ci
++          MYSQL_USER: shopci
++          MYSQL_PASSWORD: shopci_pw
++        ports: ['3306:3306']
++        options: >-
++          --health-cmd="mysqladmin ping -h localhost -u root -pshopci_root_only"
++          --health-interval=5s --health-timeout=5s --health-retries=30
++    steps:
++      - uses: actions/checkout@v4
++        with:
++          persist-credentials: false
++      - uses: actions/setup-go@v5
++        with:
++          go-version: '1.26.5'
++          cache: false
++      - name: Run purchase regression only against disposable shop_atomic_ci
++        working-directory: server
++        shell: bash
++        env:
++          JIUYIN_TEST_SHOP_MYSQL_CI: '1'
++          JIUYIN_TEST_SHOP_MYSQL_DSN: 'shopci:shopci_pw@tcp(127.0.0.1:3306)/shop_atomic_ci?parseTime=true'
++        run: |
++          set -euo pipefail
++          cp go.mod ci.real.mod
++          cp go.sum ci.real.sum
++          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
++            go mod edit -modfile=ci.real.mod -dropreplace="$path"
++          done
++          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
++          go mod tidy -modfile=ci.real.mod
++          test -z "$(gofmt -l internal/shopbuyatomic/checked.go internal/shopbuyatomic/checked_wallet_legacy_zero_test.go internal/shopbuyatomic/checked_mysql_integration_test.go)"
++          go test -modfile=ci.real.mod -count=1 -v ./internal/shopbuyatomic
++          echo 'DISPOSABLE_MYSQL_SPARSE_WALLET=PASS USER_PC_MYSQL=NOT_RUN LIVE_E2E=NOT_RUN'
+diff --git a/server/docs/SHOP_PURCHASE_SPARSE_WALLET_DB_COMPAT_20260918.md b/server/docs/SHOP_PURCHASE_SPARSE_WALLET_DB_COMPAT_20260918.md
+new file mode 100644
+index 0000000..013d18a
+--- /dev/null
++++ b/server/docs/SHOP_PURCHASE_SPARSE_WALLET_DB_COMPAT_20260918.md
+@@ -0,0 +1,21 @@
++# NPC 상점 구매: 생략된 0원 재화 필드와 DB 저장 검증 (2026-09-18)
++
++## 출처 및 범위
++
++- 수정 기준 GitHub `kim8553/web`, 브랜치 `stage37-restored-20260918`, 수정 전 HEAD `a8a26edfa22422a6a6d3e5d7874453cacfcebc42`. 정확한 커밋을 Actions `git archive`로 추출하여 SHA-256 검증한 작업 트리에서 분석·수정했다.
++- 첨부 원본 `9yin-go-server1.rar` SHA-256: `ddc2f6bc078660a40eedf077d43befd6402ed59478ccde987d44171c1d7aefa5` (원본 보존).
++- 첨부 최신 BIN64 ZIP SHA-256: `167aeacadd22d551c252e8808a010a00080682de8d2b3fb5f21420ff4d75a306`. 내부 `FxGameLogic.dll` SHA-256 `16cf49b652c39b63ba0767780cc39f32ea1e50bdc683da9d5e7b2697cf95c3e8`은 이전 `CURRENT_AUTHORITY.md`에 기록된 `3bfa3832c04291d9d7a44f6bc13cceb609aad55ba90e2ad937cc77221089ef96`과 다르다. 둘을 동일 DLL로 취급하지 않는다.
++- Drive 별도 서버 경로 `9yin_server/resources/modern/share/trade/shop.ini` (ID `1qDCtz31_3vcYmshpF39yw82IqyRJJJTr`): 내려받은 원본 2,176,439 bytes, SHA-256 `ceb7a3a7e17cbc118ce5a7d3d979dea6120c50cdf6a5823697c05a5b1b9cf5dd`. PCK의 클라이언트 활성 스트림은 **미확정**이며 선택·교체하지 않았다.
++
++## 기존 구매/SQL 경로에서 확인한 결함
++
++`cmd/protocol-probe/zz_recovered_overlay.go`의 `currencySnapshot`은 `silver`, `gold`, `silver_card`, `silver_ticket` 네 필드가 있는 Go 구조체다. `mysqlCurrencyStore.Load`의 JSON 역직렬화는 생략된 정수 필드를 0으로 읽는다. `cmd/protocol-probe/shop_purchase_atomic.go`는 이 구조체를 네 필드 모두 포함한 JSON으로 직렬화하여 `internal/shopbuyatomic/checked.go`의 `SaveCheckedBag`에 넘긴다. 기존 저장 함수는 DB `role_currency.snapshot`과 구매 시작 스냅샷을 `map[string]int64`로 비교하면서 `reflect.DeepEqual`을 사용했다. 따라서 DB에 `{"silver":100}`이 들어 있고 실제 값이 변하지 않았어도 구매 시작 JSON `{"silver":100,"gold":0,"silver_card":0,"silver_ticket":0}`은 `ErrWalletChanged`로 거부됐다. **이 표현 호환성 결함은 실제 코드·격리 SQL mock에서 확인했으나, 사용자 PC DB에 생략형 행이 존재하는지는 알 수 없다.**
++
++`sameWalletValues`는 저장된 키의 값이 모두 동일하며, 구매 시작 스냅샷에서만 존재하는 키의 값이 반드시 0일 때만 동등하다고 판단한다. 저장된 알 수 없는 키, 달라진 값, 누락된 비영(非零) 값은 계속 충돌로 거부하므로 임의 재화를 덮어쓰지 않는다. 역할 행 잠금, 가방 스냅샷 비교, 가방·재화 단일 트랜잭션, 실패 시 구매 성공 미전송 경로는 변경하지 않았다. 기존 NPC 판매 패킷이나 가격 규칙은 추가하지 않았다.
++
++## 실행 검증 및 남은 한계
++
++- 수정 **전** 새 회귀 `TestSaveCheckedBagAcceptsOmittedZeroWalletFields`: `ErrWalletChanged`로 실패함을 기록했다. 수정 **후** `internal/shopbuyatomic` 테스트, 비프로토콜 20개 패키지, 프로토콜 패키지 컴파일, `go vet ./...`, Windows amd64 PE32+ 빌드가 격리 작업 트리에서 성공했다. Go 모듈 의존성은 기존 CI 방식의 별도 `ci.real.mod` + 검증된 임시 vendor로 공급했으며 저장소의 `go.mod`를 변경하지 않았다.
++- `checked_mysql_integration_test.go`의 기존 일회용 `shop_atomic_ci` 테스트에 생략형 재화로 구매한 뒤 별도 MySQL 연결에서 가방·재화 재조회하는 사례를 추가했다. **이 일회용 MySQL 테스트는 CI 결과를 확인하기 전까지 PASS로 간주하지 않는다.**
++- Drive `nineyin` 폴더에 `role_bag_items.ibd`, `role_currency.ibd`가 있는 것은 확인했으나 `.ibd` 파일명만으로 열 형식, 인덱스, 트랜잭션 엔진, **사용자 PC 현재 스키마**는 알 수 없다. `tools/check-shop-db-columns-readonly.sql`은 컬럼 존재만 검사하므로 모든 DB 호환성을 증명하지 않는다. 사용자 `nineyin` DB 읽기/쓰기·초기화·자동 마이그레이션은 하지 않았다.
++- 실제 클라이언트 접속·상점 구매·재접속 유지 LIVE/E2E, 판매 요청 형식, 클라이언트 PCK 활성 스트림 및 사용자 PC 실제 DB는 **미검증**이다. 이전 로그인·맵 진입 정상 ZIP도 수정하지 않았다.
+diff --git a/server/internal/shopbuyatomic/checked.go b/server/internal/shopbuyatomic/checked.go
+index 42fb152..698fd35 100644
+--- a/server/internal/shopbuyatomic/checked.go
++++ b/server/internal/shopbuyatomic/checked.go
+@@ -57,6 +57,25 @@ func sameBagIdentity(a, b Row) bool {
+ 		reflect.DeepEqual(a.MaxHardiness, b.MaxHardiness)
+ }
+ 
++// The actor decodes role_currency.snapshot into a struct: omitted fields load
++// as zero and are serialized explicitly in its pre-purchase snapshot. Accept
++// that representational difference, but reject changed nonzero values and
++// unexpected persisted keys so a purchase cannot silently discard currency.
++func sameWalletValues(stored, expected map[string]int64) bool {
++	for key, value := range stored {
++		want, known := expected[key]
++		if !known || want != value {
++			return false
++		}
++	}
++	for key, value := range expected {
++		if _, present := stored[key]; !present && value != 0 {
++			return false
++		}
++	}
++	return true
++}
++
+ // Check every field that a checked bag rewrite persists. Checking only the
+ // first five allows a concurrent durability/name update to be overwritten by
+ // an otherwise valid shop purchase or bag move.
+@@ -153,7 +172,7 @@ func saveChecked(db *sql.DB, roleID uint64, rows, expectedBag []Row, checkBag bo
+ 		if decodeErr := json.Unmarshal(storedJSON, &stored); decodeErr != nil || stored == nil {
+ 			return fmt.Errorf("decode locked shop wallet: %v", decodeErr)
+ 		}
+-		if !reflect.DeepEqual(stored, expected) {
++		if !sameWalletValues(stored, expected) {
+ 			return fmt.Errorf("%w; reload before retrying", ErrWalletChanged)
+ 		}
+ 	}
+diff --git a/server/internal/shopbuyatomic/checked_mysql_integration_test.go b/server/internal/shopbuyatomic/checked_mysql_integration_test.go
+index d9c4273..6cdab5a 100644
+--- a/server/internal/shopbuyatomic/checked_mysql_integration_test.go
++++ b/server/internal/shopbuyatomic/checked_mysql_integration_test.go
+@@ -252,4 +252,39 @@ VALUES (?,0,1,'old_item',100,1,1)`, reverseRole); err != nil {
+ 	if freshAmount != 2 {
+ 		t.Fatalf("fresh writer amount=%d, want 2", freshAmount)
+ 	}
++
++	// An older wallet snapshot may omit the actor's three zero-valued
++	// currencies. Check the actual purchase transaction and reload through
++	// another MySQL connection, not just a mocked JSON comparison.
++	const sparseWalletRole uint64 = 880004
++	if _, err := db.Exec("INSERT INTO roles(role_id) VALUES (?)", sparseWalletRole); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := db.Exec("INSERT INTO role_currency(role_id,snapshot) VALUES (?,?)", sparseWalletRole, []byte(`{"silver":100}`)); err != nil {
++		t.Fatal(err)
++	}
++	sparseBefore := []byte(`{"silver":100,"gold":0,"silver_card":0,"silver_ticket":0}`)
++	sparseAfter := []byte(`{"silver":90,"gold":0,"silver_card":0,"silver_ticket":0}`)
++	sparseItem := Row{Slot: 1, ConfigID: "sparse_wallet_purchase", ItemType: 100, Amount: 1, ViewID: 1}
++	if err := SaveCheckedBag(db, sparseWalletRole, []Row{sparseItem}, nil, sparseBefore, sparseAfter); err != nil {
++		t.Fatalf("purchase using sparse legacy wallet: %v", err)
++	}
++	var savedSparseWallet []byte
++	if err := reopened.QueryRow("SELECT snapshot FROM role_currency WHERE role_id=?", sparseWalletRole).Scan(&savedSparseWallet); err != nil {
++		t.Fatal(err)
++	}
++	var reloadedSparseWallet map[string]int64
++	if err := json.Unmarshal(savedSparseWallet, &reloadedSparseWallet); err != nil {
++		t.Fatal(err)
++	}
++	if len(reloadedSparseWallet) != 4 || reloadedSparseWallet["silver"] != 90 || reloadedSparseWallet["gold"] != 0 || reloadedSparseWallet["silver_card"] != 0 || reloadedSparseWallet["silver_ticket"] != 0 {
++		t.Fatalf("reloaded sparse purchase wallet=%s, want equivalent %s", savedSparseWallet, sparseAfter)
++	}
++	var sparseItemID string
++	if err := reopened.QueryRow("SELECT config_id FROM role_bag_items WHERE role_id=?", sparseWalletRole).Scan(&sparseItemID); err != nil {
++		t.Fatal(err)
++	}
++	if sparseItemID != sparseItem.ConfigID {
++		t.Fatalf("reloaded sparse purchase item=%q, want %q", sparseItemID, sparseItem.ConfigID)
++	}
+ }
+diff --git a/server/internal/shopbuyatomic/checked_wallet_legacy_zero_test.go b/server/internal/shopbuyatomic/checked_wallet_legacy_zero_test.go
+new file mode 100644
+index 0000000..73186e4
+--- /dev/null
++++ b/server/internal/shopbuyatomic/checked_wallet_legacy_zero_test.go
+@@ -0,0 +1,69 @@
++package shopbuyatomic
++
++import (
++	"testing"
++
++	"github.com/DATA-DOG/go-sqlmock"
++)
++
++// The production currencySnapshot JSON always includes all four fields, but
++// mysqlCurrencyStore.Load accepts older JSON with zero-valued fields omitted.
++// A shop purchase must compare the values actually loaded into the actor,
++// without treating an omitted zero as a concurrent currency modification.
++func TestSaveCheckedBagAcceptsOmittedZeroWalletFields(t *testing.T) {
++	db, mock, err := sqlmock.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer db.Close()
++	const id uint64 = 7
++	before := []byte(`{"silver":100,"gold":0,"silver_card":0,"silver_ticket":0}`)
++	after := []byte(`{"silver":90,"gold":0,"silver_card":0,"silver_ticket":0}`)
++	reward := Row{Slot: 1, ConfigID: "purchased_item", ItemType: 100, Amount: 1, ViewID: 1}
++
++	mock.ExpectBegin()
++	mock.ExpectQuery("SELECT role_id FROM roles").WithArgs(id).
++		WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow(id))
++	mock.ExpectQuery("SELECT snapshot FROM role_currency").WithArgs(id).
++		WillReturnRows(sqlmock.NewRows([]string{"snapshot"}).AddRow([]byte(`{"silver":100}`)))
++	mock.ExpectQuery("SELECT slot, config_id, item_type, amount, view_id").WithArgs(id).
++		WillReturnRows(sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id", "name", "equip_type", "art_pack", "hardiness", "max_hardiness"}))
++	mock.ExpectExec("DELETE FROM role_bag_items").WithArgs(id).
++		WillReturnResult(sqlmock.NewResult(0, 0))
++	mock.ExpectExec("INSERT INTO role_bag_items").WithArgs(id, 0, reward.Slot, reward.ConfigID,
++		reward.ItemType, reward.Amount, reward.ViewID, nil, nil, nil, nil, nil).
++		WillReturnResult(sqlmock.NewResult(0, 1))
++	mock.ExpectExec("DELETE FROM role_currency").WithArgs(id).
++		WillReturnResult(sqlmock.NewResult(0, 1))
++	mock.ExpectExec("INSERT INTO role_currency").WithArgs(id, after).
++		WillReturnResult(sqlmock.NewResult(0, 1))
++	mock.ExpectCommit()
++
++	if err := SaveCheckedBag(db, id, []Row{reward}, nil, before, after); err != nil {
++		t.Fatalf("purchase with equivalent legacy wallet was rejected: %v", err)
++	}
++	if err := mock.ExpectationsWereMet(); err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestSameWalletValuesPreservesConflictsAndUnknownKeys(t *testing.T) {
++	for _, tc := range []struct {
++		name     string
++		stored   map[string]int64
++		expected map[string]int64
++		want     bool
++	}{
++		{"omitted zero", map[string]int64{"silver": 100}, map[string]int64{"silver": 100, "gold": 0}, true},
++		{"missing nonzero", map[string]int64{"silver": 100}, map[string]int64{"silver": 100, "gold": 1}, false},
++		{"changed silver", map[string]int64{"silver": 99}, map[string]int64{"silver": 100}, false},
++		{"unexpected saved field", map[string]int64{"silver": 100, "legacy_currency": 0}, map[string]int64{"silver": 100}, false},
++		{"identical", map[string]int64{"silver": 100, "gold": 0}, map[string]int64{"silver": 100, "gold": 0}, true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			if got := sameWalletValues(tc.stored, tc.expected); got != tc.want {
++				t.Fatalf("sameWalletValues(%v, %v) = %t; want %t", tc.stored, tc.expected, got, tc.want)
++			}
++		})
++	}
++}

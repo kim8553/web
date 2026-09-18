@@ -12,7 +12,7 @@ import (
 // persistOrdinaryShopPurchase uses the actual shared game database. Legacy
 // JSON stores persist two separate files and cannot offer this guarantee;
 // reject that mode rather than charging or reporting an uncommitted purchase.
-func persistOrdinaryShopPurchase(bagStore bagStoreIface, currencyStore currencyStoreIface, roleID role.RoleID, items []bagItem, beforeWallet, afterWallet currencySnapshot) error {
+func persistOrdinaryShopPurchase(bagStore bagStoreIface, currencyStore currencyStoreIface, roleID role.RoleID, items, startingBag []bagItem, beforeWallet, afterWallet currencySnapshot) error {
 	bag, bagOK := bagStore.(*mysqlBagStore)
 	currency, currencyOK := currencyStore.(*mysqlCurrencyStore)
 	if !bagOK || !currencyOK || bag == nil || currency == nil || bag.db == nil || currency.db != bag.db {
@@ -21,6 +21,21 @@ func persistOrdinaryShopPurchase(bagStore bagStoreIface, currencyStore currencyS
 	if roleID == 0 {
 		return fmt.Errorf("shop purchase has no role id")
 	}
+	rows := ordinaryShopBagRows(items)
+	startingRows := ordinaryShopBagRows(startingBag)
+	expectedJSON, err := json.Marshal(beforeWallet)
+	if err != nil {
+		return fmt.Errorf("encode shop starting wallet: %w", err)
+	}
+	nextJSON, err := json.Marshal(afterWallet)
+	if err != nil {
+		return fmt.Errorf("encode shop resulting wallet: %w", err)
+	}
+	return shopbuyatomic.SaveCheckedBag(bag.db, uint64(roleID), rows, startingRows, expectedJSON, nextJSON)
+}
+
+// Convert the actual persistent row projection without adding protocol fields.
+func ordinaryShopBagRows(items []bagItem) []shopbuyatomic.Row {
 	rows := make([]shopbuyatomic.Row, 0, len(items))
 	for _, item := range items {
 		rows = append(rows, shopbuyatomic.Row{
@@ -30,15 +45,7 @@ func persistOrdinaryShopPurchase(bagStore bagStoreIface, currencyStore currencyS
 			Hardiness: nullableInt32(item.Hardiness), MaxHardiness: nullableInt32(item.MaxHardiness),
 		})
 	}
-	expectedJSON, err := json.Marshal(beforeWallet)
-	if err != nil {
-		return fmt.Errorf("encode shop starting wallet: %w", err)
-	}
-	nextJSON, err := json.Marshal(afterWallet)
-	if err != nil {
-		return fmt.Errorf("encode shop resulting wallet: %w", err)
-	}
-	return shopbuyatomic.SaveChecked(bag.db, uint64(roleID), rows, expectedJSON, nextJSON)
+	return rows
 }
 
 // This is the same four-property currency update already emitted by

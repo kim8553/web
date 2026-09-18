@@ -1,0 +1,17 @@
+name: Stage37 shop writer lock check
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths: [.github/workflows/stage37-shop-writer-lock-check.yml]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source anchors and candidate patch
+        run: |
+          python3 tools/stage37_shop_writer_lock_apply.py
+          git diff --check
+          git diff --stat

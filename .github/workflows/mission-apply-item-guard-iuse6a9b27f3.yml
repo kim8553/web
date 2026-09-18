@@ -1,0 +1,39 @@
+name: One-shot audited item guard iuse6a9b27f3
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - .github/workflows/mission-apply-item-guard-iuse6a9b27f3.yml
+permissions:
+  contents: write
+concurrency:
+  group: item-guard-iuse6a9b27f3
+  cancel-in-progress: false
+jobs:
+  apply-audited-patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: true
+      - name: Check exact lineage, audit tests and patch before touching only existing server file
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = '02ca2aa2a4d80f4ab2bc7940351f786ca9ce8a86'
+          test -z "$(git status --porcelain)"
+          test "$(git hash-object server/cmd/protocol-probe/zz_recovered_overlay.go)" = 'a249c70c92ff4c476ada08016ddac80deccd3d63'
+          test "$(git hash-object server/cmd/protocol-probe/item_use_unwired_effect_test.go)" = '4e89da928e82279022cb8c0acbaaf658acf615c3'
+          test "$(git hash-object server/cmd/protocol-probe/item_skill_coverage_audit_test.go)" = 'baf1534d78e2e950eb82b1b9d2009e6dcc8cc57c'
+          test "$(git hash-object server/docs/ITEM_SKILL_COVERAGE_AUDIT_20260918.md)" = '588da5a0b41a41140570775fb91a024ba6097831'
+          echo 'e90ae2c67dd410bf14c1d61ff06ca8a05e1d8973c3be1e4347c30b7c4396a309  .github/mission-item-guard-iuse6a9b27f3.patch' | sha256sum --check --status
+          git apply --check --index .github/mission-item-guard-iuse6a9b27f3.patch
+          git apply --index .github/mission-item-guard-iuse6a9b27f3.patch
+          test "$(git hash-object server/cmd/protocol-probe/zz_recovered_overlay.go)" = 'ec375f90d32198535ff6c9e10f1b54a45d6ebe99'
+          test "$(git diff --cached --name-only)" = 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+          git -c user.name='Stage37 audit automation' -c user.email='stage37-audit@users.noreply.github.com' commit -m 'fix(items): preserve inventory for unwired effects and match source Yufeng identifier'
+          git push origin HEAD:stage37-restored-20260918
+          printf 'ITEM_GUARD_APPLIED_COMMIT=%s\n' "$(git rev-parse HEAD)"
+          printf 'ITEM_GUARD_APPLIED_BLOB=%s\n' "$(git hash-object server/cmd/protocol-probe/zz_recovered_overlay.go)"

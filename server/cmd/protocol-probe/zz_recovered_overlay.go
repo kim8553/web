@@ -6588,6 +6588,7 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 	// The database commit is definitive. Publish the same snapshots only after
 	// the complete bag and wallet have been durably committed together.
 	nextWallet.toActor(player)
+	player.markOrdinaryShopWalletCommitted(nextWallet)
 	player.restoreBag(nextBag)
 	if err := writeFrames(link, currencyFrame, itemFrame); err != nil {
 		return true, fmt.Errorf("publish committed shop purchase: %w", err)

@@ -6,9 +6,9 @@ import (
 	"os"
 	"testing"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/local/9yin-go-server/internal/role"
 	"github.com/local/9yin-go-server/internal/shopbuyatomic"
-	_ "github.com/go-sql-driver/mysql"
 )
 
 // This test may only run against the disposable shop_atomic_ci database.

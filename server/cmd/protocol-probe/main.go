@@ -347,7 +347,17 @@ func handle(conn net.Conn, store *roleStore, facultyStore facultyStoreIface, sho
 			log.Printf("%s: persist currency: %v", conn.RemoteAddr(), err)
 		}
 	}
-	defer persistCurrency()
+	// Ordinary NPC purchases already commit currency with the bag. Do not
+	// overwrite a newer session wallet with the same stale snapshot on exit.
+	// Explicit currency persistence elsewhere retains its existing behavior.
+	defer func() {
+		if currencyStore == nil || selected == nil || player == nil {
+			return
+		}
+		if err := persistDeferredShopCurrency(currencyStore, selected.ID, player); err != nil {
+			log.Printf("%s: persist currency on disconnect: %v", conn.RemoteAddr(), err)
+		}
+	}()
 	qingGongGranted := false
 	neigongGranted := false
 	customizingRestored := false

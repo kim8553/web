@@ -90,6 +90,7 @@ type playerActor struct {
 	gold                  int32
 	silverCard            int32
 	silverTicket          int32
+	shopWallet            *currencySnapshot // last successfully committed ordinary NPC purchase
 	faction               string
 	mu                    sync.Mutex
 	motion                playerMotion

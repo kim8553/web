@@ -31,14 +31,14 @@ jobs:
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
           go mod download -modfile=ci.real.mod
-          test -z "$(gofmt -l cmd/protocol-probe/shop_catalog.go cmd/protocol-probe/shop_catalog_input_validation_test.go)"
+          test -z "$(gofmt -l cmd/protocol-probe/shop_catalog.go cmd/protocol-probe/shop_catalog_input_validation_test.go cmd/protocol-probe/shop_catalog_duplicate_position_test.go)"
       - name: Test exact shop parser in isolated package (no private resources)
         working-directory: server
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p /tmp/stage37-shop-parser-test
-          cp cmd/protocol-probe/shop_catalog.go cmd/protocol-probe/shop_catalog_input_validation_test.go /tmp/stage37-shop-parser-test/
+          cp cmd/protocol-probe/shop_catalog.go cmd/protocol-probe/shop_catalog_input_validation_test.go cmd/protocol-probe/shop_catalog_duplicate_position_test.go /tmp/stage37-shop-parser-test/
           printf 'package main\nconst defaultModernShareRoot = ""\n' > /tmp/stage37-shop-parser-test/test_root_stub.go
           cd /tmp/stage37-shop-parser-test
           GO111MODULE=off go test -count=1 -v *.go

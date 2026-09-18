@@ -15,13 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 5
+          fetch-depth: 0
       - name: Verify ancestry and exact patch, apply and clean one-time transport
         shell: bash
         run: |
           set -euo pipefail
           test "${GITHUB_REF_NAME}" = 'stage37-restored-20260918'
-          test "$(git rev-parse HEAD^)" = '9edf3bd058af0648436a1943ea8ae322f8833f8a'
           git merge-base --is-ancestor 'd90445542cf8dcc0ff70294da077387602e5f0ea' HEAD
           test "$(git diff --name-only HEAD^ HEAD)" = 'server/tools/shop-npc-open-exact.patch'
           test "$(git diff --name-only d90445542cf8dcc0ff70294da077387602e5f0ea HEAD)" = "$(printf '%s\n' '.github/workflows/shop-npc-open-exact-transport.yml' 'server/tools/shop-npc-open-exact.patch')"

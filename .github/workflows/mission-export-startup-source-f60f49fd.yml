@@ -1,0 +1,44 @@
+name: Startup source transport f60f49fd
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - .github/workflows/mission-export-startup-source-f60f49fd.yml
+permissions:
+  contents: read
+jobs:
+  export-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Verify parent and archive exact checked-out source
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=960c7f9ae05933458222bac1412a9f0897f0858b
+          actual_parent=$(git rev-parse HEAD^)
+          test "$actual_parent" = "$expected"
+          git diff --quiet
+          git diff --cached --quiet
+          git status --porcelain > "$RUNNER_TEMP/source_status.txt"
+          test ! -s "$RUNNER_TEMP/source_status.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/source_head.txt"
+          git rev-parse HEAD^{tree} > "$RUNNER_TEMP/source_tree.txt"
+          tar -czf "$RUNNER_TEMP/stage37-exact-source-f60f49fd.tar.gz" -C "$GITHUB_WORKSPACE" .
+          cd "$RUNNER_TEMP"
+          sha256sum stage37-exact-source-f60f49fd.tar.gz > stage37-exact-source-f60f49fd.sha256
+          cat source_head.txt source_tree.txt stage37-exact-source-f60f49fd.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stage37-exact-source-f60f49fd
+          path: |
+            ${{ runner.temp }}/stage37-exact-source-f60f49fd.tar.gz
+            ${{ runner.temp }}/stage37-exact-source-f60f49fd.sha256
+            ${{ runner.temp }}/source_head.txt
+            ${{ runner.temp }}/source_tree.txt
+          retention-days: 1
+          if-no-files-found: error

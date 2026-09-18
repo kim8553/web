@@ -31,7 +31,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 tools/stage37_shop_writer_lock_apply.py
-          gofmt -w server/cmd/protocol-probe/zz_recovered_overlay.go server/internal/shopbuyatomic/role_lock_test.go
+          gofmt -w server/cmd/protocol-probe/zz_recovered_overlay.go
           git diff --check
           python3 - <<'PY'
           import subprocess

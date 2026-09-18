@@ -34,7 +34,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git show -s --format=%P HEAD)" = '698c0df44e2201b91aa7dc7f5f4510171bf1bb96'
+          # git show --format=%P is empty under fetch-depth=1; raw object
+          # retains the authoritative parent identity even in shallow clones.
+          git cat-file -p HEAD | grep -Fx 'parent 698c0df44e2201b91aa7dc7f5f4510171bf1bb96'
           test "$(git hash-object server/cmd/protocol-probe/zz_recovered_overlay.go)" = 'a249c70c92ff4c476ada08016ddac80deccd3d63'
           test -f 'server/启动本地九阴服务.bat'
           test -f server/loopback-lister.ps1
@@ -72,7 +74,7 @@ jobs:
           mkdir -p ../stage37-npc-buy-live-kit
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o ../stage37-npc-buy-live-kit/9yin-game-native-menu.exe ./cmd/protocol-probe
           file ../stage37-npc-buy-live-kit/9yin-game-native-menu.exe | grep -E 'PE32\+ executable.*x86-64'
-          test "$(git hash-object cmd/protocol-probe/../protocol-probe/zz_recovered_overlay.go)" = 'a249c70c92ff4c476ada08016ddac80deccd3d63'
+          test "$(git hash-object cmd/protocol-probe/zz_recovered_overlay.go)" = 'a249c70c92ff4c476ada08016ddac80deccd3d63'
           git diff --exit-code -- cmd/protocol-probe/zz_recovered_overlay.go cmd/protocol-probe/skill_catalog.go
           echo 'NPC_BUY_KIT_TESTS=PASS MYSQL_CI=PASS VET=PASS WIN64_BUILD=PASS CLIENT_LIVE=NOT_RUN USER_MYSQL=NOT_RUN'
       - name: Generate checksum, provenance and safe local test instructions

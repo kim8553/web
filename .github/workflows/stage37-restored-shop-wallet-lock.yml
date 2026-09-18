@@ -11,6 +11,8 @@ jobs:
   verify-and-commit:
     runs-on: ubuntu-latest
     timeout-minutes: 50
+    # Disposable MySQL uses an isolated CHECK constraint for rollback injection;
+    # no privileged triggers, production database, or user credentials are used.
     services:
       mysql:
         image: mysql:8.4

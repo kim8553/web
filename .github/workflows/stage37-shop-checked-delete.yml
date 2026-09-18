@@ -34,7 +34,7 @@ jobs:
           test "${GITHUB_REF_NAME}" = 'stage37-restored-20260918'
           python3 tools/stage37_shop_checked_delete_apply.py
           python3 tools/stage37_shop_checked_delete_test_apply.py
-          gofmt -w server/cmd/protocol-probe/zz_recovered_overlay.go server/internal/shopbuyatomic/checked_mysql_integration_test.go server/internal/shopbuyatomic/bag_only.go server/internal/shopbuyatomic/bag_only_test.go server/cmd/protocol-probe/shop_bag_checked.go
+          gofmt -w server/cmd/protocol-probe/zz_recovered_overlay.go server/internal/shopbuyatomic/checked_mysql_integration_test.go
           git diff --check
           python3 - <<'PY'
           import subprocess

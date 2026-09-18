@@ -1,0 +1,36 @@
+name: Stage37 ordinary purchase reconnect parity
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - .github/workflows/stage37-shop-purchase-reentry-parity.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  purchase-reentry-parity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Test only ordinary purchase and reconnect parity with real Go dependencies
+        shell: bash
+        working-directory: server
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+          go test -modfile=ci.real.mod -count=1 -v -run '^TestOrdinaryShop(PurchaseFrameMatchesReconnectReplay|WalletFrameMatchesActorReload)$' ./cmd/protocol-probe
+          go vet -modfile=ci.real.mod ./...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o /tmp/shop-purchase-reentry.exe ./cmd/protocol-probe
+          file /tmp/shop-purchase-reentry.exe | grep -E 'PE32\+ executable.*x86-64'
+          echo 'ORDINARY_SHOP_WIRE_PARITY=PASS VET=PASS WINDOWS_BUILD=PASS REAL_CLIENT_LIVE=NOT_RUN USER_MYSQL=NOT_RUN'

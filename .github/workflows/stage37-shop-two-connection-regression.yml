@@ -1,0 +1,52 @@
+name: Stage37 shop two-connection bag regression
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - '.github/workflows/stage37-shop-two-connection-regression.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: shopci_root_only
+          MYSQL_DATABASE: shop_atomic_ci
+          MYSQL_USER: shopci
+          MYSQL_PASSWORD: shopci_pw
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -pshopci_root_only"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Verify independent-connection purchase and bag writer conflict
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for path in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$path"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+          JIUYIN_TEST_SHOP_MYSQL_CI=1 JIUYIN_TEST_SHOP_MYSQL_DSN='shopci:shopci_pw@tcp(127.0.0.1:3306)/shop_atomic_ci?parseTime=true' go test -modfile=ci.real.mod -count=1 -v ./internal/shopbuyatomic
+          mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
+          go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
+          go test -modfile=ci.real.mod -c -o /tmp/shop-two-connection-protocol.test ./cmd/protocol-probe
+          go vet -modfile=ci.real.mod ./...
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -modfile=ci.real.mod -o /tmp/shop-two-connection.exe ./cmd/protocol-probe
+          file /tmp/shop-two-connection.exe | grep -E 'PE32\+ executable.*x86-64'
+          echo 'TWO_CONNECTION_BAG_CONFLICT=PASS DISPOSABLE_MYSQL=PASS GO_TEST=PASS PROTOCOL_COMPILE=PASS VET=PASS WINDOWS_BUILD=PASS USER_MYSQL=NOT_RUN LATEST_CLIENT_LIVE=NOT_RUN'

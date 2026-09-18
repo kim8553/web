@@ -503,7 +503,7 @@ func (store *mysqlCurrencyStore) Load(roleID role.RoleID) (currencySnapshot, boo
 }
 func (store *mysqlCurrencyStore) Save(roleID role.RoleID, value currencySnapshot) error {
 	if store == nil || store.db == nil {
-		return nil
+		return errors.New("currency store: missing database connection")
 	}
 	if roleID == 0 {
 		return errors.New("currency store: zero role id")
@@ -3500,7 +3500,7 @@ FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC`, roleID)
 }
 func (store *mysqlBagStore) Save(roleID role.RoleID, items []bagItem) error {
 	if store == nil || store.db == nil {
-		return nil
+		return errors.New("bag store: missing database connection")
 	}
 	if roleID == 0 {
 		return errors.New("bag store: zero role id")

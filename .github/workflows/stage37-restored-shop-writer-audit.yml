@@ -1,0 +1,23 @@
+name: Stage37 restored shop writer audit
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths: [.github/workflows/stage37-restored-shop-writer-audit.yml]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Enumerate real bag and wallet writers and shop sell handlers
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== bag/wallet writer definitions and calls ==='
+          rg -n 'bagStore\.Save|currencyStore\.Save|persistBag\(|persistCurrency\(|mysqlBagStore|role_bag_items|handleShopSell|shop sell|decrementBagItem\(|restoreBag\(|addBagItem\(' server/cmd/protocol-probe --glob '*.go' | head -180 || true
+          echo '=== MySQL store implementation paths ==='
+          rg -n 'func \([^)]*mysql(Bag|Currency)Store\).*Save|func \([^)]*mysql(Bag|Currency)Store\).*Load|func \([^)]*mysql(Bag|Currency)Store\).*Save' server --glob '*.go' || true
+          echo '=== persistence callsite boundaries ==='
+          rg -n -C 5 'persistBag\(|persistCurrency\(|bagStore\.Save\(|currencyStore\.Save\(' server/cmd/protocol-probe/main.go server/cmd/protocol-probe/zz_recovered_overlay.go server/cmd/protocol-probe/gm_panel.go | head -270 || true
+          echo 'SHOP_WRITER_AUDIT=COMPLETE NO_GAMEPLAY_CHANGES=YES'

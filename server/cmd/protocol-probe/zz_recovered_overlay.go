@@ -1661,6 +1661,7 @@ func applyUnequip(link sceneMessageConnection, player *playerActor, equipCatalog
 	return true, nil
 }
 func applyBagMove(link sceneMessageConnection, player *playerActor, bagStore bagStoreIface, roleID role.RoleID, srcView uint16, srcPos int32, dstView uint16, dstPos int32, remote string) (bool, error) {
+	startingBag := player.bagSnapshot()
 	item, ok := player.takeBagItem(srcView, srcPos)
 	if !ok {
 		log.Printf("%s: bag move source empty view=%d pos=%d", remote, srcView, srcPos)
@@ -1676,9 +1677,9 @@ func applyBagMove(link sceneMessageConnection, player *playerActor, bagStore bag
 			disp.Slot = srcPos
 		} else {
 			disp.ViewID = srcViewID
-			disp.Slot = 0
+			disp.Slot = srcPos
 		}
-		player.addBagItem(disp)
+		disp.Slot = int32(player.addBagItem(disp))
 		displaced = &disp
 	}
 	item.ViewID = dstViewID
@@ -1690,6 +1691,7 @@ func applyBagMove(link sceneMessageConnection, player *playerActor, bagStore bag
 		if dstView != srcView {
 			row, err := serverViewAdd(srcView, uint16(dispSlot), bagItemProps(srcView, *displaced))
 			if err != nil {
+				player.restoreBag(startingBag)
 				return true, err
 			}
 			frames = append(frames, row)
@@ -1697,6 +1699,7 @@ func applyBagMove(link sceneMessageConnection, player *playerActor, bagStore bag
 			frames = append(frames, serverViewRemove(dstView, uint16(dstPos)))
 			row, err := serverViewAdd(srcView, uint16(dispSlot), bagItemProps(srcView, *displaced))
 			if err != nil {
+				player.restoreBag(startingBag)
 				return true, err
 			}
 			frames = append(frames, row)
@@ -1704,13 +1707,19 @@ func applyBagMove(link sceneMessageConnection, player *playerActor, bagStore bag
 	}
 	row, err := serverViewAdd(dstView, uint16(dstPos), bagItemProps(dstView, item))
 	if err != nil {
+		player.restoreBag(startingBag)
 		return true, err
 	}
 	frames = append(frames, row)
+	// Reject a stale bag before publishing frames or overwriting an NPC purchase.
+	if err := persistBagMutationChecked(bagStore, roleID, startingBag, player.bagSnapshot()); err != nil {
+		player.restoreBag(startingBag)
+		log.Printf("%s: reject MOVEITEM after bag changed: %v", remote, err)
+		return true, nil
+	}
 	if err := writeFrames(link, frames...); err != nil {
 		return true, err
 	}
-	persistBagEquip(bagStore, nil, roleID, player)
 	if displaced != nil {
 		log.Printf("%s: bag move %s view=%d:%d -> view=%d:%d displaced %s to %d:%d", remote, item.ConfigID, srcView, srcPos, dstView, dstPos, displaced.ConfigID, srcView, displaced.Slot)
 	} else {

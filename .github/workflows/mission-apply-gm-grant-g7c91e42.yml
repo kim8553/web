@@ -1,0 +1,35 @@
+name: Temporary exact GM grant change transport g7c91e42
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths: ['.github/workflows/mission-apply-gm-grant-g7c91e42.yml']
+permissions:
+  contents: write
+jobs:
+  apply-verified-main:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Verify expected source and publish only reviewed main.go patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = '53b9fd795c64159622f56db58d3fe6be533a112a'
+          test "$(git hash-object server/cmd/protocol-probe/main.go)" = '42a20f4ba3b02cafa4185cf13b7057b6af036078'
+          test "$(git hash-object server/cmd/protocol-probe/gm_grant_persist.go)" = '9da096d05e17789fc458d272ef0db11e225713a8'
+          test "$(git hash-object server/cmd/protocol-probe/gm_grant_persist_test.go)" = '18086fcbd0605fd62d7da06d5ecb39d46611f31d'
+          sha256sum --check <<'CHECK'
+          753ed2a19af8fe9728996e65d7b0feb45998a84d924df83ab95108f7160e4e77  .github/mission-gm-grant-g7c91e42.patch
+          CHECK
+          git apply --check --index .github/mission-gm-grant-g7c91e42.patch
+          git apply --index .github/mission-gm-grant-g7c91e42.patch
+          test "$(git hash-object server/cmd/protocol-probe/main.go)" = 'a2e196ce6d13318ed4ed54714abb12ce83bd808d'
+          git diff --cached --check
+          test "$(git diff --cached --name-only)" = 'server/cmd/protocol-probe/main.go'
+          git -c user.name='GitHub Actions' -c user.email='actions@users.noreply.github.com' commit -m 'fix(gm): do not report item grants when bag persistence fails'
+          git push origin HEAD:refs/heads/stage37-restored-20260918
+          echo "GM_GRANT_SOURCE_COMMIT=$(git rev-parse HEAD)"
+          echo "GM_GRANT_MAIN_BLOB=$(git hash-object server/cmd/protocol-probe/main.go)"

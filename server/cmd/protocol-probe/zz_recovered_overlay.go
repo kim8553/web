@@ -6587,6 +6587,10 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 			if refreshErr := resyncOrdinaryShopWalletAfterConflict(link, player, currencyStore, roleID, startingWallet); refreshErr != nil {
 				return true, fmt.Errorf("shop buy wallet conflict: cannot safely refresh session: %w", refreshErr)
 			}
+		} else if errors.Is(err, shopbuyatomic.ErrBagChanged) {
+			if refreshErr := resyncOrdinaryShopBagAfterConflict(link, player, bagStore, roleID, startingBag); refreshErr != nil {
+				return true, fmt.Errorf("shop buy bag conflict: cannot safely refresh session: %w", refreshErr)
+			}
 		}
 		return true, nil
 	}

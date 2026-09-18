@@ -14,6 +14,10 @@ import (
 // failures as safe to reconcile.
 var ErrWalletChanged = errors.New("shop buy: wallet changed since purchase began")
 
+// ErrBagChanged identifies ONLY a persisted-bag comparison mismatch.
+// Other database failures must not trigger a destructive client replay.
+var ErrBagChanged = errors.New("shop buy: bag changed since purchase began")
+
 // LockRoleForBagWrite serializes participating bag writes for an existing
 // migrated role. A role row exists even when the bag or wallet is empty.
 // This lock alone does not prove a legacy caller's snapshot is fresh.
@@ -65,7 +69,7 @@ FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC FOR UPDATE`, roleID)
 			return fmt.Errorf("read locked shop bag row %d: %w", index, err)
 		}
 		if index >= len(expected) || !sameBagIdentity(actual, expected[index]) {
-			return fmt.Errorf("shop buy: bag changed since purchase began at row %d; reload before retrying", index)
+			return fmt.Errorf("%w at row %d; reload before retrying", ErrBagChanged, index)
 		}
 		index++
 	}
@@ -76,7 +80,7 @@ FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC FOR UPDATE`, roleID)
 		return fmt.Errorf("close locked shop bag: %w", err)
 	}
 	if index != len(expected) {
-		return fmt.Errorf("shop buy: bag changed since purchase began (rows %d, expected %d); reload before retrying", index, len(expected))
+		return fmt.Errorf("%w (rows %d, expected %d); reload before retrying", ErrBagChanged, index, len(expected))
 	}
 	return nil
 }

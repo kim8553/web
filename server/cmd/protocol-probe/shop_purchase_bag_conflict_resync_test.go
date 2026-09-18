@@ -35,7 +35,9 @@ func ordinaryShopBagConflictRows() *sqlmock.Rows {
 
 func TestOrdinaryShopBagConflictResyncReplaysPersistedBagWithoutFailedReward(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 	original := []bagItem{{ConfigID: "shop_existing", ItemType: 100, Amount: 2, ViewID: 1, Slot: 4}}
 	actor := &playerActor{}
@@ -66,12 +68,16 @@ func TestOrdinaryShopBagConflictResyncReplaysPersistedBagWithoutFailedReward(t *
 			t.Fatal("failed purchase reward appeared in client refresh")
 		}
 	}
-	if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOrdinaryShopBagConflictResyncRejectsLocalMutationWithoutFrames(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 	original := []bagItem{{ConfigID: "shop_existing", ItemType: 100, Amount: 2, ViewID: 1, Slot: 4}}
 	actor := &playerActor{}
@@ -87,17 +93,24 @@ func TestOrdinaryShopBagConflictResyncRejectsLocalMutationWithoutFrames(t *testi
 	if !reflect.DeepEqual(before, actor.bagSnapshot()) || len(capture.frames) != 0 {
 		t.Fatalf("refusal changed actor or published frames: bag=%+v frames=%d", actor.bagSnapshot(), len(capture.frames))
 	}
-	if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOrdinaryShopBagConflictResyncInvalidRowsFailClosed(t *testing.T) {
-	for _, testcase := range []struct { name string; rows *sqlmock.Rows }{
+	for _, testcase := range []struct {
+		name string
+		rows *sqlmock.Rows
+	}{
 		{"invalid_slot", sqlmock.NewRows([]string{"config_id", "item_type", "amount", "view_id", "name", "equip_type", "art_pack", "hardiness", "max_hardiness", "slot"}).AddRow("new", 100, 1, 1, nil, nil, nil, nil, nil, 0)},
 		{"duplicate_slot", sqlmock.NewRows([]string{"config_id", "item_type", "amount", "view_id", "name", "equip_type", "art_pack", "hardiness", "max_hardiness", "slot"}).AddRow("first", 100, 1, 1, nil, nil, nil, nil, nil, 4).AddRow("second", 100, 1, 1, nil, nil, nil, nil, nil, 4)},
 	} {
 		t.Run(testcase.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer db.Close()
 			original := []bagItem{{ConfigID: "existing", ItemType: 100, Amount: 1, ViewID: 1, Slot: 1}}
 			actor := &playerActor{}
@@ -107,29 +120,43 @@ func TestOrdinaryShopBagConflictResyncInvalidRowsFailClosed(t *testing.T) {
 			if err := resyncOrdinaryShopBagAfterConflict(capture, actor, &mysqlBagStore{db: db}, role.RoleID(91), original); err == nil {
 				t.Fatal("invalid persisted bag was accepted")
 			}
-			if !reflect.DeepEqual(original, actor.bagSnapshot()) || len(capture.frames) > 0 { t.Fatal("invalid bag changed actor/client") }
-			if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+			if !reflect.DeepEqual(original, actor.bagSnapshot()) || len(capture.frames) > 0 {
+				t.Fatal("invalid bag changed actor/client")
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }
 
 func TestOrdinaryShopBagConflictResyncReadFailureDoesNotEraseBag(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 	original := []bagItem{{ConfigID: "existing", ItemType: 100, Amount: 1, ViewID: 1, Slot: 1}}
 	actor := &playerActor{}
 	actor.restoreBag(original)
 	mock.ExpectQuery("SELECT config_id, item_type, amount, view_id").WithArgs(role.RoleID(91)).WillReturnError(sql.ErrConnDone)
 	capture := &ordinaryShopBagConflictCapture{}
-	if err := resyncOrdinaryShopBagAfterConflict(capture, actor, &mysqlBagStore{db: db}, role.RoleID(91), original); err == nil { t.Fatal("read failure accepted") }
-	if !reflect.DeepEqual(original, actor.bagSnapshot()) || len(capture.frames) != 0 { t.Fatal("read failure changed actor/client") }
-	if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+	if err := resyncOrdinaryShopBagAfterConflict(capture, actor, &mysqlBagStore{db: db}, role.RoleID(91), original); err == nil {
+		t.Fatal("read failure accepted")
+	}
+	if !reflect.DeepEqual(original, actor.bagSnapshot()) || len(capture.frames) != 0 {
+		t.Fatal("read failure changed actor/client")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestOrdinaryShopBagConflictResyncWriteFailureReturned(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
 	original := []bagItem{{ConfigID: "shop_existing", ItemType: 100, Amount: 2, ViewID: 1, Slot: 4}}
 	actor := &playerActor{}
@@ -139,6 +166,10 @@ func TestOrdinaryShopBagConflictResyncWriteFailureReturned(t *testing.T) {
 	if err := resyncOrdinaryShopBagAfterConflict(capture, actor, &mysqlBagStore{db: db}, role.RoleID(91), original); err == nil || !strings.Contains(err.Error(), "publish persisted bag refresh") {
 		t.Fatalf("expected connection write error, got %v", err)
 	}
-	if len(actor.bagSnapshot()) != 2 || len(capture.frames) != 1 { t.Fatal("read persisted bag not retained, or unexpected frames") }
-	if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+	if len(actor.bagSnapshot()) != 2 || len(capture.frames) != 1 {
+		t.Fatal("read persisted bag not retained, or unexpected frames")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -1,0 +1,22 @@
+name: Stage37 shop Lua candidate structural audit
+
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - server/tools/audit_client_lua_sale_candidates.py
+      - server/tools/test_audit_client_lua_sale_candidates.py
+      - .github/workflows/stage37-shop-lua-sale-candidate-audit.yml
+  workflow_dispatch:
+
+jobs:
+  synthetic-structure-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Audit only synthetic PCK/LuaQ fixtures; never use private client assets
+        run: python3 -m unittest -v test_audit_client_lua_sale_candidates.py
+        working-directory: server/tools

@@ -1,4 +1,4 @@
-# Read-only preflight for cmd/protocol-probe/main.go and zz_recovered_overlay.go.
+# Read-only preflight for cmd/protocol-probe/skill_catalog.go, main.go and zz_recovered_overlay.go.
 # This script does not create directories, change game data, or contact MySQL.
 param(
     [string]$Root = $PSScriptRoot,
@@ -9,8 +9,25 @@ $ErrorActionPreference = 'Stop'
 $rootPath = [System.IO.Path]::GetFullPath($Root)
 $missing = New-Object System.Collections.Generic.List[string]
 
-# All entries below come from current Go loader paths, not inferred client paths.
+# Source: skill_catalog.go loadSkillResourceTables / mustLoadCombatSkillCatalog.
+# These are mandatory at package initialization, before main() or either listener.
 $requiredFiles = @(
+    'resources\modern\share\skill\skill_new.ini',
+    'resources\modern\share\skill\skill_static.ini',
+    'resources\modern\share\skill\skill_normal_varprop.ini',
+    'resources\modern\share\skill\skill_lock_varprop.ini',
+    'resources\modern\share\skill\skill_consume.ini',
+    'resources\modern\share\skill\damage_calculate.ini',
+    'resources\modern\share\skill\attack_hitshape.ini',
+    'resources\modern\share\skill\attack_targetshape.ini',
+    'resources\modern\share\skill\buff_new.ini',
+    'resources\modern\share\skill\buff_static.ini',
+    'resources\modern\share\skill\buff_varprop.ini',
+    'resources\modern\ini\action\zhaoshi_player.ini',
+    'resources\modern\ini\action\zhaoshi_player_2.ini',
+    'resources\modern\ini\action\zhaoshi_player_dodge.ini',
+    'resources\modern\ini\action\zhaoshi_player_parry.ini',
+    'resources\modern\ini\action\zhaoshi_clone.ini',
     'resources\modern\share\skill\qinggong\qgdefine.ini',
     'resources\modern\share\item\tool_item.ini',
     'resources\modern\share\item\equipment.ini',
@@ -36,8 +53,28 @@ foreach ($relative in $requiredDirectories) {
         $missing.Add($relative)
     }
 }
+
+# Source: npc_catalog.go loadNPCTemplateTables and scene_catalog_registry.go.
+# Empty directories previously passed the preflight but cannot supply NPCs.
+$npcTemplatesRelative = 'resources\modern\share\npc\npcconfig'
+$npcTemplatesDir = Join-Path $rootPath $npcTemplatesRelative
+if ([System.IO.Directory]::Exists($npcTemplatesDir)) {
+    $npcTable = Get-ChildItem -LiteralPath $npcTemplatesDir -File -Filter '*.txt' -Recurse | Select-Object -First 1
+    if ($null -eq $npcTable) {
+        $missing.Add("$npcTemplatesRelative (no nested TXT template files)")
+    }
+}
+$npcCreatorsRelative = 'resources\modern\share\creator\npc_creator'
+$npcCreatorsDir = Join-Path $rootPath $npcCreatorsRelative
+if ([System.IO.Directory]::Exists($npcCreatorsDir)) {
+    $npcCreator = Get-ChildItem -LiteralPath $npcCreatorsDir -File -Filter '*.xml' -Recurse | Select-Object -First 1
+    if ($null -eq $npcCreator) {
+        $missing.Add("$npcCreatorsRelative (no XML creator files)")
+    }
+}
 $weaponRelative = 'resources\modern\share\ini\effect\playerweapon'
 $weaponDir = Join-Path $rootPath $weaponRelative
+$iniFiles = @()
 if ([System.IO.Directory]::Exists($weaponDir)) {
     $iniFiles = @(Get-ChildItem -LiteralPath $weaponDir -File -Filter '*.ini')
     if ($iniFiles.Count -eq 0) {

@@ -6556,8 +6556,9 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 	if err != nil {
 		return true, fmt.Errorf("encode shop wallet before persistence: %w", err)
 	}
-	nextBag := append(player.bagSnapshot(), reward)
-	if err := persistOrdinaryShopPurchase(bagStore, currencyStore, roleID, nextBag, startingWallet, nextWallet); err != nil {
+	startingBag := player.bagSnapshot()
+	nextBag := append(startingBag, reward)
+	if err := persistOrdinaryShopPurchase(bagStore, currencyStore, roleID, nextBag, startingBag, startingWallet, nextWallet); err != nil {
 		log.Printf("%s: reject uncommitted shop buy shop=%s item=%s: %v", remote, shopID, item.configID, err)
 		return true, nil
 	}

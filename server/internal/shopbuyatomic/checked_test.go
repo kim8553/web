@@ -11,10 +11,10 @@ import (
 
 func TestSaveCheckedWalletLock(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		stored string
+		name     string
+		stored   string
 		queryErr error
-		fail string
+		fail     string
 	}{
 		{name: "matching wallet reordered JSON", stored: `{"gold":0,"silver":100}`},
 		{name: "first purchase without wallet row", fail: "missing"},
@@ -25,7 +25,9 @@ func TestSaveCheckedWalletLock(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db, mock, err := sqlmock.New()
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer db.Close()
 			mock.ExpectBegin()
 			query := mock.ExpectQuery("SELECT snapshot FROM role_currency").WithArgs(uint64(7))
@@ -51,31 +53,43 @@ func TestSaveCheckedWalletLock(t *testing.T) {
 					mock.ExpectCommit()
 				}
 			}
-			err = SaveChecked(db, 7, []Row{{Slot:1, ConfigID:"item_test", ItemType:100, Amount:2, ViewID:1}}, []byte(`{"silver":100,"gold":0}`), []byte(`{"silver":98,"gold":0}`))
+			err = SaveChecked(db, 7, []Row{{Slot: 1, ConfigID: "item_test", ItemType: 100, Amount: 2, ViewID: 1}}, []byte(`{"silver":100,"gold":0}`), []byte(`{"silver":98,"gold":0}`))
 			if (err != nil) != (tc.fail == "stale" || tc.fail == "decode" || tc.fail == "query" || tc.fail == "insert") {
 				t.Fatalf("SaveChecked error=%v fail=%s", err, tc.fail)
 			}
 			if tc.fail == "stale" && (err == nil || !strings.Contains(err.Error(), "wallet changed")) {
 				t.Fatalf("stale wallet error=%v", err)
 			}
-			if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 }
 
 func TestSaveCheckedBadInputsDoNotBegin(t *testing.T) {
 	db, mock, err := sqlmock.New()
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer db.Close()
-	rows := []Row{{Slot:1,ConfigID:"item_test", Amount:1}}
-	for _, tc := range []struct{ role uint64; before, after []byte; rows []Row }{
+	rows := []Row{{Slot: 1, ConfigID: "item_test", Amount: 1}}
+	for _, tc := range []struct {
+		role          uint64
+		before, after []byte
+		rows          []Row
+	}{
 		{7, nil, []byte(`{"silver":99}`), rows},
 		{7, []byte(`{"silver":100}`), []byte(`{"silver":"invalid"}`), rows},
-		{7, []byte(`{"silver":100}`), []byte(`{"silver":99}`), []Row{{Slot:0,ConfigID:"item_test", Amount:1}}},
+		{7, []byte(`{"silver":100}`), []byte(`{"silver":99}`), []Row{{Slot: 0, ConfigID: "item_test", Amount: 1}}},
 		{0, []byte(`{"silver":100}`), []byte(`{"silver":99}`), rows},
 	} {
-		if err := SaveChecked(db, tc.role, tc.rows, tc.before, tc.after); err == nil { t.Fatalf("accepted invalid input %+v", tc) }
+		if err := SaveChecked(db, tc.role, tc.rows, tc.before, tc.after); err == nil {
+			t.Fatalf("accepted invalid input %+v", tc)
+		}
 	}
-	if err := mock.ExpectationsWereMet(); err != nil { t.Fatal(err) }
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 	_ = sql.ErrNoRows
 }

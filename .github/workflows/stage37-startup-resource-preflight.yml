@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
-      - name: Parse original read-only PowerShell preflight
+      - name: Parse read-only PowerShell preflight
         shell: pwsh
         run: |
           $file = Join-Path $env:GITHUB_WORKSPACE 'server/verify-runtime-resources.ps1'
@@ -24,7 +24,7 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count -ne 0) { throw ('PowerShell parser errors: ' + ($errors | Out-String)) }
           Write-Host 'PREFLIGHT_PS_SYNTAX=PASS'
-      - name: Nested Windows root detects missing real loader files and unset MySQL
+      - name: Nested Windows root detects missing loader files and unset MySQL
         shell: pwsh
         run: |
           $env:NINEYIN_MYSQL_DSN = ''
@@ -32,12 +32,14 @@ jobs:
           [IO.Directory]::CreateDirectory($root) | Out-Null
           $script = Join-Path $env:GITHUB_WORKSPACE 'server/verify-runtime-resources.ps1'
           $output = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script -Root $root -RequireMySQL 2>&1 | Out-String)
-          if ($LASTEXITCODE -ne 1) { throw "Expected failed preflight: exit=$LASTEXITCODE" }
+          $expectedExit = $LASTEXITCODE
+          if ($expectedExit -ne 1) { throw "Expected failed preflight: exit=$expectedExit" }
           foreach ($needle in @('RESOURCE_PREFLIGHT=FAIL', 'ini\effect\playerweapon', 'item\equipment.ini', 'NINEYIN_MYSQL_DSN')) {
             if (-not $output.Contains($needle)) { throw "Missing diagnostic: $needle" }
           }
           Write-Host 'MISSING_RESOURCE_AND_DSN_REPRO=PASS'
-      - name: Assert launcher checks resources before any migration-authorization gate
+          exit 0
+      - name: Assert launcher checks resources before migration-authorization gate
         shell: pwsh
         run: |
           $launcher = Get-Content -LiteralPath (Join-Path $env:GITHUB_WORKSPACE 'server/启动本地九阴服务.bat') -Raw
@@ -97,6 +99,7 @@ jobs:
           JIUYIN_TEST_SHOP_MYSQL_CI=1 go test -modfile=ci.real.mod -count=1 -v -run '^TestOrdinaryShopDualConflictResyncRealMySQL$' ./cmd/protocol-probe
           JIUYIN_TEST_SHOP_MYSQL_CI=0 go test -modfile=ci.real.mod -count=1 -v -run '^TestOrdinaryShop(DualConflict|BagConflict|WalletConflict|PurchaseReentry)' ./cmd/protocol-probe
           git restore -- cmd/protocol-probe/skill_catalog.go
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           JIUYIN_TEST_SHOP_MYSQL_CI=0 go test -modfile=ci.real.mod -count=1 ./internal/shopbuyatomic
           go vet -modfile=ci.real.mod ./...
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o "$RUNNER_TEMP/9yin-resource-audit-win64.exe" ./cmd/protocol-probe

@@ -9,11 +9,57 @@ import (
 	"reflect"
 )
 
-// SaveChecked persists a purchase only when its starting wallet still matches
-// the database. The role_currency primary key serializes competing purchases;
-// the initial absent row is inserted once (a concurrent duplicate insert fails).
-// This protects overlapping purchases, not unrelated bag-only writes.
+// SaveChecked retains the wallet-only check for existing callers. Purchases
+// with a known starting bag must use SaveCheckedBag instead.
 func SaveChecked(db *sql.DB, roleID uint64, rows []Row, expectedJSON, nextJSON []byte) error {
+	return saveChecked(db, roleID, rows, nil, false, expectedJSON, nextJSON)
+}
+
+// SaveCheckedBag compares the current database bag against the actor's
+// pre-purchase bag inside the same transaction as the wallet check and writes.
+// It detects stale purchases after a completed bag edit. Other bag writers
+// must also coordinate to guarantee against every possible interleaving.
+func SaveCheckedBag(db *sql.DB, roleID uint64, nextRows, expectedBag []Row, expectedJSON, nextJSON []byte) error {
+	return saveChecked(db, roleID, nextRows, expectedBag, true, expectedJSON, nextJSON)
+}
+
+func sameBagIdentity(a, b Row) bool {
+	return a.Slot == b.Slot && a.ConfigID == b.ConfigID && a.ItemType == b.ItemType && a.Amount == b.Amount && a.ViewID == b.ViewID
+}
+
+// The five fields below come directly from the existing mysqlBagStore.Load
+// projection and are not enriched by item/equipment catalog lookups.
+func checkLockedBag(ctx context.Context, tx *sql.Tx, roleID uint64, expected []Row) error {
+	stored, err := tx.QueryContext(ctx, `SELECT slot, config_id, item_type, amount, view_id
+FROM role_bag_items WHERE role_id = ? ORDER BY seq ASC FOR UPDATE`, roleID)
+	if err != nil {
+		return fmt.Errorf("lock shop bag: %w", err)
+	}
+	defer stored.Close()
+	index := 0
+	for stored.Next() {
+		var actual Row
+		if err := stored.Scan(&actual.Slot, &actual.ConfigID, &actual.ItemType, &actual.Amount, &actual.ViewID); err != nil {
+			return fmt.Errorf("read locked shop bag row %d: %w", index, err)
+		}
+		if index >= len(expected) || !sameBagIdentity(actual, expected[index]) {
+			return fmt.Errorf("shop buy: bag changed since purchase began at row %d; reload before retrying", index)
+		}
+		index++
+	}
+	if err := stored.Err(); err != nil {
+		return fmt.Errorf("read locked shop bag: %w", err)
+	}
+	if err := stored.Close(); err != nil {
+		return fmt.Errorf("close locked shop bag: %w", err)
+	}
+	if index != len(expected) {
+		return fmt.Errorf("shop buy: bag changed since purchase began (rows %d, expected %d); reload before retrying", index, len(expected))
+	}
+	return nil
+}
+
+func saveChecked(db *sql.DB, roleID uint64, rows, expectedBag []Row, checkBag bool, expectedJSON, nextJSON []byte) error {
 	if db == nil || roleID == 0 || len(expectedJSON) == 0 || len(nextJSON) == 0 {
 		return errors.New("shop buy: missing database, role, or wallet snapshot")
 	}
@@ -47,6 +93,11 @@ func SaveChecked(db *sql.DB, roleID uint64, rows []Row, expectedJSON, nextJSON [
 		}
 		if !reflect.DeepEqual(stored, expected) {
 			return errors.New("shop buy: wallet changed since purchase began; reload before retrying")
+		}
+	}
+	if checkBag {
+		if err := checkLockedBag(ctx, tx, roleID, expectedBag); err != nil {
+			return err
 		}
 	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM role_bag_items WHERE role_id = ?", roleID); err != nil {

@@ -1,0 +1,70 @@
+package shopbuyatomic
+
+import (
+	"database/sql"
+	"encoding/json"
+	"os"
+	"testing"
+
+	_ "github.com/go-sql-driver/mysql"
+)
+
+// This test intentionally cannot run on the user's nineyin database. CI must
+// supply a disposable database named shop_atomic_ci and opt in explicitly.
+func TestSaveCheckedRealMySQLReconnectAndRollback(t *testing.T) {
+	if os.Getenv("JIUYIN_TEST_SHOP_MYSQL_CI") != "1" { t.Skip("disposable MySQL CI not enabled") }
+	dsn := os.Getenv("JIUYIN_TEST_SHOP_MYSQL_DSN")
+	if dsn == "" { t.Fatal("disposable MySQL DSN missing") }
+	db, err := sql.Open("mysql", dsn)
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	var databaseName string
+	if err := db.QueryRow("SELECT DATABASE()").Scan(&databaseName); err != nil { t.Fatal(err) }
+	if databaseName != "shop_atomic_ci" { t.Fatalf("refusing to touch non-CI database %q", databaseName) }
+	if _, err := db.Exec(`CREATE TABLE role_bag_items (
+role_id BIGINT UNSIGNED NOT NULL, seq BIGINT NOT NULL, slot INT NOT NULL,
+config_id VARCHAR(255) NOT NULL, item_type INT NOT NULL, amount INT NOT NULL,
+view_id INT NOT NULL, name TEXT NULL, equip_type TEXT NULL, art_pack INT NULL,
+hardiness INT NULL, max_hardiness INT NULL, PRIMARY KEY (role_id,seq)
+) ENGINE=InnoDB`); err != nil { t.Fatal(err) }
+	if _, err := db.Exec(`CREATE TABLE role_currency (
+role_id BIGINT UNSIGNED NOT NULL PRIMARY KEY, snapshot JSON NOT NULL
+) ENGINE=InnoDB`); err != nil { t.Fatal(err) }
+	const id uint64 = 880001
+	if _, err := db.Exec(`INSERT INTO role_currency(role_id,snapshot) VALUES (?,?)`, id, []byte(`{"silver":100,"gold":0}`)); err != nil { t.Fatal(err) }
+	if _, err := db.Exec(`INSERT INTO role_bag_items(role_id,seq,slot,config_id,item_type,amount,view_id) VALUES (?,0,1,'old_item',100,1,1)`, id); err != nil { t.Fatal(err) }
+	before := []byte(`{"gold":0,"silver":100}`)
+	after := []byte(`{"silver":70,"gold":0}`)
+	rows := []Row{{Slot:1, ConfigID:"old_item", ItemType:100, Amount:1, ViewID:1}, {Slot:2, ConfigID:"new_item", ItemType:100, Amount:2, ViewID:1}}
+	if err := SaveChecked(db, id, rows, before, after); err != nil { t.Fatalf("commit purchase: %v", err) }
+	// A second independent connection verifies durable reloading, not actor RAM.
+	reopened, err := sql.Open("mysql", dsn)
+	if err != nil { t.Fatal(err) }
+	defer reopened.Close()
+	assertSaved := func(wantSilver int64) {
+		t.Helper()
+		var raw []byte
+		if err := reopened.QueryRow("SELECT snapshot FROM role_currency WHERE role_id=?", id).Scan(&raw); err != nil { t.Fatal(err) }
+		var wallet map[string]int64
+		if err := json.Unmarshal(raw, &wallet); err != nil { t.Fatal(err) }
+		if wallet["silver"] != wantSilver { t.Fatalf("saved silver=%d want=%d", wallet["silver"], wantSilver) }
+		var count int
+		if err := reopened.QueryRow("SELECT COUNT(*) FROM role_bag_items WHERE role_id=?", id).Scan(&count); err != nil { t.Fatal(err) }
+		if count != 2 { t.Fatalf("saved bag count=%d want=2", count) }
+		var item string
+		if err := reopened.QueryRow("SELECT config_id FROM role_bag_items WHERE role_id=? AND seq=1", id).Scan(&item); err != nil { t.Fatal(err) }
+		if item != "new_item" { t.Fatalf("saved second item=%q", item) }
+	}
+	assertSaved(70)
+	if err := SaveChecked(db, id, []Row{{Slot:1, ConfigID:"stale_item", Amount:1}}, before, []byte(`{"silver":60,"gold":0}`)); err == nil {
+		t.Fatal("stale wallet unexpectedly committed")
+	}
+	assertSaved(70)
+	// Force a failure after bag DELETE and INSERT: both must roll back.
+	if _, err := db.Exec(`CREATE TRIGGER shop_atomic_ci_reject BEFORE INSERT ON role_currency
+FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'test wallet insert rejected'`); err != nil { t.Fatal(err) }
+	if err := SaveChecked(db, id, []Row{{Slot:1, ConfigID:"rolled_back_item", Amount:1}}, after, []byte(`{"silver":60,"gold":0}`)); err == nil {
+		t.Fatal("wallet trigger failure unexpectedly committed")
+	}
+	assertSaved(70)
+}

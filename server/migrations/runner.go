@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -93,6 +94,12 @@ type Runner struct {
 }
 
 func (runner Runner) Up(ctx context.Context) error {
+	// A direct EXE launch must not bypass the portable launcher's database gate.
+	// When a schema is already recorded as applied, a read-only verification is
+	// sufficient; otherwise explicit migration approval is required.
+	if os.Getenv("NINEYIN_ALLOW_SCHEMA_MIGRATIONS") != "YES" {
+		return runner.VerifyApplied(ctx)
+	}
 	migrations, err := Embedded()
 	if err != nil {
 		return err

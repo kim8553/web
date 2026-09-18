@@ -27,9 +27,9 @@ func TestShopAdjacentArrangeRejectsStaleBagBeforePublishing(t *testing.T) {
     mock.ExpectQuery("SELECT role_id FROM roles").WithArgs(uint64(7)).WillReturnRows(
         sqlmock.NewRows([]string{"role_id"}).AddRow(uint64(7)))
     mock.ExpectQuery("SELECT slot, config_id, item_type, amount, view_id").WithArgs(uint64(7)).WillReturnRows(
-        sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id"}).
-            AddRow(1, "item_a", 1, 4, 1).
-            AddRow(2, "item_a", 1, 3, 1))
+        sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id", "name", "equip_type", "art_pack", "hardiness", "max_hardiness"}).
+            AddRow(1, "item_a", 1, 4, 1, nil, nil, nil, nil, nil).
+            AddRow(2, "item_a", 1, 3, 1, nil, nil, nil, nil, nil))
     mock.ExpectRollback()
 
     request := clientCustomMessage{Values: []clientCustomValue{

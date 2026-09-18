@@ -32,6 +32,7 @@ func TestSaveCheckedBagIdentity(t *testing.T) {
 			}
 			defer db.Close()
 			mock.ExpectBegin()
+			mock.ExpectQuery("SELECT role_id FROM roles").WithArgs(uint64(7)).WillReturnRows(sqlmock.NewRows([]string{"role_id"}).AddRow(uint64(7)))
 			mock.ExpectQuery("SELECT snapshot FROM role_currency").WithArgs(uint64(7)).WillReturnRows(
 				sqlmock.NewRows([]string{"snapshot"}).AddRow([]byte(`{"silver":100}`)))
 			bagRead := mock.ExpectQuery("SELECT slot, config_id, item_type, amount, view_id").WithArgs(uint64(7))

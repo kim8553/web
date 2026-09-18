@@ -176,3 +176,33 @@ Type=1
 		t.Fatalf("numeric page keys not retained: %#v", items)
 	}
 }
+
+// A fabricated buy request must not select an authored row which
+// openShopLocked could not publish to the current client view. This is a
+// server-side coordinate consistency test, not a guessed sale protocol.
+func TestCurrentShopListingRejectsUnpublishedCoordinates(t *testing.T) {
+	items := []shopCatalogItem{
+		{configID: "last_visible_on_first_page", page: 0, position: currentShopPageSize - 1},
+		{configID: "past_page_grid", page: 0, position: currentShopPageSize},
+		{configID: "last_valid_ident", page: 131, position: 34},
+		{configID: "past_ident_limit", page: 131, position: 35},
+	}
+	for _, tc := range []struct {
+		page, pos int32
+		want      string
+	}{
+		{0, currentShopPageSize, "last_visible_on_first_page"},
+		{0, currentShopPageSize + 1, ""},
+		{131, 35, "last_valid_ident"},
+		{131, 36, ""},
+	} {
+		item := currentShopListing(items, tc.page, tc.pos)
+		if tc.want == "" {
+			if item != nil {
+				t.Errorf("unpublished page=%d pos=%d selected %q", tc.page, tc.pos, item.configID)
+			}
+		} else if item == nil || item.configID != tc.want {
+			t.Errorf("page=%d pos=%d selected %#v, want %q", tc.page, tc.pos, item, tc.want)
+		}
+	}
+}

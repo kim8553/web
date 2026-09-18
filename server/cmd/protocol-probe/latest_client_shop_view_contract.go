@@ -85,6 +85,12 @@ func currentShopListing(items []shopCatalogItem, wirePage, wirePos int32) *shopC
 	}
 	for i := range items {
 		if items[i].page == page && items[i].position == position {
+			// openShopLocked publishes ordinary catalog rows only when their
+			// object index fits the current client view. Never accept a buy
+			// for a row that the same shop view cannot publish.
+			if _, representable := currentShopViewObjectIndex(items[i]); !representable {
+				return nil
+			}
 			return &items[i]
 		}
 	}

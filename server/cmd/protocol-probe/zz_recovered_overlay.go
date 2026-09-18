@@ -1343,6 +1343,7 @@ func handleArrangeItemCustom(link sceneMessageConnection, player *playerActor, b
 		log.Printf("%s: ignore ARANGEITEM on non-bag view=%d", remote, srcView)
 		return true, nil
 	}
+	startingBag := player.bagSnapshot()
 	arranged, changed := player.arrangeBagView(uint16(srcView))
 	if !changed {
 		log.Printf("%s: arrange view=%d no change", remote, srcView)
@@ -1355,17 +1356,21 @@ func handleArrangeItemCustom(link sceneMessageConnection, player *playerActor, b
 	for slot, item := range arranged.adds {
 		frame, err := serverViewAdd(uint16(srcView), uint16(slot), bagItemProps(uint16(srcView), item))
 		if err != nil {
+			player.restoreBag(startingBag)
 			return true, err
 		}
 		frames = append(frames, frame)
 	}
+	// A stale bag cannot be published to the client or overwrite a newer purchase.
+	// Save before sending the pre-encoded existing frames; a failed save restores
+	// the actor's pre-arrange snapshot and leaves the client view untouched.
+	if err := persistBagMutationChecked(bagStore, roleID, startingBag, player.bagSnapshot()); err != nil {
+		player.restoreBag(startingBag)
+		log.Printf("%s: reject ARANGEITEM after bag changed: %v", remote, err)
+		return true, nil
+	}
 	if err := writeFrames(link, frames...); err != nil {
 		return true, err
-	}
-	if bagStore != nil {
-		if err := bagStore.Save(roleID, player.bagSnapshot()); err != nil {
-			log.Printf("persist bag after arrange: %v", err)
-		}
 	}
 	log.Printf("%s: arranged view=%d removes=%d adds=%d", remote, srcView, len(arranged.removes), len(arranged.adds))
 	return true, nil

@@ -50,7 +50,7 @@ func TestShopAdjacentBagMoveCrossViewSwapKeepsSourceSlot(t *testing.T) {
 	want := [][3]uint16{{0x19, 2, 5}, {0x18, 2, 5}, {0x18, 121, 9}}
 	for i, frame := range link.frames {
 		if len(frame) < 5 || uint16(frame[0]) != want[i][0] || binary.LittleEndian.Uint16(frame[1:3]) != want[i][1] || binary.LittleEndian.Uint16(frame[3:5]) != want[i][2] {
-			t.Fatalf("frame[%d] header=%x, want command=%d view=%d slot=%d", i, frame, want[i][0], frame[0], want[i][1], want[i][2])
+			t.Fatalf("frame[%d] header=%x, want command=%d view=%d slot=%d", i, frame, want[i][0], want[i][1], want[i][2])
 		}
 	}
 }

@@ -150,6 +150,11 @@ func loadShopCatalogSection(path, shopID string) ([]shopCatalogItem, int32, int3
 	}
 	if pageCount == 0 {
 		pageCount = maxPageKey + 1
+	} else if maxPageKey >= pageCount {
+		// An explicit PageInfo is the page count sent to the client. Do not
+		// silently expose an authored item on a page outside that count or
+		// invent an additional page that the resource did not declare.
+		return nil, 0, 0, fmt.Errorf("shop %s: item page %d outside PageInfo page count %d", shopID, maxPageKey, pageCount)
 	}
 	return items, shopType, pageCount, nil
 }

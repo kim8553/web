@@ -6583,6 +6583,11 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 	nextBag := append(startingBag, reward)
 	if err := persistOrdinaryShopPurchase(bagStore, currencyStore, roleID, nextBag, startingBag, startingWallet, nextWallet); err != nil {
 		log.Printf("%s: reject uncommitted shop buy shop=%s item=%s: %v", remote, shopID, item.configID, err)
+		if errors.Is(err, shopbuyatomic.ErrWalletChanged) {
+			if refreshErr := resyncOrdinaryShopWalletAfterConflict(link, player, currencyStore, roleID, startingWallet); refreshErr != nil {
+				return true, fmt.Errorf("shop buy wallet conflict: cannot safely refresh session: %w", refreshErr)
+			}
+		}
 		return true, nil
 	}
 	// The database commit is definitive. Publish the same snapshots only after

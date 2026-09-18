@@ -9,6 +9,11 @@ import (
 	"reflect"
 )
 
+// ErrWalletChanged identifies an ordinary NPC purchase rejected by the
+// locked database wallet comparison. Callers must not treat other DB
+// failures as safe to reconcile.
+var ErrWalletChanged = errors.New("shop buy: wallet changed since purchase began")
+
 // LockRoleForBagWrite serializes participating bag writes for an existing
 // migrated role. A role row exists even when the bag or wallet is empty.
 // This lock alone does not prove a legacy caller's snapshot is fresh.
@@ -114,7 +119,7 @@ func saveChecked(db *sql.DB, roleID uint64, rows, expectedBag []Row, checkBag bo
 			return fmt.Errorf("decode locked shop wallet: %v", decodeErr)
 		}
 		if !reflect.DeepEqual(stored, expected) {
-			return errors.New("shop buy: wallet changed since purchase began; reload before retrying")
+			return fmt.Errorf("%w; reload before retrying", ErrWalletChanged)
 		}
 	}
 	if checkBag {

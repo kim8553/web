@@ -12,7 +12,7 @@ import (
 // persistOrdinaryShopPurchase uses the actual shared game database. Legacy
 // JSON stores persist two separate files and cannot offer this guarantee;
 // reject that mode rather than charging or reporting an uncommitted purchase.
-func persistOrdinaryShopPurchase(bagStore bagStoreIface, currencyStore currencyStoreIface, roleID role.RoleID, items []bagItem, wallet currencySnapshot) error {
+func persistOrdinaryShopPurchase(bagStore bagStoreIface, currencyStore currencyStoreIface, roleID role.RoleID, items []bagItem, beforeWallet, afterWallet currencySnapshot) error {
 	bag, bagOK := bagStore.(*mysqlBagStore)
 	currency, currencyOK := currencyStore.(*mysqlCurrencyStore)
 	if !bagOK || !currencyOK || bag == nil || currency == nil || bag.db == nil || currency.db != bag.db {
@@ -30,11 +30,15 @@ func persistOrdinaryShopPurchase(bagStore bagStoreIface, currencyStore currencyS
 			Hardiness: nullableInt32(item.Hardiness), MaxHardiness: nullableInt32(item.MaxHardiness),
 		})
 	}
-	encoded, err := json.Marshal(wallet)
+	expectedJSON, err := json.Marshal(beforeWallet)
 	if err != nil {
-		return fmt.Errorf("encode shop wallet: %w", err)
+		return fmt.Errorf("encode shop starting wallet: %w", err)
 	}
-	return shopbuyatomic.Save(bag.db, uint64(roleID), rows, encoded)
+	nextJSON, err := json.Marshal(afterWallet)
+	if err != nil {
+		return fmt.Errorf("encode shop resulting wallet: %w", err)
+	}
+	return shopbuyatomic.SaveChecked(bag.db, uint64(roleID), rows, expectedJSON, nextJSON)
 }
 
 // This is the same four-property currency update already emitted by

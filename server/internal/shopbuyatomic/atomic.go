@@ -12,16 +12,16 @@ import (
 // Row contains only the columns already saved by mysqlBagStore.Save.
 // Nullable properties are supplied by the existing server conversion helpers.
 type Row struct {
-	Slot          int32
-	ConfigID      string
-	ItemType      int32
-	Amount        int32
-	ViewID        int32
-	Name          any
-	EquipType     any
-	ArtPack       any
-	Hardiness     any
-	MaxHardiness  any
+	Slot         int32
+	ConfigID     string
+	ItemType     int32
+	Amount       int32
+	ViewID       int32
+	Name         any
+	EquipType    any
+	ArtPack      any
+	Hardiness    any
+	MaxHardiness any
 }
 
 // Save commits the complete bag snapshot and the currency JSON together.

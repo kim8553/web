@@ -6529,44 +6529,43 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 		log.Printf("%s: reject shop buy %s item %s: %v", remote, shopID, item.configID, totalErr)
 		return true, nil
 	}
+	nextWallet := currencySnapshot{}
+	nextWallet.fromActor(player)
 	switch item.priceMode {
 	case 0:
-		_, gold, _, _ := player.currencySnapshot()
-		if int64(gold) < total {
-			log.Printf("%s: shop buy %s item %s needs gold %d, has %d", remote, shopID, item.configID, total, gold)
+		if int64(nextWallet.Gold) < total {
+			log.Printf("%s: shop buy %s item %s needs gold %d, has %d", remote, shopID, item.configID, total, nextWallet.Gold)
 			return true, nil
 		}
-		player.addGold(-int32(total))
+		nextWallet.Gold -= int32(total)
 	case 1:
-		silver, _, _, _ := player.currencySnapshot()
-		if int64(silver) < total {
-			log.Printf("%s: shop buy %s item %s needs silver %d, has %d", remote, shopID, item.configID, total, silver)
+		if int64(nextWallet.Silver) < total {
+			log.Printf("%s: shop buy %s item %s needs silver %d, has %d", remote, shopID, item.configID, total, nextWallet.Silver)
 			return true, nil
 		}
-		player.addSilver(-int32(total))
+		nextWallet.Silver -= int32(total)
 	case 2:
-		_, _, silverCard, _ := player.currencySnapshot()
-		if int64(silverCard) < total {
-			log.Printf("%s: shop buy %s item %s needs silverCard %d, has %d", remote, shopID, item.configID, total, silverCard)
+		if int64(nextWallet.SilverCard) < total {
+			log.Printf("%s: shop buy %s item %s needs silverCard %d, has %d", remote, shopID, item.configID, total, nextWallet.SilverCard)
 			return true, nil
 		}
-		player.addSilverCard(-int32(total))
+		nextWallet.SilverCard -= int32(total)
 	}
-	currencyFrame, err := player.currenciesUpdate()
+	currencyFrame, err := ordinaryShopCurrencyFrame(nextWallet)
 	if err != nil {
-		return true, err
+		return true, fmt.Errorf("encode shop wallet before persistence: %w", err)
 	}
-	slot = player.addBagItem(reward)
-	frames := [][]byte{currencyFrame, itemFrame}
-	if err := writeFrames(link, frames...); err != nil {
-		return true, err
+	nextBag := append(player.bagSnapshot(), reward)
+	if err := persistOrdinaryShopPurchase(bagStore, currencyStore, roleID, nextBag, nextWallet); err != nil {
+		log.Printf("%s: reject uncommitted shop buy shop=%s item=%s: %v", remote, shopID, item.configID, err)
+		return true, nil
 	}
-	persistBagEquip(bagStore, nil, roleID, player)
-	if currencyStore != nil {
-		silver, gold, silverCard, silverTicket := player.currencySnapshot()
-		if err := currencyStore.Save(roleID, currencySnapshot{Silver: silver, Gold: gold, SilverCard: silverCard, SilverTicket: silverTicket}); err != nil {
-			log.Printf("%s: persist currency after shop buy: %v", remote, err)
-		}
+	// The database commit is definitive. Publish the same snapshots only after
+	// the complete bag and wallet have been durably committed together.
+	nextWallet.toActor(player)
+	player.restoreBag(nextBag)
+	if err := writeFrames(link, currencyFrame, itemFrame); err != nil {
+		return true, fmt.Errorf("publish committed shop purchase: %w", err)
 	}
 	log.Printf("%s: shop buy %s item %s x%d capital=%d price=%d -> bag view=%d slot=%d", remote, shopID, item.configID, amount, item.priceMode, item.price, view, slot)
 	return true, nil

@@ -63,8 +63,8 @@ func TestSavePurchaseInvalidInputDoesNotBegin(t *testing.T) {
 	}
 	defer db.Close()
 	for _, tc := range []struct {
-		role uint64
-		rows []Row
+		role   uint64
+		rows   []Row
 		wallet []byte
 	}{
 		{role: 0, wallet: []byte("{}")},

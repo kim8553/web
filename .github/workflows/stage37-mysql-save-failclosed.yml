@@ -1,0 +1,59 @@
+name: Stage37 MySQL missing-connection persistence regression
+on:
+  push:
+    branches: [stage37-restored-20260918]
+    paths:
+      - '.github/workflows/stage37-mysql-save-failclosed.yml'
+      - 'server/cmd/protocol-probe/zz_recovered_overlay.go'
+      - 'server/cmd/protocol-probe/mysql_store_missing_connection_test.go'
+      - 'server/cmd/protocol-probe/gm_grant_persist.go'
+      - 'server/cmd/protocol-probe/gm_grant_persist_test.go'
+      - 'server/cmd/protocol-probe/shop_bag_checked.go'
+      - 'server/cmd/protocol-probe/shop_currency_disconnect_guard.go'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  fail-closed-store:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.5'
+          cache: false
+      - name: Resolve real Go modules without modifying tracked dependencies
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp go.mod ci.real.mod
+          cp go.sum ci.real.sum
+          for module in github.com/go-sql-driver/mysql golang.org/x/text filippo.io/edwards25519 github.com/DATA-DOG/go-sqlmock github.com/Hiroko103/go-quicklz; do
+            go mod edit -modfile=ci.real.mod -dropreplace="$module"
+          done
+          go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
+          go mod tidy -modfile=ci.real.mod
+      - name: Check missing-connection rejection, GM rollback and unchanged source
+        working-directory: server
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(gofmt -l cmd/protocol-probe/mysql_store_missing_connection_test.go)"
+          test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('cmd/protocol-probe/skill_catalog.go')
+          s = p.read_text()
+          old = 'var installedCombatSkillCatalog = mustLoadCombatSkillCatalog()'
+          if s.count(old) != 1:
+              raise SystemExit('Unknown skill catalog initializer; refusing to patch test fixture')
+          p.write_text(s.replace(old, 'var installedCombatSkillCatalog = &combatSkillCatalog{levelOne: make(map[string]combatSkillDefinition)}', 1))
+          PY
+          JIUYIN_TEST_SHOP_MYSQL_CI=0 go test -modfile=ci.real.mod -count=1 -v -run '^Test(MySQLStoreMissingConnectionRejectsWrites|GMGrantMissingMySQLConnectionRestoresActor|DeferredCurrencyMissingMySQLConnectionFailsClosed|BagMutationMissingMySQLConnectionFailsClosed|GMGrantSaveFailureDoesNotLeaveFalseSuccessInBag|GMGrantMissingStorageOrRoleDoesNotMutateBag)$' ./cmd/protocol-probe
+          git restore -- cmd/protocol-probe/skill_catalog.go
+          git diff --exit-code -- cmd/protocol-probe/zz_recovered_overlay.go cmd/protocol-probe/skill_catalog.go
+          echo 'MISSING_MYSQL_GUARDS=PASS GM_ROLLBACK=PASS USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'

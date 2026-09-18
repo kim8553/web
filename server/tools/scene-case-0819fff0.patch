@@ -1,0 +1,140 @@
+diff --git a/server/cmd/protocol-probe/npc_catalog.go b/server/cmd/protocol-probe/npc_catalog.go
+index 49c3ad9..23cb4ed 100644
+--- a/server/cmd/protocol-probe/npc_catalog.go
++++ b/server/cmd/protocol-probe/npc_catalog.go
+@@ -141,6 +141,20 @@ func sceneCreatorPaths(creatorDir string) ([]string, error) {
+ 	manifestPath := filepath.Join(creatorDir, "file.ini")
+ 	manifest, readErr := os.ReadFile(manifestPath)
+ 	if readErr == nil {
++		// The client manifest may spell an XML name with different case than
++		// the actual resource file. Resolve against the directory entries so
++		// behavior does not depend on the host filesystem's case sensitivity.
++		entries, dirErr := os.ReadDir(creatorDir)
++		if dirErr != nil {
++			return nil, fmt.Errorf("list scene creator directory %s: %w", creatorDir, dirErr)
++		}
++		actualNames := make(map[string][]string, len(entries))
++		for _, entry := range entries {
++			if !entry.IsDir() {
++				key := strings.ToLower(entry.Name())
++				actualNames[key] = append(actualNames[key], entry.Name())
++			}
++		}
+ 		seen := make(map[string]struct{})
+ 		var creatorPaths []string
+ 		for _, line := range strings.Split(string(manifest), "\n") {
+@@ -152,16 +166,27 @@ func sceneCreatorPaths(creatorDir string) ([]string, error) {
+ 				continue
+ 			}
+ 			path := filepath.Join(creatorDir, rawName)
+-			key := strings.ToLower(filepath.Clean(path))
+-			if _, duplicate := seen[key]; duplicate {
+-				continue
++			_, statErr := os.Stat(path)
++			if errors.Is(statErr, os.ErrNotExist) && filepath.Base(rawName) == rawName {
++				matches := actualNames[strings.ToLower(rawName)]
++				if len(matches) > 1 {
++					return nil, fmt.Errorf("scene creator manifest %s declares ambiguous filename %q: %q", manifestPath, rawName, matches)
++				}
++				if len(matches) == 1 {
++					path = filepath.Join(creatorDir, matches[0])
++					_, statErr = os.Stat(path)
++				}
+ 			}
+-			if _, statErr := os.Stat(path); statErr != nil {
++			if statErr != nil {
+ 				if errors.Is(statErr, os.ErrNotExist) {
+ 					continue
+ 				}
+ 				return nil, fmt.Errorf("scene creator manifest %s declares %s: %w", manifestPath, rawName, statErr)
+ 			}
++			key := strings.ToLower(filepath.Clean(path))
++			if _, duplicate := seen[key]; duplicate {
++				continue
++			}
+ 			seen[key] = struct{}{}
+ 			creatorPaths = append(creatorPaths, path)
+ 		}
+diff --git a/server/cmd/protocol-probe/scene_creator_manifest_case_test.go b/server/cmd/protocol-probe/scene_creator_manifest_case_test.go
+new file mode 100644
+index 0000000..1b37c75
+--- /dev/null
++++ b/server/cmd/protocol-probe/scene_creator_manifest_case_test.go
+@@ -0,0 +1,48 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"runtime"
++	"strings"
++	"testing"
++)
++
++func TestSceneCreatorManifestResolvesExistingFilenameCase(t *testing.T) {
++	dir := t.TempDir()
++	manifest := "[file]\n0=CommonNpc.xml\n1=FuncNpc.xml\n2=AttackNpc_Creator.xml\n3=EventTrigger.xml\n"
++	if err := os.WriteFile(filepath.Join(dir, "file.ini"), []byte(manifest), 0600); err != nil {
++		t.Fatal(err)
++	}
++	for _, name := range []string{"commonnpc.xml", "funcnpc.xml", "eventtrigger.xml"} {
++		if err := os.WriteFile(filepath.Join(dir, name), []byte("<object/>"), 0600); err != nil {
++			t.Fatal(err)
++		}
++	}
++	paths, err := sceneCreatorPaths(dir)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(paths) != 2 || filepath.Base(paths[0]) != "commonnpc.xml" || filepath.Base(paths[1]) != "funcnpc.xml" {
++		t.Fatalf("creator paths=%q; want the two actual existing filenames", paths)
++	}
++}
++
++func TestSceneCreatorManifestRejectsAmbiguousFilenameCase(t *testing.T) {
++	if runtime.GOOS == "windows" {
++		t.Skip("Windows cannot represent case-distinct entries reliably")
++	}
++	dir := t.TempDir()
++	if err := os.WriteFile(filepath.Join(dir, "file.ini"), []byte("[file]\n0=CommonNpc.xml\n"), 0600); err != nil {
++		t.Fatal(err)
++	}
++	for _, name := range []string{"commonnpc.xml", "COMMONNPC.xml"} {
++		if err := os.WriteFile(filepath.Join(dir, name), []byte("<object/>"), 0600); err != nil {
++			t.Fatal(err)
++		}
++	}
++	_, err := sceneCreatorPaths(dir)
++	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
++		t.Fatalf("case-ambiguous creator should be rejected, got %v", err)
++	}
++}
+diff --git a/server/docs/SCENE_CREATOR_MANIFEST_CASE_MATCH_20260919.md b/server/docs/SCENE_CREATOR_MANIFEST_CASE_MATCH_20260919.md
+new file mode 100644
+index 0000000..4fc8c9b
+--- /dev/null
++++ b/server/docs/SCENE_CREATOR_MANIFEST_CASE_MATCH_20260919.md
+@@ -0,0 +1,23 @@
++# NPC creator manifest filename-case fix (2026-09-19)
++
++## Scope and source authority
++
++- Original Go lineage remains user-provided `9yin-go-server1.rar`. Edited base is `kim8553/web` branch `stage37-restored-20260918`, GitHub commit `97ddf19b31ea3b41feab623e8f9d7d65afb27827`, tree `c850bee9159c7c33d6316c345870e8dbbd6aa543`. Its source was reconstructed in an isolated sandbox from the previously verified `d904455` tree `146eb03755b493de4bbfa09bc78c97b52088f069` and a SHA-pinned patch; the resulting tree matched the GitHub tree exactly before changes.
++- The bundled `server/resources/modern/share/creator/npc_creator` files were the inputs for this regression. This does **not** establish that those files exactly match the user's currently installed latest client or Google Drive `res` packages. No client protocol, shop sale price or gameplay behavior is inferred from them.
++
++## Reproduction
++
++- On Linux, three existing full-suite tests failed: `TestCurrentCitySceneRegistryMaterializesModernCreatorCatalog`, `TestShenJiHuiCatalogSkipsMissingOptionalCreators`, `TestYanYuZhuangCatalogSkipsEmptyZeroAmountCreatorPlaceholder`. Their `file.ini` entries such as `CommonNpc.xml` refer to installed `commonnpc.xml`; case-sensitive `os.Stat` silently skipped those entries and reported no creator.
++- A read-only inventory of 288 bundled scene `file.ini` manifests found 1,477 case-only filename differences, 98 absent optional XML entries and zero case-colliding actual filenames. These are counts for this source tree only, not an audit of every current-client resource.
++- New tests for case-only filename resolution and ambiguity rejection both **FAIL before** the change and **PASS after** it.
++
++## Minimum code change
++
++- `sceneCreatorPaths` continues to honor an exact file path first, but when that path does not exist, it resolves a simple manifest XML basename against actual directory entries using case-insensitive equality. No invented creator path is returned: it must exist on disk. Missing optional XML entries stay skipped. If more than one actual filename matches the same basename case-insensitively, return an explicit ambiguity error rather than choose one. Deduplication still uses the final resolved path.
++- Original manifest content, bundled XML, other NPC creation logic, shop purchases, currencies, database schema and any C2S IDs are unchanged. This fixes host-filesystem case handling, not NPC gameplay correctness.
++
++## Verified checks and limitations
++
++- Exact base source tree matched `c850bee9159c7c33d6316c345870e8dbbd6aa543` before edit.
++- Isolated sandbox with Go 1.23.2, verified vendored dependencies and a temporary alternate module file outside the repository: `go test ./... -count=1` **PASS** after change (previously **FAIL** on three tests); targeted shop/bag/NPC/creator tests **PASS**; `go vet ./...` **PASS**; `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/protocol-probe` **PASS**. Original tracked `go.mod` remains unchanged.
++- Windows binary was built but not launched in the user's environment. User MySQL, latest-client live purchase/sale, scene arrival, Bag/View and relogin **NOT RUN**. The NPC sale packet and settlement remain unknown; GM web grant and mode3 Exchange remain deferred.

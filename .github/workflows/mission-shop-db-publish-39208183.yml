@@ -1,0 +1,39 @@
+name: Temporary verified shop DB patch publication 39208183
+on:
+  push:
+    branches:
+      - mission/shop-db-source-39208183
+    paths:
+      - .github/workflows/mission-shop-db-publish-39208183.yml
+permissions:
+  contents: write
+jobs:
+  publish-exact-patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mission/shop-db-source-39208183
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Verify transported patch, exact base and expected result tree before fast-forward publication
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show HEAD:tools/mission-shop-db-source-39208183.patch > /tmp/shop-db-source.patch
+          printf '%s  %s\n' bf01bb63f79285cd8db18e387edcc006b424320392b00d1ccde9344d7e3bd2e1 /tmp/shop-db-source.patch | sha256sum --check --status
+          git checkout --detach a8a26edfa22422a6a6d3e5d7874453cacfcebc42
+          test "$(git rev-parse HEAD^{tree})" = 3862612d3eb3cbbffd496601cccb2acd8651af25
+          git apply --check --index /tmp/shop-db-source.patch
+          git apply --index /tmp/shop-db-source.patch
+          git diff --cached --check
+          test "$(git write-tree)" = 10bd7674103c019caf1def79a121c3e9de2cecc0
+          test "$(git ls-remote --heads origin stage37-restored-20260918 | cut -f1)" = a8a26edfa22422a6a6d3e5d7874453cacfcebc42
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(shop): accept equivalent sparse zero wallet during checked NPC purchase'
+          test "$(git rev-parse HEAD^{tree})" = 10bd7674103c019caf1def79a121c3e9de2cecc0
+          git push origin HEAD:refs/heads/stage37-restored-20260918
+          echo "PUBLISHED_SHOP_DB_COMMIT=$(git rev-parse HEAD)"
+          echo 'EXACT_RESULT_TREE=10bd7674103c019caf1def79a121c3e9de2cecc0'

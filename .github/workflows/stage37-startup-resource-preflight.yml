@@ -6,6 +6,7 @@ on:
       - .github/workflows/stage37-startup-resource-preflight.yml
       - server/verify-runtime-resources.ps1
       - server/启动本地九阴服务.bat
+      - server/migrations/**
   workflow_dispatch:
 permissions:
   contents: read
@@ -73,7 +74,7 @@ jobs:
         with:
           go-version: '1.26.5'
           cache: false
-      - name: Disposable-MySQL purchase regression, vet and Windows x64 build
+      - name: Migration safety, disposable MySQL shop regression, vet and Windows x64 build
         shell: bash
         working-directory: server
         env:
@@ -87,6 +88,7 @@ jobs:
           done
           go mod edit -modfile=ci.real.mod -require=github.com/Hiroko103/go-quicklz@v0.0.0-20190115215310-59904abc50d0
           go mod tidy -modfile=ci.real.mod
+          NINEYIN_ALLOW_SCHEMA_MIGRATIONS= go test -modfile=ci.real.mod -count=1 -v ./migrations
           test "$(git hash-object cmd/protocol-probe/skill_catalog.go)" = '0fe5ade5f8f50dc691e2028b1a6246cd312a23db'
           python3 - <<'PY'
           from pathlib import Path
@@ -105,4 +107,4 @@ jobs:
           GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -modfile=ci.real.mod -o "$RUNNER_TEMP/9yin-resource-audit-win64.exe" ./cmd/protocol-probe
           file "$RUNNER_TEMP/9yin-resource-audit-win64.exe" | grep -E 'PE32\+ executable.*x86-64'
           git diff --exit-code -- cmd/protocol-probe/zz_recovered_overlay.go cmd/protocol-probe/skill_catalog.go
-          echo 'MYSQL_ISOLATED=PASS SHOP_REGRESSION=PASS GO_VET=PASS WIN64_BUILD=PASS SERVER_START=NOT_RUN USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'
+          echo 'MIGRATION_READ_ONLY_TESTS=PASS MYSQL_ISOLATED=PASS SHOP_REGRESSION=PASS GO_VET=PASS WIN64_BUILD=PASS SERVER_START=NOT_RUN USER_MYSQL=NOT_RUN CLIENT_LIVE=NOT_RUN'

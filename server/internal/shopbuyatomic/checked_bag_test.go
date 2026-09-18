@@ -39,9 +39,9 @@ func TestSaveCheckedBagIdentity(t *testing.T) {
 			if tc.queryErr != nil {
 				bagRead.WillReturnError(tc.queryErr)
 			} else {
-				rows := sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id"})
+				rows := sqlmock.NewRows([]string{"slot", "config_id", "item_type", "amount", "view_id", "name", "equip_type", "art_pack", "hardiness", "max_hardiness"})
 				for _, item := range tc.stored {
-					rows.AddRow(item.Slot, item.ConfigID, item.ItemType, item.Amount, item.ViewID)
+					rows.AddRow(item.Slot, item.ConfigID, item.ItemType, item.Amount, item.ViewID, item.Name, item.EquipType, item.ArtPack, item.Hardiness, item.MaxHardiness)
 				}
 				bagRead.WillReturnRows(rows)
 			}

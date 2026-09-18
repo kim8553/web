@@ -43,6 +43,7 @@ type sceneLifecycle struct {
 	lastMenuOwner       uint32
 	lastMenuAt          time.Time
 	lastMenuMovie       bool
+	activeShopID        string // shop opened for this connection via its NPC service
 	portalCooldown      time.Time
 	transportHandler    func(transPathRec) error
 	transportMenuActive bool
@@ -148,6 +149,7 @@ func (s *sceneLifecycle) begin(config, resource string) error {
 	s.lastMenuOwner = 0
 	s.lastMenuAt = time.Time{}
 	s.lastMenuMovie = false
+	s.activeShopID = ""
 	s.epoch++
 	s.stopReplayTimersLocked()
 	if s.pathDir != "" && resource != "" {
@@ -475,6 +477,8 @@ func (s *sceneLifecycle) openDepotLocked() error {
 	return nil
 }
 func (s *sceneLifecycle) openShopLocked(shopID string) error {
+	// A failed or partial view must not authorize a purchase. Caller holds mu.
+	s.activeShopID = ""
 	items, shopType, pageCount, err := shopCatalogItems(defaultShopINIPath, shopID)
 	if err != nil {
 		return err
@@ -505,7 +509,19 @@ func (s *sceneLifecycle) openShopLocked(shopID string) error {
 			return fmt.Errorf("add shop %q item %q: %w", shopID, item.configID, writeErr)
 		}
 	}
+	s.activeShopID = shopID
 	return nil
+}
+
+// ordinaryShopBuyAuthorized validates server-side session state, not the
+// untrusted ShopID in CustomSend(70). Do not hold s.mu while calling it.
+func (s *sceneLifecycle) ordinaryShopBuyAuthorized(shopID string) bool {
+	if s == nil || shopID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.closed && s.activeShopID == shopID
 }
 
 type talkMenuItem struct {
@@ -1297,6 +1313,7 @@ func (s *sceneLifecycle) close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.closed = true
+	s.activeShopID = ""
 	s.epoch++
 	s.stopReplayTimersLocked()
 }

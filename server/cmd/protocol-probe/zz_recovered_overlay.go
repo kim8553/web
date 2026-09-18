@@ -6490,7 +6490,7 @@ func serverEntityMove(entries []entityMove) []byte {
 	}
 	return msg
 }
-func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemCatalog *itemCatalog, bagStore bagStoreIface, currencyStore currencyStoreIface, roleID role.RoleID, custom clientCustomMessage, remote string) (bool, error) {
+func handleShopBuyCustom(link sceneMessageConnection, world *sceneLifecycle, player *playerActor, itemCatalog *itemCatalog, bagStore bagStoreIface, currencyStore currencyStoreIface, roleID role.RoleID, custom clientCustomMessage, remote string) (bool, error) {
 	if len(custom.Values) < 5 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != 0x46 {
 		return false, nil
 	}
@@ -6503,6 +6503,10 @@ func handleShopBuyCustom(link sceneMessageConnection, player *playerActor, itemC
 		return true, nil
 	}
 	shopID := custom.Values[1].Text
+	if !world.ordinaryShopBuyAuthorized(shopID) {
+		log.Printf("%s: reject shop buy: no opened NPC shop matching requested ID %q", remote, shopID)
+		return true, nil
+	}
 	if custom.Values[2].Type != 2 || custom.Values[3].Type != 2 || custom.Values[4].Type != 2 {
 		log.Printf("%s: shop buy %s: page/pos/amount must be int32", remote, shopID)
 		return true, nil

@@ -12,6 +12,7 @@ import (
 	"github.com/Hiroko103/go-quicklz"
 	"github.com/local/9yin-go-server/internal/clientdata"
 	"github.com/local/9yin-go-server/internal/role"
+	"github.com/local/9yin-go-server/internal/shopbuyatomic"
 	"github.com/local/9yin-go-server/internal/transport"
 	"github.com/local/9yin-go-server/internal/world"
 	worldcore "github.com/local/9yin-go-server/internal/world"
@@ -3493,6 +3494,11 @@ func (store *mysqlBagStore) Save(roleID role.RoleID, items []bagItem) error {
 		return err
 	}
 	defer tx.Rollback()
+	// Serialize this legacy bag writer with the ordinary purchase transaction.
+	// This does not repair already-stale caller snapshots.
+	if err := shopbuyatomic.LockRoleForBagWrite(ctx, tx, uint64(roleID)); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, "DELETE FROM role_bag_items WHERE role_id = ?", roleID); err != nil {
 		return err
 	}

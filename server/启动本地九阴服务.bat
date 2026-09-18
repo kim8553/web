@@ -2,8 +2,7 @@
 setlocal EnableExtensions DisableDelayedExpansion
 title Nine Yin Portable Server
 
-REM Keep the launcher, EXE and runtime resources under the same ROOT.
-REM The directory name may legitimately be 9yin-go-server1\9yin-go-server1.
+REM Keep launcher, EXE and resources under the same ROOT; do not hardcode drive letters.
 set "ROOT=%~dp0"
 set "NINEYIN_SERVER_ROOT=%ROOT%"
 set "SERVER=%ROOT%9yin-game-native-menu.exe"
@@ -27,31 +26,30 @@ if not exist "%PREFLIGHT%" (
   exit /b 1
 )
 
-REM mysql.env is the existing local CMD-format file from the original portable launcher.
-REM Do not echo the DSN or package mysql.env with a release.
+REM Load existing local CMD-format mysql.env without printing or packaging credentials.
 if exist "%ROOT%mysql.env" for /f "usebackq delims=" %%L in ("%ROOT%mysql.env") do call %%L
 if not defined NINEYIN_MYSQL_DSN (
   echo ERROR: NINEYIN_MYSQL_DSN not set. Refusing to silently use JSON storage.
-  echo Keep the existing mysql.env with this launcher; do not publish its contents.
+  echo Keep your existing mysql.env next to this launcher; do not publish its contents.
   pause
   exit /b 1
 )
 
-REM Current Go main calls migrations.Runner.Up on every MySQL startup.
-REM Until the schema is inspected and migration execution explicitly approved,
-REM refuse to start against the existing user database. This is a safety gate,
-REM not a request to approve migrations automatically.
-if /I not "%NINEYIN_ALLOW_SCHEMA_MIGRATIONS%"=="YES" (
-  echo ERROR: MySQL schema migrations have NOT been authorized.
-  echo The current Go binary automatically runs migrations on startup.
-  echo Do not set NINEYIN_ALLOW_SCHEMA_MIGRATIONS before reviewing your schema and a backup.
-  pause
-  exit /b 1
-)
-
+REM Read-only checks first, so a missing playerweapon folder is reported before DB gates.
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%" -Root "%ROOT%" -RequireMySQL
 if errorlevel 1 (
   echo ERROR: required server resources are missing or invalid. Nothing was started.
+  pause
+  exit /b 1
+)
+
+REM Current Go main invokes migrations.Runner.Up at MySQL startup. Do not allow
+REM an unreviewed schema rewrite on an existing user database. This flag only
+REM unlocks this launcher; it does not alter the Go migration behavior.
+if /I not "%NINEYIN_ALLOW_SCHEMA_MIGRATIONS%"=="YES" (
+  echo ERROR: MySQL schema migrations have NOT been authorized.
+  echo The current Go binary automatically runs migrations on startup.
+  echo Do not enable migrations without schema review, an independent backup and approval.
   pause
   exit /b 1
 )
@@ -85,11 +83,8 @@ if errorlevel 1 (
 ) else (
   echo Server list 4000 is already running; reusing it.
 )
-
 start "Nine Yin Game 19061" /D "%ROOT%" "%SERVER%" -listen 127.0.0.1:19061 -gm-listen 127.0.0.1:19062 -log-file "%LOGDIR%\protocol-probe-live.log" 1>>"%LOGDIR%\game-19061.current.log" 2>&1
-
 timeout /t 2 /nobreak >nul
 start "Nine Yin GM Panel" http://127.0.0.1:19062/
-
 echo Launcher finished. Check server logs before interpreting GM/game availability.
 pause

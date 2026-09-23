@@ -27,9 +27,9 @@ func useSkillMessageAt(id string, x, y, z float32) clientCustomMessage {
 	return message
 }
 
-func TestCombatSkillRequestDefinitionAcceptsIndexedConditionZeroReplacement(t *testing.T) {
+func TestCombatSkillRequestDefinitionAcceptsIndexedReplacement(t *testing.T) {
 	catalog := &combatSkillCatalog{
-		noConditionReplacementBase: map[string]string{"cs_hidden": "CS_base"},
+		replacementBase: map[string]string{"cs_hidden": "CS_base"},
 	}
 	installed := map[string]combatSkillDefinition{
 		"CS_normal": {id: "CS_normal", level: 1},
@@ -38,18 +38,18 @@ func TestCombatSkillRequestDefinitionAcceptsIndexedConditionZeroReplacement(t *t
 		t.Fatalf("installed request got=%+v ok=%t", got, ok)
 	}
 	if got, ok := combatSkillRequestDefinition("CS_hidden", catalog, installed); !ok || got.id != "CS_hidden" {
-		t.Fatalf("condition-zero replacement request got=%+v ok=%t", got, ok)
+		t.Fatalf("replacement request got=%+v ok=%t", got, ok)
 	}
 	if _, ok := combatSkillRequestDefinition("CS_unknown", catalog, installed); ok {
 		t.Fatal("unknown skill request was accepted")
 	}
 }
 
-func TestRequestedSkillAuthorityInheritsConditionZeroReplacementBaseLevel(t *testing.T) {
+func TestRequestedSkillAuthorityInheritsReplacementBaseLevel(t *testing.T) {
 	player := newPlayerActor("tester", 0)
 	learnAuthoritySkill(player, "CS_base", 3)
 	catalog := &combatSkillCatalog{
-		noConditionReplacementBase: map[string]string{"cs_hidden": "CS_base"},
+		replacementBase: map[string]string{"cs_hidden": "CS_base"},
 	}
 	level, baseID, learned := requestedSkillAuthority(player, "CS_hidden", catalog)
 	if !learned || level != 3 || baseID != "CS_base" {
@@ -62,7 +62,7 @@ func TestRequestedSkillAuthorityPrefersReplacementOwnLearnedLevel(t *testing.T) 
 	learnAuthoritySkill(player, "CS_base", 3)
 	learnAuthoritySkill(player, "CS_hidden", 2)
 	catalog := &combatSkillCatalog{
-		noConditionReplacementBase: map[string]string{"cs_hidden": "CS_base"},
+		replacementBase: map[string]string{"cs_hidden": "CS_base"},
 	}
 	level, baseID, learned := requestedSkillAuthority(player, "CS_hidden", catalog)
 	if !learned || level != 2 || baseID != "" {

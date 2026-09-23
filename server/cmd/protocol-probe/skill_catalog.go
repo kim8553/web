@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	skillreplace "github.com/local/9yin-go-server/internal/skillreplace"
 )
 
 var (
@@ -199,28 +201,15 @@ type skillReplacementRule struct {
 }
 
 func parseSkillReplacementRule(baseID string, field iniField) (skillReplacementRule, bool) {
-	condition, err := strconv.ParseInt(strings.TrimSpace(field.key), 10, 32)
-	if err != nil {
+	rule, ok := skillreplace.Parse(baseID, field.key, field.value)
+	if !ok {
 		return skillReplacementRule{}, false
-	}
-	parts := strings.Split(field.value, ",")
-	replacementID := strings.TrimSpace(parts[0])
-	if replacementID == "" {
-		return skillReplacementRule{}, false
-	}
-	var flag int32
-	if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
-		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 32)
-		if parseErr != nil {
-			return skillReplacementRule{}, false
-		}
-		flag = int32(parsed)
 	}
 	return skillReplacementRule{
-		baseID:        strings.TrimSpace(baseID),
-		conditionID:   int32(condition),
-		replacementID: replacementID,
-		flag:          flag,
+		baseID:        rule.BaseID,
+		conditionID:   rule.ConditionID,
+		replacementID: rule.ReplacementID,
+		flag:          rule.Flag,
 	}, true
 }
 
@@ -249,21 +238,17 @@ func skillReplacementRules(table iniTable) []skillReplacementRule {
 // requested the replacement ID, so unresolved client-side condition semantics
 // are not guessed here. Ambiguous targets fail closed.
 func skillReplacementBases(table iniTable) map[string]string {
-	result := make(map[string]string)
-	conflicts := make(map[string]struct{})
-	for _, rule := range skillReplacementRules(table) {
-		key := strings.ToLower(rule.replacementID)
-		if existing, ok := result[key]; ok && !strings.EqualFold(existing, rule.baseID) {
-			delete(result, key)
-			conflicts[key] = struct{}{}
-			continue
-		}
-		if _, conflict := conflicts[key]; conflict {
-			continue
-		}
-		result[key] = rule.baseID
+	rules := skillReplacementRules(table)
+	indexed := make([]skillreplace.Rule, 0, len(rules))
+	for _, rule := range rules {
+		indexed = append(indexed, skillreplace.Rule{
+			BaseID:        rule.baseID,
+			ConditionID:   rule.conditionID,
+			ReplacementID: rule.replacementID,
+			Flag:          rule.flag,
+		})
 	}
-	return result
+	return skillreplace.IndexBases(indexed)
 }
 
 func levelVarProp(static []iniField, script string, level int32, tables skillResourceTables) []iniField {

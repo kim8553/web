@@ -63,6 +63,18 @@ func TestSkillReplacementBasesDropsAmbiguousTargets(t *testing.T) {
 	}
 }
 
+func TestInstalledReplacementCatalogIncludesLatestConditionalTargets(t *testing.T) {
+	if got := len(installedCombatSkillCatalog.replacementBase); got != 257 {
+		t.Fatalf("replacement target count=%d, want 257", got)
+	}
+	if got, ok := installedCombatSkillCatalog.replacementSource("CS_jh_ncd01_hide"); !ok || got != "CS_jh_ncd07" {
+		t.Fatalf("conditional replacement source got=%q ok=%t, want CS_jh_ncd07", got, ok)
+	}
+	if got, ok := installedCombatSkillCatalog.replacementSource("CS_jh_wlbgg06_hide"); !ok || got != "CS_jh_wlbgg06" {
+		t.Fatalf("condition-zero replacement source got=%q ok=%t, want CS_jh_wlbgg06", got, ok)
+	}
+}
+
 func TestCompileCombatSkillWithActionSourcePreservesRequestedSkillMetadata(t *testing.T) {
 	requestedID := "CS_yhwq_hsqs01"
 	actionSourceID := "CS_yhwq_hsqs02"

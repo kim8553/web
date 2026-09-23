@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -89,6 +90,30 @@ func TestCompileCombatSkillWithActionSourcePreservesRequestedSkillMetadata(t *te
 	}
 	if got.actionSkillID != actionSourceID || got.actionName != actionSource.actionName || got.actionDuration != actionSource.actionDuration {
 		t.Fatalf("replacement action source got id=%q action=%q duration=%s want id=%q action=%q duration=%s", got.actionSkillID, got.actionName, got.actionDuration, actionSourceID, actionSource.actionName, actionSource.actionDuration)
+	}
+}
+
+func TestInstalledCombatReplacementTargetsAreExecutable(t *testing.T) {
+	seen := make(map[string]struct{})
+	var unresolved []string
+	for _, rule := range skillReplacementRules(installedCombatSkillCatalog.tables.skillReplace) {
+		key := strings.ToLower(rule.replacementID)
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		if _, indexed := installedCombatSkillCatalog.indexed[rule.replacementID]; !indexed {
+			continue
+		}
+		if _, ok := installedCombatSkillCatalog.definition(rule.replacementID, 1); ok {
+			continue
+		}
+		if _, _, ok := installedCombatSkillCatalog.replacementDefinition(rule.replacementID, 1); !ok {
+			unresolved = append(unresolved, rule.replacementID+"<-"+rule.baseID)
+		}
+	}
+	if len(unresolved) != 0 {
+		t.Fatalf("indexed replacement targets without executable definition: %v", unresolved)
 	}
 }
 

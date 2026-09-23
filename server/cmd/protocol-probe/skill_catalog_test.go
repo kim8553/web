@@ -63,6 +63,23 @@ func TestNoConditionSkillReplacementBasesDropsAmbiguousTargets(t *testing.T) {
 	}
 }
 
+func TestCompileCombatSkillWithActionSourcePreservesRequestedSkillMetadata(t *testing.T) {
+	requestedID := "CS_yhwq_hsqs01"
+	actionSourceID := "CS_yhwq_hsqs02"
+	got, err := compileCombatSkillWithActionSource(requestedID, 1, installedCombatSkillCatalog.tables, actionSourceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested := combatSkills[requestedID]
+	actionSource := combatSkills[actionSourceID]
+	if got.id != requestedID || got.staticData != requested.staticData || got.baseDamage != requested.baseDamage || got.mpCost != requested.mpCost || got.targetMode != requested.targetMode {
+		t.Fatalf("replacement metadata changed requested definition: got=%+v requested=%+v", got, requested)
+	}
+	if got.actionSkillID != actionSourceID || got.actionName != actionSource.actionName || got.actionDuration != actionSource.actionDuration {
+		t.Fatalf("replacement action source got id=%q action=%q duration=%s want id=%q action=%q duration=%s", got.actionSkillID, got.actionName, got.actionDuration, actionSourceID, actionSource.actionName, actionSource.actionDuration)
+	}
+}
+
 func TestInstalledCatalogCompilesEveryLearnedCombatSkill(t *testing.T) {
 	if got := len(combatSkills); got < 3000 {
 		t.Fatalf("compiled installed level-one combat skills=%d, want full client catalog", got)

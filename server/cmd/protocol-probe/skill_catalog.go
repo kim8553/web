@@ -439,6 +439,10 @@ func effectsHaveKind(effects []combatSkillEffect, kind skillEffectKind) bool {
 }
 
 func compileCombatSkill(skillID string, level int32, tables skillResourceTables) (combatSkillDefinition, error) {
+	return compileCombatSkillWithActionSource(skillID, level, tables, skillID)
+}
+
+func compileCombatSkillWithActionSource(skillID string, level int32, tables skillResourceTables, actionSkillID string) (combatSkillDefinition, error) {
 	if level <= 0 {
 		return combatSkillDefinition{}, fmt.Errorf("%s has invalid level %d", skillID, level)
 	}
@@ -474,15 +478,21 @@ func compileCombatSkill(skillID string, level int32, tables skillResourceTables)
 		targetMode = skillTargetSelectedArea
 		radius = skillRange
 	}
-	action, actionDuration, followups, hitFrames := compileSkillActions(tables.actions[skillID])
+	if strings.TrimSpace(actionSkillID) == "" {
+		actionSkillID = skillID
+	}
+	action, actionDuration, followups, hitFrames := compileSkillActions(tables.actions[actionSkillID])
 	if action == "" {
-		return combatSkillDefinition{}, fmt.Errorf("%s has no player action timeline", skillID)
+		if actionSkillID == skillID {
+			return combatSkillDefinition{}, fmt.Errorf("%s has no player action timeline", skillID)
+		}
+		return combatSkillDefinition{}, fmt.Errorf("%s has no player action timeline via replacement source %s", skillID, actionSkillID)
 	}
 	publicCooldown := iniInt(varProp, "AddCoolDownTime")
 	if publicCooldown <= 0 {
 		publicCooldown = iniInt(static, "AddCoolDownTime")
 	}
-	definition := combatSkillDefinition{id: skillID, staticData: staticData, script: script, taoLu: iniValue(varProp, "TaoLu"), attribute: skillElementAttribute(skillID), level: level, cooldownCategory: iniInt(varProp, "CoolDownCategory"), cooldownTeam: iniInt(varProp, "CoolDownTeam"), personalCD: time.Duration(iniInt(varProp, "CoolDownTime")) * time.Millisecond, publicCD: time.Duration(publicCooldown) * time.Millisecond, mpCost: iniInt(consume, "AConsumeMP"), spCost: iniInt(consume, "AConsumeSP"), qgCost: iniInt(consume, "AConsumeQGP"), baseDamage: damage, requiresTarget: targetMode == skillTargetSelected || targetMode == skillTargetSelectedArea, targetMode: targetMode, range_: skillRange, areaRadius: radius, areaHeight: iniFloat(varProp, "HeightDiff"), sectorAngle: angle, areaWidth: width, actionName: action, followupActions: followups, hitFrames: hitFrames, actionDuration: actionDuration}
+	definition := combatSkillDefinition{id: skillID, staticData: staticData, script: script, taoLu: iniValue(varProp, "TaoLu"), attribute: skillElementAttribute(skillID), level: level, cooldownCategory: iniInt(varProp, "CoolDownCategory"), cooldownTeam: iniInt(varProp, "CoolDownTeam"), personalCD: time.Duration(iniInt(varProp, "CoolDownTime")) * time.Millisecond, publicCD: time.Duration(publicCooldown) * time.Millisecond, mpCost: iniInt(consume, "AConsumeMP"), spCost: iniInt(consume, "AConsumeSP"), qgCost: iniInt(consume, "AConsumeQGP"), baseDamage: damage, requiresTarget: targetMode == skillTargetSelected || targetMode == skillTargetSelectedArea, targetMode: targetMode, range_: skillRange, areaRadius: radius, areaHeight: iniFloat(varProp, "HeightDiff"), sectorAngle: angle, areaWidth: width, actionSkillID: actionSkillID, actionName: action, followupActions: followups, hitFrames: hitFrames, actionDuration: actionDuration}
 	if definition.publicCD <= 0 {
 		definition.publicCD = definition.personalCD
 	}
@@ -625,6 +635,32 @@ func (catalog *combatSkillCatalog) definition(id string, level int32) (combatSki
 	catalog.cacheMu.Unlock()
 	return definition, true
 }
+func (catalog *combatSkillCatalog) noConditionReplacementSource(id string) (string, bool) {
+	if catalog == nil {
+		return "", false
+	}
+	baseID, ok := catalog.noConditionReplacementBase[strings.ToLower(strings.TrimSpace(id))]
+	return baseID, ok
+}
+
+func (catalog *combatSkillCatalog) noConditionReplacementDefinition(id string, level int32) (combatSkillDefinition, string, bool) {
+	if catalog == nil || level <= 0 {
+		return combatSkillDefinition{}, "", false
+	}
+	baseID, ok := catalog.noConditionReplacementSource(id)
+	if !ok {
+		return combatSkillDefinition{}, "", false
+	}
+	if _, indexed := catalog.indexed[id]; !indexed {
+		return combatSkillDefinition{}, "", false
+	}
+	definition, err := compileCombatSkillWithActionSource(id, level, catalog.tables, baseID)
+	if err != nil {
+		return combatSkillDefinition{}, baseID, false
+	}
+	return definition, baseID, true
+}
+
 func mustLoadCombatSkillCatalog() *combatSkillCatalog {
 	catalog, err := loadCombatSkillCatalog()
 	if err != nil {

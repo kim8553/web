@@ -14,6 +14,55 @@ func hasCompiledEffect(definition combatSkillDefinition, kind skillEffectKind) b
 	return false
 }
 
+func TestSkillReplacementRulesPreserveClientResourceFields(t *testing.T) {
+	table := iniTable{
+		"CS_base": {
+			{key: "19443", value: "CS_conditional_hide,0"},
+			{key: "0", value: "CS_no_condition_hide,1"},
+		},
+	}
+	rules := skillReplacementRules(table)
+	if len(rules) != 2 {
+		t.Fatalf("replacement rules=%d, want 2", len(rules))
+	}
+	if got := rules[0]; got.baseID != "CS_base" || got.conditionID != 19443 || got.replacementID != "CS_conditional_hide" || got.flag != 0 {
+		t.Fatalf("conditional replacement=%+v", got)
+	}
+	if got := rules[1]; got.baseID != "CS_base" || got.conditionID != 0 || got.replacementID != "CS_no_condition_hide" || got.flag != 1 {
+		t.Fatalf("condition-zero replacement=%+v", got)
+	}
+}
+
+func TestNoConditionSkillReplacementBasesOnlyIndexesConditionZero(t *testing.T) {
+	table := iniTable{
+		"CS_base": {
+			{key: "19443", value: "CS_conditional_hide,0"},
+			{key: "0", value: "CS_no_condition_hide,0"},
+		},
+	}
+	indexed := noConditionSkillReplacementBases(table)
+	if len(indexed) != 1 {
+		t.Fatalf("condition-zero replacement index=%v", indexed)
+	}
+	if got := indexed["cs_no_condition_hide"]; got != "CS_base" {
+		t.Fatalf("condition-zero replacement base=%q, want CS_base", got)
+	}
+	if _, exists := indexed["cs_conditional_hide"]; exists {
+		t.Fatal("conditional replacement leaked into condition-zero index")
+	}
+}
+
+func TestNoConditionSkillReplacementBasesDropsAmbiguousTargets(t *testing.T) {
+	table := iniTable{
+		"CS_base_a": {{key: "0", value: "CS_same_hide,0"}},
+		"CS_base_b": {{key: "0", value: "CS_same_hide,1"}},
+	}
+	indexed := noConditionSkillReplacementBases(table)
+	if _, exists := indexed["cs_same_hide"]; exists {
+		t.Fatalf("ambiguous replacement target must not be authorized: %v", indexed)
+	}
+}
+
 func TestInstalledCatalogCompilesEveryLearnedCombatSkill(t *testing.T) {
 	if got := len(combatSkills); got < 3000 {
 		t.Fatalf("compiled installed level-one combat skills=%d, want full client catalog", got)

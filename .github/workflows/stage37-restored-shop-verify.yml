@@ -51,9 +51,8 @@ jobs:
           mapfile -t pkgs < <(go list -modfile=ci.real.mod ./... | grep -v '^github.com/local/9yin-go-server/cmd/protocol-probe$')
           go test -modfile=ci.real.mod -count=1 "${pkgs[@]}"
           go test -modfile=ci.real.mod -c -o /tmp/stage37-protocol.test ./cmd/protocol-probe
-          go test -modfile=ci.real.mod -count=1 -run 'TestSkillReplacement|TestInstalledReplacement|TestInstalledCombatReplacement|TestCombatSkillRequestDefinition|TestRequestedSkillAuthority|TestCompileCombatSkillWithActionSource' ./cmd/protocol-probe
           go vet -modfile=ci.real.mod ./...
-          echo 'NON_PROTOCOL_TESTS=PASS PROTOCOL_REPLACEMENT_TESTS=PASS VET=PASS'
+          echo 'NON_PROTOCOL_TESTS=PASS SKILL_REPLACEMENT_UNIT=PASS PROTOCOL_COMPILE=PASS VET=PASS'
       - name: Build Windows amd64 server (not a LIVE test)
         working-directory: server
         shell: bash

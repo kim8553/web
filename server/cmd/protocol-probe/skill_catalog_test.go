@@ -33,31 +33,31 @@ func TestSkillReplacementRulesPreserveClientResourceFields(t *testing.T) {
 	}
 }
 
-func TestNoConditionSkillReplacementBasesOnlyIndexesConditionZero(t *testing.T) {
+func TestSkillReplacementBasesIndexesConditionalAndConditionZeroTargets(t *testing.T) {
 	table := iniTable{
 		"CS_base": {
 			{key: "19443", value: "CS_conditional_hide,0"},
 			{key: "0", value: "CS_no_condition_hide,0"},
 		},
 	}
-	indexed := noConditionSkillReplacementBases(table)
-	if len(indexed) != 1 {
-		t.Fatalf("condition-zero replacement index=%v", indexed)
+	indexed := skillReplacementBases(table)
+	if len(indexed) != 2 {
+		t.Fatalf("replacement index=%v", indexed)
 	}
 	if got := indexed["cs_no_condition_hide"]; got != "CS_base" {
 		t.Fatalf("condition-zero replacement base=%q, want CS_base", got)
 	}
-	if _, exists := indexed["cs_conditional_hide"]; exists {
-		t.Fatal("conditional replacement leaked into condition-zero index")
+	if got := indexed["cs_conditional_hide"]; got != "CS_base" {
+		t.Fatalf("conditional replacement base=%q, want CS_base", got)
 	}
 }
 
-func TestNoConditionSkillReplacementBasesDropsAmbiguousTargets(t *testing.T) {
+func TestSkillReplacementBasesDropsAmbiguousTargets(t *testing.T) {
 	table := iniTable{
-		"CS_base_a": {{key: "0", value: "CS_same_hide,0"}},
+		"CS_base_a": {{key: "19443", value: "CS_same_hide,0"}},
 		"CS_base_b": {{key: "0", value: "CS_same_hide,1"}},
 	}
-	indexed := noConditionSkillReplacementBases(table)
+	indexed := skillReplacementBases(table)
 	if _, exists := indexed["cs_same_hide"]; exists {
 		t.Fatalf("ambiguous replacement target must not be authorized: %v", indexed)
 	}

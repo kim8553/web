@@ -130,8 +130,17 @@ func parseUseSkillCustom(custom clientCustomMessage) (combatSkillDefinition, boo
 	if len(custom.Values) < 2 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != clientCustomUseSkill || custom.Values[1].Type != 6 || custom.Values[1].Text == "" {
 		return combatSkillDefinition{}, false
 	}
-	definition, exists := combatSkills[custom.Values[1].Text]
-	return definition, exists
+	id := strings.TrimSpace(custom.Values[1].Text)
+	if definition, exists := combatSkills[id]; exists {
+		return definition, true
+	}
+	if _, replacement := installedCombatSkillCatalog.noConditionReplacementSource(id); replacement {
+		// The replacement may intentionally lack its own player-action section.
+		// Return only the requested id here; the learned level and executable
+		// definition are resolved after the player authority check below.
+		return combatSkillDefinition{id: id}, true
+	}
+	return combatSkillDefinition{}, false
 }
 func useSkillCastTransform(custom clientCustomMessage) (worldcore.Transform, bool) {
 	if len(custom.Values) < 5 || custom.Values[2].Type != 4 || custom.Values[3].Type != 4 || custom.Values[4].Type != 4 {
@@ -426,11 +435,33 @@ func handleSkillCustom(link sceneMessageConnection, player *playerActor, world *
 		return true, nil
 	}
 	level, learned := player.learnedSkillLevel(definition.id)
+	replacementBaseID := ""
+	if !learned {
+		if baseID, replacement := installedCombatSkillCatalog.noConditionReplacementSource(definition.id); replacement {
+			if baseLevel, baseLearned := player.learnedSkillLevel(baseID); baseLearned {
+				level = baseLevel
+				learned = true
+				replacementBaseID = baseID
+				log.Printf("%s: authorize condition-zero replacement id=%s from learned base=%s level=%d", remote, definition.id, baseID, level)
+			}
+		}
+	}
 	if !learned {
 		log.Printf("%s: reject unlearned installed skill id=%s", remote, definition.id)
 		return true, nil
 	}
 	executable, ok := installedCombatSkillCatalog.definition(definition.id, level)
+	if !ok {
+		replacementDefinition, baseID, replacementOK := installedCombatSkillCatalog.noConditionReplacementDefinition(definition.id, level)
+		if replacementOK {
+			executable = replacementDefinition
+			ok = true
+			if replacementBaseID == "" {
+				replacementBaseID = baseID
+			}
+			log.Printf("%s: compiled condition-zero replacement id=%s base_action=%s level=%d", remote, definition.id, baseID, level)
+		}
+	}
 	if !ok {
 		log.Printf("%s: reject learned skill without compiled level response id=%s level=%d", remote, definition.id, level)
 		return true, nil

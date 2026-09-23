@@ -978,12 +978,19 @@ func loadEquipCatalog(path string) (*equipCatalog, error) {
 	catalog.artActionSets = actionSets
 	weaponModels, weaponErr := loadPlayerWeaponModels(defaultPlayerWeaponDir)
 	if weaponErr != nil {
-		return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
+		if !os.IsNotExist(weaponErr) {
+			return nil, fmt.Errorf("load playerweapon models: %w", weaponErr)
+		}
+		log.Printf("optional playerweapon dir unavailable path=%s; continuing with itemartstatic weapon models/action sets", defaultPlayerWeaponDir)
+		weaponModels = make(map[string]string)
 	}
 	catalog.weaponModels = weaponModels
 	heldModes, heldErr := loadWeaponHeldModes(defaultPlayerWeaponDir)
 	if heldErr != nil {
-		return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
+		if !os.IsNotExist(heldErr) {
+			return nil, fmt.Errorf("load playerweapon held modes: %w", heldErr)
+		}
+		heldModes = make(map[string]string)
 	}
 	catalog.weaponHeld = heldModes
 	return catalog, nil

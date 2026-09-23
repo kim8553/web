@@ -126,21 +126,51 @@ func nativeGenericActionFrame(action string) ([]byte, error) {
 	}
 	return serverModernCustomStringMessage("action", customObject(playerObjectID, playerOwnerID), customString(action), customString("1"))
 }
+func combatSkillRequestDefinition(id string, catalog *combatSkillCatalog, installed map[string]combatSkillDefinition) (combatSkillDefinition, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return combatSkillDefinition{}, false
+	}
+	if definition, exists := installed[id]; exists {
+		return definition, true
+	}
+	if catalog != nil {
+		if _, replacement := catalog.noConditionReplacementSource(id); replacement {
+			// The replacement may intentionally lack its own player-action section.
+			// Return only the requested id here; the learned level and executable
+			// definition are resolved after the player authority check below.
+			return combatSkillDefinition{id: id}, true
+		}
+	}
+	return combatSkillDefinition{}, false
+}
+
+func requestedSkillAuthority(player *playerActor, id string, catalog *combatSkillCatalog) (int32, string, bool) {
+	if player == nil {
+		return 0, "", false
+	}
+	if level, learned := player.learnedSkillLevel(id); learned {
+		return level, "", true
+	}
+	if catalog == nil {
+		return 0, "", false
+	}
+	baseID, replacement := catalog.noConditionReplacementSource(id)
+	if !replacement {
+		return 0, "", false
+	}
+	level, learned := player.learnedSkillLevel(baseID)
+	if !learned {
+		return 0, baseID, false
+	}
+	return level, baseID, true
+}
+
 func parseUseSkillCustom(custom clientCustomMessage) (combatSkillDefinition, bool) {
 	if len(custom.Values) < 2 || custom.Values[0].Type != 2 || custom.Values[0].Int32 != clientCustomUseSkill || custom.Values[1].Type != 6 || custom.Values[1].Text == "" {
 		return combatSkillDefinition{}, false
 	}
-	id := strings.TrimSpace(custom.Values[1].Text)
-	if definition, exists := combatSkills[id]; exists {
-		return definition, true
-	}
-	if _, replacement := installedCombatSkillCatalog.noConditionReplacementSource(id); replacement {
-		// The replacement may intentionally lack its own player-action section.
-		// Return only the requested id here; the learned level and executable
-		// definition are resolved after the player authority check below.
-		return combatSkillDefinition{id: id}, true
-	}
-	return combatSkillDefinition{}, false
+	return combatSkillRequestDefinition(custom.Values[1].Text, installedCombatSkillCatalog, combatSkills)
 }
 func useSkillCastTransform(custom clientCustomMessage) (worldcore.Transform, bool) {
 	if len(custom.Values) < 5 || custom.Values[2].Type != 4 || custom.Values[3].Type != 4 || custom.Values[4].Type != 4 {
@@ -434,17 +464,9 @@ func handleSkillCustom(link sceneMessageConnection, player *playerActor, world *
 		log.Printf("%s: reject skill before player spawn id=%s", remote, definition.id)
 		return true, nil
 	}
-	level, learned := player.learnedSkillLevel(definition.id)
-	replacementBaseID := ""
-	if !learned {
-		if baseID, replacement := installedCombatSkillCatalog.noConditionReplacementSource(definition.id); replacement {
-			if baseLevel, baseLearned := player.learnedSkillLevel(baseID); baseLearned {
-				level = baseLevel
-				learned = true
-				replacementBaseID = baseID
-				log.Printf("%s: authorize condition-zero replacement id=%s from learned base=%s level=%d", remote, definition.id, baseID, level)
-			}
-		}
+	level, replacementBaseID, learned := requestedSkillAuthority(player, definition.id, installedCombatSkillCatalog)
+	if learned && replacementBaseID != "" {
+		log.Printf("%s: authorize condition-zero replacement id=%s from learned base=%s level=%d", remote, definition.id, replacementBaseID, level)
 	}
 	if !learned {
 		log.Printf("%s: reject unlearned installed skill id=%s", remote, definition.id)

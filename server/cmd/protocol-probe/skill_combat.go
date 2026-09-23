@@ -89,6 +89,7 @@ type combatSkillDefinition struct {
 	areaHeight       float32
 	sectorAngle      float32
 	areaWidth        float32
+	actionSkillID    string
 	actionName       string
 	followupActions  []skillActionSegment
 	hitFrames        []time.Duration

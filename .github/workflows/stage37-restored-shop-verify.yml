@@ -62,3 +62,12 @@ jobs:
           file /tmp/stage37-restored-shop.exe | grep -E 'PE32\+ executable.*x86-64'
           sha256sum /tmp/stage37-restored-shop.exe
           echo 'WINDOWS_BUILD=PASS LIVE_E2E=NOT_RUN'
+      - name: Upload Stage7 skill replacement build
+        uses: actions/upload-artifact@v4
+        with:
+          name: stage7-skill-replacement-windows
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            /tmp/stage37-restored-shop.exe
+            server/resources/modern/share/skill/skill_replace.ini

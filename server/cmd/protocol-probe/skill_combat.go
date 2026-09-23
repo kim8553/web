@@ -137,8 +137,8 @@ func combatSkillRequestDefinition(id string, catalog *combatSkillCatalog, instal
 		return definition, true
 	}
 	if catalog != nil {
-		if _, replacement := catalog.noConditionReplacementSource(id); replacement {
-			// The replacement may intentionally lack its own player-action section.
+		if _, replacement := catalog.replacementSource(id); replacement {
+			// The client-selected replacement may intentionally lack its own player-action section.
 			// Return only the requested id here; the learned level and executable
 			// definition are resolved after the player authority check below.
 			return combatSkillDefinition{id: id}, true
@@ -157,7 +157,7 @@ func requestedSkillAuthority(player *playerActor, id string, catalog *combatSkil
 	if catalog == nil {
 		return 0, "", false
 	}
-	baseID, replacement := catalog.noConditionReplacementSource(id)
+	baseID, replacement := catalog.replacementSource(id)
 	if !replacement {
 		return 0, "", false
 	}
@@ -468,7 +468,7 @@ func handleSkillCustom(link sceneMessageConnection, player *playerActor, world *
 	}
 	level, replacementBaseID, learned := requestedSkillAuthority(player, definition.id, installedCombatSkillCatalog)
 	if learned && replacementBaseID != "" {
-		log.Printf("%s: authorize condition-zero replacement id=%s from learned base=%s level=%d", remote, definition.id, replacementBaseID, level)
+		log.Printf("%s: authorize client-selected replacement id=%s from learned base=%s level=%d", remote, definition.id, replacementBaseID, level)
 	}
 	if !learned {
 		log.Printf("%s: reject unlearned installed skill id=%s", remote, definition.id)
@@ -476,14 +476,14 @@ func handleSkillCustom(link sceneMessageConnection, player *playerActor, world *
 	}
 	executable, ok := installedCombatSkillCatalog.definition(definition.id, level)
 	if !ok {
-		replacementDefinition, baseID, replacementOK := installedCombatSkillCatalog.noConditionReplacementDefinition(definition.id, level)
+		replacementDefinition, baseID, replacementOK := installedCombatSkillCatalog.replacementDefinition(definition.id, level)
 		if replacementOK {
 			executable = replacementDefinition
 			ok = true
 			if replacementBaseID == "" {
 				replacementBaseID = baseID
 			}
-			log.Printf("%s: compiled condition-zero replacement id=%s base_action=%s level=%d", remote, definition.id, baseID, level)
+			log.Printf("%s: compiled client-selected replacement id=%s base_action=%s level=%d", remote, definition.id, baseID, level)
 		}
 	}
 	if !ok {

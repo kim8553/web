@@ -243,16 +243,15 @@ func skillReplacementRules(table iniTable) []skillReplacementRule {
 	return rules
 }
 
-// conditionID == 0 is kept as a distinct resource sentinel. The current
-// client condition tables do not define section 0; runtime replacement
-// semantics are deliberately not inferred here.
-func noConditionSkillReplacementBases(table iniTable) map[string]string {
+// skillReplacementBases indexes the authored replacement target back to its
+// source skill. It does not evaluate conditionID or flag and never chooses a
+// replacement on the server. The map is only used after the client has already
+// requested the replacement ID, so unresolved client-side condition semantics
+// are not guessed here. Ambiguous targets fail closed.
+func skillReplacementBases(table iniTable) map[string]string {
 	result := make(map[string]string)
 	conflicts := make(map[string]struct{})
 	for _, rule := range skillReplacementRules(table) {
-		if rule.conditionID != 0 {
-			continue
-		}
 		key := strings.ToLower(rule.replacementID)
 		if existing, ok := result[key]; ok && !strings.EqualFold(existing, rule.baseID) {
 			delete(result, key)
@@ -555,9 +554,9 @@ type combatSkillCatalog struct {
 	levelOne    map[string]combatSkillDefinition
 	indexed     map[string]struct{}
 	skipReasons map[string]int
-	cache                      map[combatSkillCacheKey]combatSkillDefinition
-	noConditionReplacementBase map[string]string
-	cacheMu                    sync.RWMutex
+	cache           map[combatSkillCacheKey]combatSkillDefinition
+	replacementBase map[string]string
+	cacheMu         sync.RWMutex
 }
 
 func skillCompileReason(err error) string {
@@ -587,8 +586,8 @@ func loadCombatSkillCatalog() (*combatSkillCatalog, error) {
 		levelOne:                   make(map[string]combatSkillDefinition),
 		indexed:                    make(map[string]struct{}),
 		skipReasons:                make(map[string]int),
-		cache:                      make(map[combatSkillCacheKey]combatSkillDefinition),
-		noConditionReplacementBase: noConditionSkillReplacementBases(tables.skillReplace),
+		cache:           make(map[combatSkillCacheKey]combatSkillDefinition),
+		replacementBase: skillReplacementBases(tables.skillReplace),
 	}
 	ids := make([]string, 0, len(tables.skillNew))
 	for id := range tables.skillNew {
@@ -635,19 +634,19 @@ func (catalog *combatSkillCatalog) definition(id string, level int32) (combatSki
 	catalog.cacheMu.Unlock()
 	return definition, true
 }
-func (catalog *combatSkillCatalog) noConditionReplacementSource(id string) (string, bool) {
+func (catalog *combatSkillCatalog) replacementSource(id string) (string, bool) {
 	if catalog == nil {
 		return "", false
 	}
-	baseID, ok := catalog.noConditionReplacementBase[strings.ToLower(strings.TrimSpace(id))]
+	baseID, ok := catalog.replacementBase[strings.ToLower(strings.TrimSpace(id))]
 	return baseID, ok
 }
 
-func (catalog *combatSkillCatalog) noConditionReplacementDefinition(id string, level int32) (combatSkillDefinition, string, bool) {
+func (catalog *combatSkillCatalog) replacementDefinition(id string, level int32) (combatSkillDefinition, string, bool) {
 	if catalog == nil || level <= 0 {
 		return combatSkillDefinition{}, "", false
 	}
-	baseID, ok := catalog.noConditionReplacementSource(id)
+	baseID, ok := catalog.replacementSource(id)
 	if !ok {
 		return combatSkillDefinition{}, "", false
 	}

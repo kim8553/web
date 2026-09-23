@@ -86,9 +86,10 @@ func iniFloat(fields []iniField, key string) float32 {
 }
 
 type skillResourceTables struct {
-	skillNew    iniTable
-	skillStatic iniTable
-	normalVar   iniTable
+	skillNew     iniTable
+	skillStatic  iniTable
+	skillReplace iniTable
+	normalVar    iniTable
 	lockVar     iniTable
 	consume     iniTable
 	damage      iniTable
@@ -108,6 +109,16 @@ func loadSkillResourceTables() (skillResourceTables, error) {
 		}
 		return table, nil
 	}
+	loadOptional := func(path string) (iniTable, error) {
+		table, err := loadINISections(path)
+		if err == nil {
+			return table, nil
+		}
+		if os.IsNotExist(err) {
+			return make(iniTable), nil
+		}
+		return nil, fmt.Errorf("load optional skill resource %s: %w", filepath.Base(path), err)
+	}
 	result := skillResourceTables{}
 	var err error
 	result.skillNew, err = load(filepath.Join(modernSkillRoot, "skill_new.ini"))
@@ -115,6 +126,10 @@ func loadSkillResourceTables() (skillResourceTables, error) {
 		return result, err
 	}
 	result.skillStatic, err = load(filepath.Join(modernSkillRoot, "skill_static.ini"))
+	if err != nil {
+		return result, err
+	}
+	result.skillReplace, err = loadOptional(filepath.Join(modernSkillRoot, "skill_replace.ini"))
 	if err != nil {
 		return result, err
 	}
@@ -176,6 +191,82 @@ func loadSkillResourceTables() (skillResourceTables, error) {
 	}
 	return result, nil
 }
+type skillReplacementRule struct {
+	baseID        string
+	conditionID   int32
+	replacementID string
+	flag          int32
+}
+
+func parseSkillReplacementRule(baseID string, field iniField) (skillReplacementRule, bool) {
+	condition, err := strconv.ParseInt(strings.TrimSpace(field.key), 10, 32)
+	if err != nil {
+		return skillReplacementRule{}, false
+	}
+	parts := strings.Split(field.value, ",")
+	replacementID := strings.TrimSpace(parts[0])
+	if replacementID == "" {
+		return skillReplacementRule{}, false
+	}
+	var flag int32
+	if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+		parsed, parseErr := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 32)
+		if parseErr != nil {
+			return skillReplacementRule{}, false
+		}
+		flag = int32(parsed)
+	}
+	return skillReplacementRule{
+		baseID:        strings.TrimSpace(baseID),
+		conditionID:   int32(condition),
+		replacementID: replacementID,
+		flag:          flag,
+	}, true
+}
+
+func skillReplacementRules(table iniTable) []skillReplacementRule {
+	rules := make([]skillReplacementRule, 0)
+	bases := make([]string, 0, len(table))
+	for baseID := range table {
+		bases = append(bases, baseID)
+	}
+	sort.Strings(bases)
+	for _, baseID := range bases {
+		for _, field := range table[baseID] {
+			rule, ok := parseSkillReplacementRule(baseID, field)
+			if !ok {
+				continue
+			}
+			rules = append(rules, rule)
+		}
+	}
+	return rules
+}
+
+// conditionID == 0 is kept as a distinct resource sentinel. The current
+// client condition tables do not define section 0; runtime replacement
+// semantics are deliberately not inferred here.
+func noConditionSkillReplacementBases(table iniTable) map[string]string {
+	result := make(map[string]string)
+	conflicts := make(map[string]struct{})
+	for _, rule := range skillReplacementRules(table) {
+		if rule.conditionID != 0 {
+			continue
+		}
+		key := strings.ToLower(rule.replacementID)
+		if existing, ok := result[key]; ok && !strings.EqualFold(existing, rule.baseID) {
+			delete(result, key)
+			conflicts[key] = struct{}{}
+			continue
+		}
+		if _, conflict := conflicts[key]; conflict {
+			continue
+		}
+		result[key] = rule.baseID
+	}
+	return result
+}
+
 func levelVarProp(static []iniField, script string, level int32, tables skillResourceTables) []iniField {
 	table := tables.normalVar
 	if strings.EqualFold(script, "SkillLock") {
@@ -454,8 +545,9 @@ type combatSkillCatalog struct {
 	levelOne    map[string]combatSkillDefinition
 	indexed     map[string]struct{}
 	skipReasons map[string]int
-	cache       map[combatSkillCacheKey]combatSkillDefinition
-	cacheMu     sync.RWMutex
+	cache                      map[combatSkillCacheKey]combatSkillDefinition
+	noConditionReplacementBase map[string]string
+	cacheMu                    sync.RWMutex
 }
 
 func skillCompileReason(err error) string {
@@ -480,7 +572,14 @@ func loadCombatSkillCatalog() (*combatSkillCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	catalog := &combatSkillCatalog{tables: tables, levelOne: make(map[string]combatSkillDefinition), indexed: make(map[string]struct{}), skipReasons: make(map[string]int), cache: make(map[combatSkillCacheKey]combatSkillDefinition)}
+	catalog := &combatSkillCatalog{
+		tables:                      tables,
+		levelOne:                   make(map[string]combatSkillDefinition),
+		indexed:                    make(map[string]struct{}),
+		skipReasons:                make(map[string]int),
+		cache:                      make(map[combatSkillCacheKey]combatSkillDefinition),
+		noConditionReplacementBase: noConditionSkillReplacementBases(tables.skillReplace),
+	}
 	ids := make([]string, 0, len(tables.skillNew))
 	for id := range tables.skillNew {
 		ids = append(ids, id)
